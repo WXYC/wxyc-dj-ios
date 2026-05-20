@@ -32,6 +32,11 @@ public struct KeychainTokenStorage: TokenStorage {
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
+        // Canonical Keychain upsert: try SecItemUpdate first, fall back to
+        // SecItemAdd on errSecItemNotFound. The two-step pattern has a
+        // theoretical TOCTOU window (the item could be deleted between the
+        // update and the add), but AuthService is @MainActor-isolated so
+        // concurrent saves can't interleave with deletes from the same app.
         let updateStatus = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
         switch updateStatus {
         case errSecSuccess:

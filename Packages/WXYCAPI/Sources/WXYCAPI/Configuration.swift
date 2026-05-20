@@ -22,6 +22,11 @@ public struct WXYCAPIConfiguration: Sendable {
         self.timeout = timeout
     }
 
+    // The force-unwraps below operate on hard-coded URL literals that are
+    // known-good at compile time. A failure here would mean the source
+    // string was edited to something invalid, which is a programmer error
+    // we want to catch loudly in the very first launch rather than smear
+    // across .none-handling at every call site.
     public static let production = WXYCAPIConfiguration(
         authBaseURL: URL(string: "https://api.wxyc.org/auth")!,
         apiBaseURL: URL(string: "https://api.wxyc.org")!

@@ -11,7 +11,10 @@
 
 import Foundation
 
-public struct AlbumSearchResult: Codable, Sendable, Hashable, Identifiable {
+// Decode-only — search results flow one direction (server → client). If
+// the app ever needs to serialize one back out, swap Decodable for Codable
+// and Swift will synthesize the missing encode(to:) from the CodingKeys.
+public struct AlbumSearchResult: Decodable, Sendable, Hashable, Identifiable {
     public let id: Int
     public let addDate: Date?
     public let albumTitle: String
@@ -92,26 +95,6 @@ public struct AlbumSearchResult: Codable, Sendable, Hashable, Identifiable {
         return parts.joined(separator: " ")
     }
 
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(id, forKey: .id)
-        try c.encodeIfPresent(addDate, forKey: .addDate)
-        try c.encode(albumTitle, forKey: .albumTitle)
-        try c.encode(artistName, forKey: .artistName)
-        try c.encodeIfPresent(codeLetters, forKey: .codeLetters)
-        try c.encodeIfPresent(codeNumber, forKey: .codeNumber)
-        try c.encodeIfPresent(codeArtistNumber, forKey: .codeArtistNumber)
-        try c.encodeIfPresent(formatName, forKey: .formatName)
-        try c.encodeIfPresent(genreName, forKey: .genreName)
-        try c.encodeIfPresent(label, forKey: .label)
-        try c.encodeIfPresent(labelId, forKey: .labelId)
-        try c.encodeIfPresent(rotationBin, forKey: .rotationBin)
-        try c.encodeIfPresent(rotationId, forKey: .rotationId)
-        try c.encodeIfPresent(plays, forKey: .plays)
-        try c.encodeIfPresent(onStreaming, forKey: .onStreaming)
-        try c.encodeIfPresent(albumArtist, forKey: .albumArtist)
-        try c.encodeIfPresent(artworkURL, forKey: .artworkURL)
-    }
 }
 
 public enum RotationBin: String, Codable, Sendable, Hashable, CaseIterable {
