@@ -18,7 +18,12 @@ public struct TrackMatchHint: Decodable, Sendable, Hashable {
     public let artistCredit: String?
     public let position: String?
     public let confidence: Double?
-    public let source: TrackMatchSource
+    /// `nil` when the server emitted a `source` value the client doesn't
+    /// recognize yet (forward-compat for new variants like
+    /// `musicbrainz_recording` post-cross-cache-identity). Mirrors the
+    /// `RotationBin` precedent in `AlbumSearchResult` — unrecognized
+    /// enum values surface as `nil` rather than refusing the row.
+    public let source: TrackMatchSource?
 
     enum CodingKeys: String, CodingKey {
         case title
@@ -34,10 +39,10 @@ public struct TrackMatchHint: Decodable, Sendable, Hashable {
         artistCredit = try c.decodeIfPresent(String.self, forKey: .artistCredit)
         position = try c.decodeIfPresent(String.self, forKey: .position)
         confidence = try c.decodeIfPresent(Double.self, forKey: .confidence)
-        // Unknown TrackMatchSource values are decoded as `.unknown` rather
+        // Unrecognized TrackMatchSource values are decoded as nil rather
         // than failing the row. Server adds new sources as cross-cache-
         // identity work lands; the client must not start refusing rows.
-        source = (try? c.decode(TrackMatchSource.self, forKey: .source)) ?? .unknown
+        source = (try? c.decodeIfPresent(TrackMatchSource.self, forKey: .source)) ?? nil
     }
 }
 
@@ -46,5 +51,4 @@ public enum TrackMatchSource: String, Decodable, Sendable, Hashable, CaseIterabl
     case discogsRelease = "discogs_release"
     case discogsMaster = "discogs_master"
     case libraryIdentity = "library_identity"
-    case unknown
 }

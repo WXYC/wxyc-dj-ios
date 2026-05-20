@@ -22,31 +22,33 @@ struct TrackMatchBadgeTests {
         #expect(TrackMatchBadge.summary(from: []) == nil)
     }
 
-    @Test func singleHintRendersViaTrackPrefix() {
-        let hint = TrackMatchHint(
+    @Test func singleHintRendersViaTrackPrefix() throws {
+        let hint = try TrackMatchHint.fixture(
             title: "In a Sentimental Mood",
             source: "cta"
         )
         #expect(TrackMatchBadge.summary(from: [hint]) == "via track: In a Sentimental Mood")
     }
 
-    @Test func multipleHintsAppendOverflowCount() {
+    @Test func multipleHintsAppendOverflowCount() throws {
         let hints = [
-            TrackMatchHint(title: "VI Scose Poise", source: "discogs_master"),
-            TrackMatchHint(title: "Eutow", source: "discogs_master"),
-            TrackMatchHint(title: "Pen Expers", source: "discogs_master"),
+            try TrackMatchHint.fixture(title: "VI Scose Poise", source: "discogs_master"),
+            try TrackMatchHint.fixture(title: "Eutow", source: "discogs_master"),
+            try TrackMatchHint.fixture(title: "Pen Expers", source: "discogs_master"),
         ]
         #expect(TrackMatchBadge.summary(from: hints) == "via track: VI Scose Poise (+2 more)")
     }
 }
 
 // Lightweight constructor for tests. Mirrors the JSON-decoded shape but
-// skips JSONDecoder so a test fixture can build a hint inline.
+// surfaces decode failures as a thrown error rather than a process trap,
+// so a bad fixture string fails the test cleanly instead of crashing the
+// runner.
 private extension TrackMatchHint {
-    init(title: String, source rawSource: String) {
+    static func fixture(title: String, source rawSource: String) throws -> TrackMatchHint {
         let payload = """
             { "title": "\(title)", "source": "\(rawSource)" }
             """
-        self = try! JSONCoders.decoder.decode(TrackMatchHint.self, from: Data(payload.utf8))
+        return try JSONCoders.decoder.decode(TrackMatchHint.self, from: Data(payload.utf8))
     }
 }
