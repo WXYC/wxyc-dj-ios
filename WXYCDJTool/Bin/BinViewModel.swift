@@ -23,6 +23,10 @@ final class BinViewModel {
 
     private(set) var entries: [BinEntry] = []
     private(set) var state: State = .loading
+    /// Surfaced as an alert by BinView. `state` is reserved for the
+    /// initial-load lifecycle (loading / loaded / error); a remove failure
+    /// against an already-loaded list shouldn't blow the list away.
+    var removeError: String?
 
     private let api: APIClient
 
@@ -48,7 +52,7 @@ final class BinViewModel {
             try await api.removeFromBin(albumId: entry.albumId, trackTitle: nil)
             entries.removeAll { $0.id == entry.id }
         } catch {
-            state = .error((error as? APIError)?.localizedMessage ?? error.localizedDescription)
+            removeError = (error as? APIError)?.localizedMessage ?? error.localizedDescription
         }
     }
 }

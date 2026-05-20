@@ -64,6 +64,21 @@ struct BinView: View {
             .navigationDestination(for: BinEntry.self) { entry in
                 AlbumDetailView(albumId: entry.albumId, fallback: nil)
             }
+            // The list itself stays mounted on a remove failure (state stays
+            // .loaded), so the error has to surface in a non-destructive way.
+            // Tap-to-dismiss alert is enough; the row is still there to retry.
+            .alert(
+                "Couldn't remove",
+                isPresented: Binding(
+                    get: { viewModel.removeError != nil },
+                    set: { if !$0 { viewModel.removeError = nil } }
+                ),
+                presenting: viewModel.removeError
+            ) { _ in
+                Button("OK", role: .cancel) {}
+            } message: { message in
+                Text(message)
+            }
         }
     }
 }
