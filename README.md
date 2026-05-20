@@ -1,8 +1,8 @@
 # WXYC DJ Tool (iOS)
 
-A small SwiftUI app for WXYC DJs. Log in with dj.wxyc.org credentials, search the WXYC library with live results, view a release's full metadata, and add/remove items from your personal **bin** (the per-DJ favorites collection Backend-Service exposes at `/djs/bin`).
+A small SwiftUI app for WXYC DJs. Log in with dj.wxyc.org credentials, search the WXYC library with live results, view a release's full metadata (catalog row + LML enrichment — release year, label, genres, styles, tracklist, streaming links, Discogs and Wikipedia URLs), and add/remove items from your personal **bin** (the per-DJ favorites collection Backend-Service exposes at `/djs/bin`).
 
-This is a focused tool. It deliberately does **not** ship: flowsheet integration, playback, rotation (H/M/L/S) editing, push notifications, or Discogs/Wikipedia enrichment of the detail view. Those can come later — see the v2 list at the bottom.
+This is a focused tool. It deliberately does **not** ship: flowsheet integration, playback, rotation (H/M/L/S) editing, push notifications, or the second LML call for artist bio/tokens. Those can come later — see the v2 list at the bottom.
 
 ## Requirements
 
@@ -72,6 +72,7 @@ All endpoints live in Backend-Service (`apps/backend/routes/`) except the auth s
 | List bin | GET | `/djs/bin` | JWT |
 | Add to bin | POST | `/djs/bin` | JWT |
 | Remove from bin | DELETE | `/djs/bin?album_id=` | JWT |
+| Album metadata (LML) | GET | `/proxy/metadata/album?artistName=&releaseTitle=` | JWT |
 
 The bin endpoints derive the DJ from the JWT's `sub` claim, so the client never sends `dj_id`. The JWT is short-lived; `AuthService.currentJWT()` refreshes via `/auth/token` automatically and `APIClient` retries once on a 401.
 
@@ -94,7 +95,7 @@ Follows `wxyc-ios-64/CLAUDE.md`:
 
 ## v2 (not in scope today)
 
-- LML-driven Discogs enrichment in the detail view: tracklist, bio, Wikipedia link, styles
+- Artist bio + Wikipedia from `/proxy/metadata/artist` (bio tokens, second LML call). Album-level enrichment ships in v1.
 - Pull from / write to rotation (musicDirector / stationManager only)
 - iPad / Catalyst layout
 - swift-openapi-generator pipeline against `wxyc-shared/api.yaml`
