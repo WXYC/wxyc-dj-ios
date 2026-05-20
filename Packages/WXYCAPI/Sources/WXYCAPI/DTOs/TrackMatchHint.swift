@@ -39,10 +39,11 @@ public struct TrackMatchHint: Decodable, Sendable, Hashable {
         artistCredit = try c.decodeIfPresent(String.self, forKey: .artistCredit)
         position = try c.decodeIfPresent(String.self, forKey: .position)
         confidence = try c.decodeIfPresent(Double.self, forKey: .confidence)
-        // Unrecognized TrackMatchSource values are decoded as nil rather
-        // than failing the row. Server adds new sources as cross-cache-
-        // identity work lands; the client must not start refusing rows.
-        source = (try? c.decodeIfPresent(TrackMatchSource.self, forKey: .source)) ?? nil
+        // Unrecognized TrackMatchSource values (and an absent key) are
+        // decoded as nil rather than failing the row. Server adds new
+        // sources as cross-cache-identity work lands; the client must
+        // not start refusing rows.
+        source = try? c.decode(TrackMatchSource.self, forKey: .source)
     }
 }
 
