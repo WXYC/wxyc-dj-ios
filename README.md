@@ -1,5 +1,7 @@
 # WXYC DJ Tool (iOS)
 
+[![CI](https://github.com/WXYC/wxyc-dj-tool-ios/actions/workflows/ci.yml/badge.svg)](https://github.com/WXYC/wxyc-dj-tool-ios/actions/workflows/ci.yml)
+
 A small SwiftUI app for WXYC DJs. Log in with dj.wxyc.org credentials, search the WXYC library with live results, view a release's full metadata (catalog row + LML enrichment — release year, label, genres, styles, tracklist, streaming links, Discogs and Wikipedia URLs), and add/remove items from your personal **bin** (the per-DJ favorites collection Backend-Service exposes at `/djs/bin`).
 
 This is a focused tool. It deliberately does **not** ship: flowsheet integration, playback, rotation (H/M/L/S) editing, push notifications, or the second LML call for artist bio/tokens. Those can come later — see the v2 list at the bottom.

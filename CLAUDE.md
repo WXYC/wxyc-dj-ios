@@ -71,6 +71,22 @@ When adding a new endpoint, prefer to:
 
 Test fixtures (`Tests/WXYCAPITests/Support/Fixtures.swift`) use WXYC-representative artists — Juana Molina / DOGA, Jessica Pratt / On Your Own Love Again, Chuquimamani-Condori / Edits. **Do not** introduce mainstream substitutes (Queen, Radiohead, The Beatles); the canonical pool is `wxyc-shared/src/test-utils/wxyc-example-data.json`.
 
+## CI / pre-push checks
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every PR and push to `main`. The same two commands are the local pre-flight — run both before opening a PR so CI minutes aren't wasted on red builds:
+
+```bash
+swift test --package-path Packages/WXYCAPI
+xcodebuild build \
+  -project WXYCDJTool.xcodeproj \
+  -scheme WXYCDJTool \
+  -destination 'generic/platform=iOS Simulator' \
+  -configuration Debug \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+The build job uses `generic/platform=iOS Simulator` (no specific simulator boot) and `CODE_SIGNING_ALLOWED=NO` since the app's `DEVELOPMENT_TEAM` is empty in `project.yml`.
+
 ## Things explicitly out of scope
 
 Don't add these without asking:
