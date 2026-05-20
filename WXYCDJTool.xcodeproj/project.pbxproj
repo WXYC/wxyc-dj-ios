@@ -12,24 +12,37 @@
 		2E0BF368AB09935B12C034D8 /* AlbumDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5E5BF22B85CF46FAE3CF485 /* AlbumDetailView.swift */; };
 		35951AC643AE0E4D4E2C0A07 /* AppDependencies.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6061F9C16B998BE03F6DD393 /* AppDependencies.swift */; };
 		66E61B80EA4873A8D9B0AC86 /* BinViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3576725D853FE37D40F62C27 /* BinViewModel.swift */; };
+		7B6359399EC825BCB6E32BFA /* StubRequestSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCCE5DE0CF9D9D12750BB163 /* StubRequestSession.swift */; };
+		817864F83CE2C6CE3AFD9E81 /* BinViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7E9934C79349CE770CF42A6 /* BinViewModelTests.swift */; };
 		9A3B9A8010E49E45083AF4C7 /* WXYCDJToolApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50BD744873DADB1197139875 /* WXYCDJToolApp.swift */; };
+		A36237DFF3BC26FBDB804642 /* WXYCAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 451C338355AF63758BD6040A /* WXYCAPI */; };
 		B74489EE44E6115CE06C4F72 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E31033BE44902A35FA415AB9 /* RootView.swift */; };
 		B7E8656A8D9F1FFDE98A3523 /* WXYCAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 66F696BCF770184AD97F13FA /* WXYCAPI */; };
 		C7155C335ED4E467C7FA70B4 /* BinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65D27F4A51926D3215B558F8 /* BinView.swift */; };
+		E1E241BEB61C3906C8D7B12F /* Fixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE6624436078760B7D5438F1 /* Fixtures.swift */; };
 		E868CE3FF2CDA7074DA28392 /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A779488BBFD9CDCBAB7B37C7 /* MainView.swift */; };
-		EE8989918A8B96F69C1F57F4 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 48FB65A67B9CB343DB482778 /* Preview Assets.xcassets */; };
 		F1CFBC45E9FA087B6E83A316 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3503469C3A1405958D55CE14 /* Assets.xcassets */; };
 		F9E458DCB7E50DD82A6309AF /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AC7251FA351490A1AF674C6 /* LoginView.swift */; };
 		FADA492CD595FD0672DC57CF /* SearchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FBD7C84899249EECF2F84AE /* SearchViewModel.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		B002E3DACD838D6E71CACBF1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6A7F5449CF8F5929B61D6103 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 23C138DB06311B407A9ED7FC;
+			remoteInfo = WXYCDJTool;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		2AC7251FA351490A1AF674C6 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		3082A0A5EA9271121EA369DB /* WXYCDJToolTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = WXYCDJToolTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3503469C3A1405958D55CE14 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		3576725D853FE37D40F62C27 /* BinViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BinViewModel.swift; sourceTree = "<group>"; };
-		48FB65A67B9CB343DB482778 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		50BD744873DADB1197139875 /* WXYCDJToolApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WXYCDJToolApp.swift; sourceTree = "<group>"; };
-		5CE99814FF5C4F1F0198FB28 /* WXYCDJTool.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WXYCDJTool.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5CE99814FF5C4F1F0198FB28 /* WXYCDJTool.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = WXYCDJTool.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6061F9C16B998BE03F6DD393 /* AppDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDependencies.swift; sourceTree = "<group>"; };
 		65D27F4A51926D3215B558F8 /* BinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BinView.swift; sourceTree = "<group>"; };
 		83E77E8762C57FB247BE3AAD /* SearchResultRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResultRow.swift; sourceTree = "<group>"; };
@@ -38,7 +51,10 @@
 		B5E5BF22B85CF46FAE3CF485 /* AlbumDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumDetailView.swift; sourceTree = "<group>"; };
 		C12F004E302C2B3E697EC023 /* WXYCAPI */ = {isa = PBXFileReference; lastKnownFileType = folder; name = WXYCAPI; path = Packages/WXYCAPI; sourceTree = SOURCE_ROOT; };
 		CAB7C55727A737C832285916 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
+		CE6624436078760B7D5438F1 /* Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixtures.swift; sourceTree = "<group>"; };
+		D7E9934C79349CE770CF42A6 /* BinViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BinViewModelTests.swift; sourceTree = "<group>"; };
 		E31033BE44902A35FA415AB9 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		FCCE5DE0CF9D9D12750BB163 /* StubRequestSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubRequestSession.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -47,6 +63,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				B7E8656A8D9F1FFDE98A3523 /* WXYCAPI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		46B7F47353D055504962B660 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A36237DFF3BC26FBDB804642 /* WXYCAPI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -84,6 +108,7 @@
 			isa = PBXGroup;
 			children = (
 				5CE99814FF5C4F1F0198FB28 /* WXYCDJTool.app */,
+				3082A0A5EA9271121EA369DB /* WXYCDJToolTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -93,16 +118,27 @@
 			children = (
 				0D4C716B445067F460F657FF /* Packages */,
 				AF2611A432CFDE1EDC6DF7AC /* WXYCDJTool */,
+				4F9AD25AC9E8B6209A25BD31 /* WXYCDJToolTests */,
 				1F396A4344C9BB3056F50C0E /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		97113551CFB21B2BB57DE0D3 /* Preview Content */ = {
+		4F9AD25AC9E8B6209A25BD31 /* WXYCDJToolTests */ = {
 			isa = PBXGroup;
 			children = (
-				48FB65A67B9CB343DB482778 /* Preview Assets.xcassets */,
+				BA135D9CD3C8DAFEF892F2E1 /* Bin */,
+				569A83E6568A1DDB85EF7623 /* Support */,
 			);
-			path = "Preview Content";
+			path = WXYCDJToolTests;
+			sourceTree = "<group>";
+		};
+		569A83E6568A1DDB85EF7623 /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				CE6624436078760B7D5438F1 /* Fixtures.swift */,
+				FCCE5DE0CF9D9D12750BB163 /* StubRequestSession.swift */,
+			);
+			path = Support;
 			sourceTree = "<group>";
 		};
 		AF2611A432CFDE1EDC6DF7AC /* WXYCDJTool */ = {
@@ -116,10 +152,17 @@
 				CD2EF47599E934D5D69C485D /* Auth */,
 				1024F82D3DD40E128F26F10A /* Bin */,
 				F5BCA8B1F4C7325B1AC6FA2B /* Detail */,
-				97113551CFB21B2BB57DE0D3 /* Preview Content */,
 				16147EDA17EF80C2689690AC /* Search */,
 			);
 			path = WXYCDJTool;
+			sourceTree = "<group>";
+		};
+		BA135D9CD3C8DAFEF892F2E1 /* Bin */ = {
+			isa = PBXGroup;
+			children = (
+				D7E9934C79349CE770CF42A6 /* BinViewModelTests.swift */,
+			);
+			path = Bin;
 			sourceTree = "<group>";
 		};
 		CD2EF47599E934D5D69C485D /* Auth */ = {
@@ -161,6 +204,26 @@
 			productReference = 5CE99814FF5C4F1F0198FB28 /* WXYCDJTool.app */;
 			productType = "com.apple.product-type.application";
 		};
+		B051DF7AA9C351620D9C77BC /* WXYCDJToolTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8518E96285F8A1BDE8D4404A /* Build configuration list for PBXNativeTarget "WXYCDJToolTests" */;
+			buildPhases = (
+				24684189A36F5C9E6D5CC21D /* Sources */,
+				46B7F47353D055504962B660 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				64E9BC6E543F5509F1A5AEE7 /* PBXTargetDependency */,
+			);
+			name = WXYCDJToolTests;
+			packageProductDependencies = (
+				451C338355AF63758BD6040A /* WXYCAPI */,
+			);
+			productName = WXYCDJToolTests;
+			productReference = 3082A0A5EA9271121EA369DB /* WXYCDJToolTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -171,6 +234,11 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					23C138DB06311B407A9ED7FC = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					B051DF7AA9C351620D9C77BC = {
+						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -193,6 +261,7 @@
 			projectRoot = "";
 			targets = (
 				23C138DB06311B407A9ED7FC /* WXYCDJTool */,
+				B051DF7AA9C351620D9C77BC /* WXYCDJToolTests */,
 			);
 		};
 /* End PBXProject section */
@@ -203,7 +272,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				F1CFBC45E9FA087B6E83A316 /* Assets.xcassets in Resources */,
-				EE8989918A8B96F69C1F57F4 /* Preview Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -228,15 +296,49 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		24684189A36F5C9E6D5CC21D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				817864F83CE2C6CE3AFD9E81 /* BinViewModelTests.swift in Sources */,
+				E1E241BEB61C3906C8D7B12F /* Fixtures.swift in Sources */,
+				7B6359399EC825BCB6E32BFA /* StubRequestSession.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		64E9BC6E543F5509F1A5AEE7 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 23C138DB06311B407A9ED7FC /* WXYCDJTool */;
+			targetProxy = B002E3DACD838D6E71CACBF1 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		018EEB7674E9D5DF9FCBD839 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "org.wxyc.dj-tool.tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WXYCDJTool.app/WXYCDJTool";
+			};
+			name = Debug;
+		};
 		1A8D691BA3EF7143289E5C62 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = 92V374HC38;
 				INFOPLIST_KEY_CFBundleDisplayName = "WXYC DJ Tool";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -248,6 +350,23 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "org.wxyc.dj-tool";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		A6FE1FD31B090C4C0A51DE0A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "org.wxyc.dj-tool.tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WXYCDJTool.app/WXYCDJTool";
 			};
 			name = Release;
 		};
@@ -397,7 +516,6 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = 92V374HC38;
 				INFOPLIST_KEY_CFBundleDisplayName = "WXYC DJ Tool";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -424,6 +542,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		8518E96285F8A1BDE8D4404A /* Build configuration list for PBXNativeTarget "WXYCDJToolTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				018EEB7674E9D5DF9FCBD839 /* Debug */,
+				A6FE1FD31B090C4C0A51DE0A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		FD861319CE6DC8607B6BF26F /* Build configuration list for PBXProject "WXYCDJTool" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -443,6 +570,10 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		451C338355AF63758BD6040A /* WXYCAPI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = WXYCAPI;
+		};
 		66F696BCF770184AD97F13FA /* WXYCAPI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = WXYCAPI;
