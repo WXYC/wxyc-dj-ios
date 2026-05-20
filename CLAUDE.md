@@ -40,7 +40,7 @@ project.yml                      xcodegen spec (regen via `xcodegen generate`)
 WXYCDJTool.xcodeproj/            Generated; tracked in git for IDE convenience
 ```
 
-The Xcode project is regenerated from `project.yml`. After editing `project.yml`, run `xcodegen generate`. If you add new files to `WXYCDJTool/` or `WXYCDJToolTests/`, no project edit is needed — the target sources path scans the directory.
+The Xcode project is regenerated from `project.yml`. Run `xcodegen generate` after editing `project.yml` **and** after adding any new source files to `WXYCDJTool/` or `WXYCDJToolTests/` — xcodegen bakes explicit file references into the pbxproj at generation time, so new files aren't picked up until you regen.
 
 `WXYCDJToolTests` is the bundle for anything that has to `@testable import WXYCDJTool` (view models, the AppDependencies composition root, etc.). Pure networking / DTO / auth tests stay in `Packages/WXYCAPI/Tests/WXYCAPITests` so `swift test` can run them on the host without booting a simulator. `WXYCDJToolTests/Support/StubRequestSession.swift` + `Fixtures.swift` are deliberate copies of their `WXYCAPITests/Support/` counterparts — promote them to a shared SPM test-support target if a third bundle ever needs them.
 

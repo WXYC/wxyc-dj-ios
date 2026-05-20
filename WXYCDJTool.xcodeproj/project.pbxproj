@@ -14,6 +14,8 @@
 		66E61B80EA4873A8D9B0AC86 /* BinViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3576725D853FE37D40F62C27 /* BinViewModel.swift */; };
 		7B6359399EC825BCB6E32BFA /* StubRequestSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCCE5DE0CF9D9D12750BB163 /* StubRequestSession.swift */; };
 		817864F83CE2C6CE3AFD9E81 /* BinViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7E9934C79349CE770CF42A6 /* BinViewModelTests.swift */; };
+		8B314F4E4DD4B15AF8EAEEB1 /* SearchViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5B1344195B0478EDDE76E1D /* SearchViewModelTests.swift */; };
+		997BA9BF5E95371321831DBB /* SignedInClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38DBFAFFDB343DEFCED927ED /* SignedInClient.swift */; };
 		9A3B9A8010E49E45083AF4C7 /* WXYCDJToolApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50BD744873DADB1197139875 /* WXYCDJToolApp.swift */; };
 		A36237DFF3BC26FBDB804642 /* WXYCAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 451C338355AF63758BD6040A /* WXYCAPI */; };
 		B74489EE44E6115CE06C4F72 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E31033BE44902A35FA415AB9 /* RootView.swift */; };
@@ -41,6 +43,7 @@
 		3082A0A5EA9271121EA369DB /* WXYCDJToolTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = WXYCDJToolTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3503469C3A1405958D55CE14 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		3576725D853FE37D40F62C27 /* BinViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BinViewModel.swift; sourceTree = "<group>"; };
+		38DBFAFFDB343DEFCED927ED /* SignedInClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignedInClient.swift; sourceTree = "<group>"; };
 		50BD744873DADB1197139875 /* WXYCDJToolApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WXYCDJToolApp.swift; sourceTree = "<group>"; };
 		5CE99814FF5C4F1F0198FB28 /* WXYCDJTool.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = WXYCDJTool.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6061F9C16B998BE03F6DD393 /* AppDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDependencies.swift; sourceTree = "<group>"; };
@@ -50,6 +53,7 @@
 		A779488BBFD9CDCBAB7B37C7 /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
 		B5E5BF22B85CF46FAE3CF485 /* AlbumDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumDetailView.swift; sourceTree = "<group>"; };
 		C12F004E302C2B3E697EC023 /* WXYCAPI */ = {isa = PBXFileReference; lastKnownFileType = folder; name = WXYCAPI; path = Packages/WXYCAPI; sourceTree = SOURCE_ROOT; };
+		C5B1344195B0478EDDE76E1D /* SearchViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchViewModelTests.swift; sourceTree = "<group>"; };
 		CAB7C55727A737C832285916 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
 		CE6624436078760B7D5438F1 /* Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixtures.swift; sourceTree = "<group>"; };
 		D7E9934C79349CE770CF42A6 /* BinViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BinViewModelTests.swift; sourceTree = "<group>"; };
@@ -127,6 +131,7 @@
 			isa = PBXGroup;
 			children = (
 				BA135D9CD3C8DAFEF892F2E1 /* Bin */,
+				D2462382B7533C8927CCE8E7 /* Search */,
 				569A83E6568A1DDB85EF7623 /* Support */,
 			);
 			path = WXYCDJToolTests;
@@ -136,6 +141,7 @@
 			isa = PBXGroup;
 			children = (
 				CE6624436078760B7D5438F1 /* Fixtures.swift */,
+				38DBFAFFDB343DEFCED927ED /* SignedInClient.swift */,
 				FCCE5DE0CF9D9D12750BB163 /* StubRequestSession.swift */,
 			);
 			path = Support;
@@ -171,6 +177,14 @@
 				2AC7251FA351490A1AF674C6 /* LoginView.swift */,
 			);
 			path = Auth;
+			sourceTree = "<group>";
+		};
+		D2462382B7533C8927CCE8E7 /* Search */ = {
+			isa = PBXGroup;
+			children = (
+				C5B1344195B0478EDDE76E1D /* SearchViewModelTests.swift */,
+			);
+			path = Search;
 			sourceTree = "<group>";
 		};
 		F5BCA8B1F4C7325B1AC6FA2B /* Detail */ = {
@@ -302,6 +316,8 @@
 			files = (
 				817864F83CE2C6CE3AFD9E81 /* BinViewModelTests.swift in Sources */,
 				E1E241BEB61C3906C8D7B12F /* Fixtures.swift in Sources */,
+				8B314F4E4DD4B15AF8EAEEB1 /* SearchViewModelTests.swift in Sources */,
+				997BA9BF5E95371321831DBB /* SignedInClient.swift in Sources */,
 				7B6359399EC825BCB6E32BFA /* StubRequestSession.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

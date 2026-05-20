@@ -13,6 +13,25 @@
 import Foundation
 
 enum Fixtures {
+    /// Single-result wire body for GET /library/. Used by SearchViewModel tests.
+    static let juanaMolinaSearchResultsJSON = """
+        [
+          {
+            "id": 100,
+            "add_date": "2025-10-12T00:00:00.000Z",
+            "album_title": "DOGA",
+            "artist_name": "Juana Molina",
+            "code_letters": "MOL",
+            "code_number": 12,
+            "code_artist_number": 1,
+            "format_name": "CD",
+            "genre_name": "Rock",
+            "label": "Sonamos",
+            "rotation_bin": "H"
+          }
+        ]
+        """
+
     static let djBinResponseJSON = """
         {
           "dj_id": 42,
