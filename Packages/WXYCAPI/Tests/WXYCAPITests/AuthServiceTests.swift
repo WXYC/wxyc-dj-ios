@@ -130,6 +130,15 @@ struct AuthServiceTests {
         #expect(service.state == .signedOut)
         #expect(try storage.load(.sessionToken) == nil)
         #expect(try storage.load(.jwt) == nil)
+
+        // Pin the wire contract: signOut must hit POST /auth/sign-out with
+        // the session bearer. better-auth's sign-out endpoint accepts the
+        // bearer plugin's token; getting the URL or method wrong silently
+        // leaves a live session on the server.
+        let signOutRequest = try #require(session.recordedRequests.last)
+        #expect(signOutRequest.httpMethod == "POST")
+        #expect(signOutRequest.url?.path == "/auth/sign-out")
+        #expect(signOutRequest.value(forHTTPHeaderField: "Authorization") == "Bearer session-abc")
     }
 
     @Test func refreshJWTCapturesRotatedSessionTokenFromHeader() async throws {
