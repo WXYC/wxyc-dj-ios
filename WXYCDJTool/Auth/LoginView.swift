@@ -40,7 +40,13 @@ struct LoginView: View {
 
                 Section {
                     Button {
-                        Task { await auth.signIn(username: username, password: password) }
+                        // Trim whitespace on username only — keyboards (and
+                        // password managers) routinely emit a trailing space
+                        // on autofill and the server would 401. Password
+                        // intentionally untrimmed; whitespace in a password
+                        // is significant.
+                        let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
+                        Task { await auth.signIn(username: trimmed, password: password) }
                     } label: {
                         if case .signingIn = auth.state {
                             ProgressView()
