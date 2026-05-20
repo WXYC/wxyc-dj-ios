@@ -50,11 +50,26 @@ jobs:
       - name: Run unit tests (WXYCAPI package)
         run: swift test --package-path Packages/WXYCAPI
 
-      - name: Build iOS app
+      - name: Pre-boot iPhone 16 Pro simulator
+        # Boot a simulator explicitly so xcodebuild test doesn't race CoreSimulator's
+        # implicit boot on macos-latest runners under load. Pattern copied from wxyc-ios-64.
+        id: simulator
         run: |
-          xcodebuild build \
+          DEVICE_ID=$(xcrun simctl list devices available | grep -m1 "iPhone 16 Pro " | grep -oE '\([A-F0-9-]{36}\)' | tr -d '()')
+          if [ -z "$DEVICE_ID" ]; then
+            echo "No iPhone 16 Pro simulator available" >&2
+            xcrun simctl list devices available
+            exit 1
+          fi
+          xcrun simctl boot "$DEVICE_ID" || true
+          xcrun simctl bootstatus "$DEVICE_ID" -b
+          echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test iOS app
+        run: |
+          xcodebuild test \
             -project "$PROJECT" \
             -scheme "$SCHEME" \
-            -destination 'generic/platform=iOS Simulator' \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.device_id }}" \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO

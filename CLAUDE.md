@@ -34,12 +34,15 @@ Every Swift file (except `Package.swift`) starts with:
 
 ```
 WXYCDJTool/                      App target sources
+WXYCDJToolTests/                 App-target unit-test bundle (Swift Testing)
 Packages/WXYCAPI/                Local SPM package: DTOs, AuthService, APIClient
 project.yml                      xcodegen spec (regen via `xcodegen generate`)
 WXYCDJTool.xcodeproj/            Generated; tracked in git for IDE convenience
 ```
 
-The Xcode project is regenerated from `project.yml`. After editing `project.yml`, run `xcodegen generate`. If you add new files to `WXYCDJTool/`, no project edit is needed — the target sources path scans the directory.
+The Xcode project is regenerated from `project.yml`. After editing `project.yml`, run `xcodegen generate`. If you add new files to `WXYCDJTool/` or `WXYCDJToolTests/`, no project edit is needed — the target sources path scans the directory.
+
+`WXYCDJToolTests` is the bundle for anything that has to `@testable import WXYCDJTool` (view models, the AppDependencies composition root, etc.). Pure networking / DTO / auth tests stay in `Packages/WXYCAPI/Tests/WXYCAPITests` so `swift test` can run them on the host without booting a simulator. `WXYCDJToolTests/Support/StubRequestSession.swift` + `Fixtures.swift` are deliberate copies of their `WXYCAPITests/Support/` counterparts — promote them to a shared SPM test-support target if a third bundle ever needs them.
 
 ## Networking layer (`WXYCAPI`)
 
@@ -67,25 +70,31 @@ When adding a new endpoint, prefer to:
 
 ## Tests
 
-`swift test` from `Packages/WXYCAPI/` runs the full suite (Swift Testing, not XCTest). The package supports both `.iOS(.v18)` and `.macOS(.v14)` so `swift test` can run on the host without booting a simulator.
+Two bundles, both Swift Testing (not XCTest):
 
-Test fixtures (`Tests/WXYCAPITests/Support/Fixtures.swift`) use WXYC-representative artists — Juana Molina / DOGA, Jessica Pratt / On Your Own Love Again, Chuquimamani-Condori / Edits. **Do not** introduce mainstream substitutes (Queen, Radiohead, The Beatles); the canonical pool is `wxyc-shared/src/test-utils/wxyc-example-data.json`.
+- **`WXYCAPITests`** in `Packages/WXYCAPI/Tests/` — networking, DTOs, auth, JWT decoding. Runs via `swift test --package-path Packages/WXYCAPI` on the host (no simulator needed; the package declares both `.iOS(.v18)` and `.macOS(.v14)`).
+- **`WXYCDJToolTests`** in `WXYCDJToolTests/` — app-target tests for view models and other code that has to `@testable import WXYCDJTool`. Runs via `xcodebuild test` against a booted iOS simulator.
+
+Test fixtures use WXYC-representative artists — Juana Molina / DOGA, Jessica Pratt / On Your Own Love Again, Chuquimamani-Condori / Edits. **Do not** introduce mainstream substitutes (Queen, Radiohead, The Beatles); the canonical pool is `wxyc-shared/src/test-utils/wxyc-example-data.json`.
 
 ## CI / pre-push checks
 
-GitHub Actions (`.github/workflows/ci.yml`) runs on every PR and push to `main`. The same two commands are the local pre-flight — run both before opening a PR so CI minutes aren't wasted on red builds:
+GitHub Actions (`.github/workflows/ci.yml`) runs on every PR and push to `main`. The local pre-flight mirrors it — run both commands before opening a PR so CI minutes aren't wasted on red builds:
 
 ```bash
 swift test --package-path Packages/WXYCAPI
-xcodebuild build \
+
+# Pick any booted iPhone simulator; the workflow pre-boots iPhone 16 Pro.
+SIM_ID=$(xcrun simctl list devices available | grep -m1 'iPhone 1[67].*Booted' | grep -oE '\([A-F0-9-]{36}\)' | tr -d '()')
+xcodebuild test \
   -project WXYCDJTool.xcodeproj \
   -scheme WXYCDJTool \
-  -destination 'generic/platform=iOS Simulator' \
+  -destination "platform=iOS Simulator,id=$SIM_ID" \
   -configuration Debug \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-The build job uses `generic/platform=iOS Simulator` (no specific simulator boot) and `CODE_SIGNING_ALLOWED=NO` since the app's `DEVELOPMENT_TEAM` is empty in `project.yml`.
+`CODE_SIGNING_ALLOWED=NO` because the app's `DEVELOPMENT_TEAM` is empty in `project.yml`. The test step needs a real simulator (not `generic/platform=iOS Simulator`) because `WXYCDJToolTests` is a host-app unit-test bundle.
 
 ## Things explicitly out of scope
 
