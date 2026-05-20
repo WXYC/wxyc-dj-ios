@@ -201,10 +201,11 @@ struct AlbumDetailView: View {
                 RotationBadge(bin: rotation.rotationBin)
                 Text(rotation.rotationBin.label)
                 Spacer()
-                Text(rotation.addDate).foregroundStyle(.secondary)
+                Text(rotation.addDate.formatted(date: .abbreviated, time: .omitted))
+                    .foregroundStyle(.secondary)
             }
             if let kill = rotation.killDate {
-                metadataRow("Kill date", value: kill)
+                metadataRow("Kill date", value: kill.formatted(date: .abbreviated, time: .omitted))
             }
         }
     }

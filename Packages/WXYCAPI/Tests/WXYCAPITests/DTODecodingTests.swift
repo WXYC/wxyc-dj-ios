@@ -26,6 +26,15 @@ struct DTODecodingTests {
         #expect(info.albumTitle == "DOGA")
         #expect(info.rotation?.rotationBin == .heavy)
         #expect(info.rotation?.killDate == nil)
+        // Rotation date arrives as a date-only YYYY-MM-DD string; the
+        // custom JSONDecoder strategy must parse it as a Date.
+        let components = Calendar(identifier: .gregorian).dateComponents(
+            in: TimeZone(identifier: "UTC")!,
+            from: try #require(info.rotation?.addDate)
+        )
+        #expect(components.year == 2025)
+        #expect(components.month == 10)
+        #expect(components.day == 15)
     }
 
     @Test func decodesAlbumSearchResultWithNullLabel() throws {
