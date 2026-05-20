@@ -15,7 +15,7 @@
 
 import Foundation
 import Testing
-@testable import WXYCAPI
+import WXYCAPI
 @testable import WXYCDJTool
 
 @Suite("AppDependencies.resolveConfiguration")
@@ -49,9 +49,13 @@ struct AppDependenciesTests {
     }
 
     @Test func unparseableURLReturnsProduction() {
+        // Unterminated IPv6 bracket — fails URL(string:) reliably across
+        // Foundation's permissive and strict parsers. Empty strings or
+        // generic gibberish don't, since iOS 17+ URL is lenient about
+        // both.
         let config = AppDependencies.resolveConfiguration(
-            authString: "",
-            apiString: ""
+            authString: "http://[::1",
+            apiString: "http://[::1"
         )
 
         #expect(config.authBaseURL == WXYCAPIConfiguration.production.authBaseURL)

@@ -11,6 +11,7 @@
 //
 
 import Foundation
+import os
 import Testing
 @testable import WXYCAPI
 @testable import WXYCDJTool
@@ -82,5 +83,80 @@ struct LoginViewModelTests {
         await viewModel.submit()
 
         #expect(session.recordedRequests.isEmpty)
+    }
+
+    @Test func secondSubmitWhileSigningInIsNoOp() async throws {
+        let session = HangingRequestSession()
+        let auth = AuthService(
+            configuration: .localDevelopment,
+            storage: InMemoryTokenStorage(),
+            session: session
+        )
+        let viewModel = LoginViewModel(auth: auth)
+        viewModel.username = "juana"
+        viewModel.password = "hunter2"
+
+        let firstSubmit = Task { await viewModel.submit() }
+        await session.waitForFirstRequest()
+
+        #expect(auth.state == .signingIn)
+        #expect(viewModel.canSubmit == false)
+
+        await viewModel.submit()
+
+        #expect(session.recordedRequests.count == 1)
+
+        firstSubmit.cancel()
+        _ = await firstSubmit.value
+    }
+}
+
+/// RequestSession that records the inbound request, signals waiters, then
+/// suspends until the surrounding task is cancelled. Lets a test pin the
+/// view model while AuthService.signIn is parked at its first await.
+private final class HangingRequestSession: RequestSession, @unchecked Sendable {
+    private struct State {
+        var recorded: [URLRequest] = []
+        var waiter: CheckedContinuation<Void, Never>?
+    }
+
+    private let state = OSAllocatedUnfairLock<State>(initialState: State())
+
+    var recordedRequests: [URLRequest] {
+        state.withLock { $0.recorded }
+    }
+
+    func waitForFirstRequest() async {
+        await withCheckedContinuation { continuation in
+            let resumeImmediately = state.withLock { state -> Bool in
+                if !state.recorded.isEmpty {
+                    return true
+                }
+                state.waiter = continuation
+                return false
+            }
+            if resumeImmediately {
+                continuation.resume()
+            }
+        }
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let waiter = state.withLock { state -> CheckedContinuation<Void, Never>? in
+            state.recorded.append(request)
+            return state.waiter.take()
+        }
+        waiter?.resume()
+        // Sleep until cancelled — the test releases us via Task.cancel.
+        try await Task.sleep(for: .seconds(60))
+        throw CancellationError()
+    }
+}
+
+extension Optional {
+    fileprivate mutating func take() -> Wrapped? {
+        let value = self
+        self = nil
+        return value
     }
 }
