@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+*.xcuserdatad/
+*.xcuserdata
+xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/*/.build/
+
+# Generated Xcode project (regenerate via `xcodegen generate`)
+# Keep tracked for now — uncomment to make project.yml the source of truth:
+# WXYCDJTool.xcodeproj/
+
+# IDE
+.vscode/
+.idea/
