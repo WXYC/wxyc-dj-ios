@@ -145,4 +145,26 @@ struct DTODecodingTests {
         #expect(bin.entries.count == 1)
         #expect(bin.entries.first?.artistName == "Juana Molina")
     }
+
+    @Test func decodesBinEntryWithNullCallNumberLegs() throws {
+        // V/A compilations or unfiled adds can have NULL code_letters /
+        // code_number. The decoder must tolerate that rather than
+        // refusing to render the bin row.
+        let raw = """
+            {
+              "id": 3,
+              "dj_id": 42,
+              "album_id": 300,
+              "added_at": "2025-11-03T08:00:00.000Z",
+              "album_title": "Edits",
+              "artist_name": "Chuquimamani-Condori",
+              "code_letters": null,
+              "code_number": null
+            }
+            """
+        let entry = try JSONCoders.decoder.decode(BinEntry.self, from: Data(raw.utf8))
+        #expect(entry.codeLetters == nil)
+        #expect(entry.codeNumber == nil)
+        #expect(entry.callNumber == "")
+    }
 }

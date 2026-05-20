@@ -141,14 +141,14 @@ public final class AuthService {
             if let token = http.value(forHTTPHeaderField: "set-auth-token"), !token.isEmpty {
                 return token
             }
-            if let bodyToken = try? JSONDecoder().decode([String: String].self, from: data)["token"], !bodyToken.isEmpty {
+            if let bodyToken = try? JSONCoders.decoder.decode([String: String].self, from: data)["token"], !bodyToken.isEmpty {
                 return bodyToken
             }
             throw AuthError.missingSessionToken
         case 401, 403:
             throw AuthError.invalidCredentials
         default:
-            let message = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.message
+            let message = (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data))?.message
             throw AuthError.serverFailure(status: http.statusCode, message: message)
         }
     }
@@ -170,7 +170,7 @@ public final class AuthService {
             throw AuthError.serverFailure(status: http.statusCode, message: nil)
         }
         captureRotatedSessionToken(from: http)
-        let decoded = try JSONDecoder().decode(JWTResponse.self, from: data)
+        let decoded = try JSONCoders.decoder.decode(JWTResponse.self, from: data)
         let payload = try JWTDecoder.decode(decoded.token)
         cachedJWT = (decoded.token, payload)
         try? storage.save(decoded.token, for: .jwt)
