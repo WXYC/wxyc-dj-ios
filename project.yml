@@ -1,0 +1,45 @@
+name: WXYCDJTool
+options:
+  bundleIdPrefix: org.wxyc
+  deploymentTarget:
+    iOS: "18.4"
+  developmentLanguage: en
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    GENERATE_INFOPLIST_FILE: YES
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 0.1.0
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    SUPPORTS_MACCATALYST: NO
+    SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+
+packages:
+  WXYCAPI:
+    path: Packages/WXYCAPI
+
+targets:
+  WXYCDJTool:
+    type: application
+    platform: iOS
+    sources:
+      - path: WXYCDJTool
+    dependencies:
+      - package: WXYCAPI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.wxyc.dj-tool
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_CFBundleDisplayName: "WXYC DJ Tool"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
