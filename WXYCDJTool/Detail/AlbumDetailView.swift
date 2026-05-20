@@ -196,16 +196,21 @@ struct AlbumDetailView: View {
     }
 
     private func rotationSection(_ rotation: AlbumInfo.Rotation) -> some View {
+        // Rotation dates are date-only wire values decoded as midnight GMT.
+        // Formatting with `Calendar.current` / `TimeZone.current` slips to
+        // the previous day on negative-UTC hosts (PT/MT/CT/ET); use the
+        // GMT-anchored style from WXYCAPI so the displayed day matches
+        // the wire day.
         Section("Rotation") {
             HStack {
                 RotationBadge(bin: rotation.rotationBin)
                 Text(rotation.rotationBin.label)
                 Spacer()
-                Text(rotation.addDate.formatted(date: .abbreviated, time: .omitted))
+                Text(rotation.addDate.formatted(WXYCDateFormatting.dateOnlyFormatStyle))
                     .foregroundStyle(.secondary)
             }
             if let kill = rotation.killDate {
-                metadataRow("Kill date", value: kill.formatted(date: .abbreviated, time: .omitted))
+                metadataRow("Kill date", value: kill.formatted(WXYCDateFormatting.dateOnlyFormatStyle))
             }
         }
     }
