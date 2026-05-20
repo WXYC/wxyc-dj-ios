@@ -24,8 +24,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: List available Xcode versions
+        run: ls /Applications | grep -i xcode
+
+      - name: Select Xcode 26.2
+        run: sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
+
       - name: Show Xcode version
         run: xcodebuild -version
+
+      - name: Show Swift version
+        run: swift --version
 
       - name: Cache SwiftPM artifacts
         uses: actions/cache@v4
