@@ -199,6 +199,25 @@ struct AuthServiceTests {
         #expect(try storage.load(.sessionToken) == "session-stable")
     }
 
+    @Test func restoreSessionWithTransientServerErrorKeepsSessionTokenInKeychain() async throws {
+        // /auth/token returning 5xx (server down, not "session expired")
+        // should leave the user at the login screen — but the persisted
+        // session token must remain so the next launch can retry. Wiping
+        // it would force a manual re-sign-in for an offline blip.
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-stored", for: .sessionToken)
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 503, body: Data()))
+
+        await service.restoreSession()
+
+        #expect(service.state == .signedOut)
+        // Keychain must still hold the token.
+        #expect(try storage.load(.sessionToken) == "session-stored")
+    }
+
     @Test func currentJWTReusesCachedTokenWhenFresh() async throws {
         let session = StubRequestSession()
         let storage = InMemoryTokenStorage()

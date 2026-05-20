@@ -23,9 +23,11 @@ struct AlbumDetailView: View {
     let fallback: AlbumSearchResult?
     @Environment(AppDependencies.self) private var deps
     @State private var info: AlbumInfo?
+    @State private var infoLoaded: Bool = false
     @State private var metadata: AlbumMetadata?
     @State private var metadataError: String?
     @State private var loadError: String?
+    @State private var addError: String?
     @State private var addedToBin: Bool = false
     @State private var addInFlight: Bool = false
 
@@ -59,6 +61,12 @@ struct AlbumDetailView: View {
             actionSection
             if let loadError {
                 Section { Text(loadError).foregroundStyle(.red) }
+            }
+            if let addError {
+                Section {
+                    Text("Couldn't add to bin: \(addError)")
+                        .foregroundStyle(.red)
+                }
             }
             if metadata == nil, let metadataError {
                 Section {
@@ -129,7 +137,7 @@ struct AlbumDetailView: View {
             if let year = m.releaseYear {
                 metadataRow("Year", value: String(year))
             }
-            if let label = m.label, !label.isEmpty, label != info?.label {
+            if infoLoaded, let label = m.label, !label.isEmpty, label != info?.label {
                 metadataRow("Label", value: label)
             }
             if let date = m.fullReleaseDate, !date.isEmpty {
@@ -248,7 +256,10 @@ struct AlbumDetailView: View {
         // row, suppress the section header entirely.
         if m.releaseYear != nil { return true }
         if m.fullReleaseDate?.isEmpty == false { return true }
-        if let label = m.label, !label.isEmpty, label != info?.label {
+        // Only consider the label divergence once the catalog row has
+        // settled. Otherwise the label row briefly renders, then collapses
+        // when /library/info arrives with the same label.
+        if infoLoaded, let label = m.label, !label.isEmpty, label != info?.label {
             return true
         }
         return false
@@ -283,10 +294,12 @@ struct AlbumDetailView: View {
                                                               releaseTitle: fallback?.albumTitle)
             let (loadedInfo, loadedMeta) = await (infoTask, metaTask)
             if let loadedInfo { info = loadedInfo }
+            infoLoaded = true
             if let loadedMeta { metadata = loadedMeta }
         } else {
             let loadedInfo = await loadInfo()
             if let loadedInfo { info = loadedInfo }
+            infoLoaded = true
             let loadedMeta = await loadMetadata(artistName: loadedInfo?.artistName,
                                                 releaseTitle: loadedInfo?.albumTitle)
             if let loadedMeta { metadata = loadedMeta }
@@ -335,12 +348,15 @@ struct AlbumDetailView: View {
 
     private func addToBin() async {
         addInFlight = true
+        addError = nil
         defer { addInFlight = false }
         do {
             _ = try await deps.api.addToBin(albumId: albumId)
             addedToBin = true
         } catch {
-            loadError = (error as? APIError)?.localizedMessage ?? error.localizedDescription
+            // Surface to a dedicated addError state so the add-to-bin
+            // failure doesn't masquerade as a catalog-row load error.
+            addError = (error as? APIError)?.localizedMessage ?? error.localizedDescription
         }
     }
 }
