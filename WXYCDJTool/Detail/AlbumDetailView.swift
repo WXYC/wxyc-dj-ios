@@ -243,7 +243,15 @@ struct AlbumDetailView: View {
     }
 
     private func hasReleaseInfo(_ m: AlbumMetadata) -> Bool {
-        m.releaseYear != nil || (m.label != nil && m.label != info?.label) || (m.fullReleaseDate?.isEmpty == false)
+        // The Release section renders Year, Label (when LML's differs from
+        // the catalog row), and Released. If none of those would emit a
+        // row, suppress the section header entirely.
+        if m.releaseYear != nil { return true }
+        if m.fullReleaseDate?.isEmpty == false { return true }
+        if let label = m.label, !label.isEmpty, label != info?.label {
+            return true
+        }
+        return false
     }
 
     private func hasStreamingLinks(_ m: AlbumMetadata) -> Bool {
@@ -263,11 +271,26 @@ struct AlbumDetailView: View {
     }
 
     private func loadAll() async {
-        async let infoTask: AlbumInfo? = loadInfo()
-        async let metaTask: AlbumMetadata? = loadMetadata()
-        let (loadedInfo, loadedMeta) = await (infoTask, metaTask)
-        if let loadedInfo { info = loadedInfo }
-        if let loadedMeta { metadata = loadedMeta }
+        loadError = nil
+        metadataError = nil
+        // If we have a fallback (Search → Detail), kick metadata off in
+        // parallel with the catalog fetch. If we don't (Bin → Detail), we
+        // need the catalog row's artist/title to even build the metadata
+        // request, so await it first.
+        if fallback != nil {
+            async let infoTask: AlbumInfo? = loadInfo()
+            async let metaTask: AlbumMetadata? = loadMetadata(artistName: fallback?.artistName,
+                                                              releaseTitle: fallback?.albumTitle)
+            let (loadedInfo, loadedMeta) = await (infoTask, metaTask)
+            if let loadedInfo { info = loadedInfo }
+            if let loadedMeta { metadata = loadedMeta }
+        } else {
+            let loadedInfo = await loadInfo()
+            if let loadedInfo { info = loadedInfo }
+            let loadedMeta = await loadMetadata(artistName: loadedInfo?.artistName,
+                                                releaseTitle: loadedInfo?.albumTitle)
+            if let loadedMeta { metadata = loadedMeta }
+        }
     }
 
     private func loadInfo() async -> AlbumInfo? {
@@ -285,11 +308,9 @@ struct AlbumDetailView: View {
     /// detail screen showing just the catalog data instead of surfacing a
     /// red error banner. We do log + show an inline note so a partial render
     /// is debuggable instead of looking like "nothing happened."
-    private func loadMetadata() async -> AlbumMetadata? {
-        let artistName = fallback?.artistName ?? info?.artistName
-        let releaseTitle = fallback?.albumTitle ?? info?.albumTitle
+    private func loadMetadata(artistName: String?, releaseTitle: String?) async -> AlbumMetadata? {
         guard let artistName, !artistName.isEmpty else {
-            metadataError = "no artist name yet"
+            metadataError = "no artist name available"
             return nil
         }
         metadataLog.info("fetching metadata for \(artistName, privacy: .public) — \(releaseTitle ?? "<nil>", privacy: .public)")

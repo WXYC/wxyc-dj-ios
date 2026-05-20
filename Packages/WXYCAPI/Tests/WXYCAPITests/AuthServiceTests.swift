@@ -82,6 +82,33 @@ struct AuthServiceTests {
         }
     }
 
+    @Test func signOutClearsLocalStateEvenWhenNetworkCallFails() async throws {
+        // The remote /auth/sign-out is best-effort: if the server is
+        // unreachable, we still want the device to forget the session.
+        // Otherwise a stale offline state can pin the user "signed in" with
+        // a long-dead token.
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        try storage.save("jwt-old", for: .jwt)
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        // restoreSession needs a JWT exchange to succeed first
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await service.restoreSession()
+
+        // Network sign-out fails (server down): stub a 500.
+        session.enqueue(StubRequestSession.Stub(statusCode: 500, body: Data()))
+        await service.signOut()
+
+        #expect(service.state == .signedOut)
+        #expect(try storage.load(.sessionToken) == nil)
+        #expect(try storage.load(.jwt) == nil)
+    }
+
     @Test func signOutClearsStateAndStorage() async throws {
         let session = StubRequestSession()
         let storage = InMemoryTokenStorage()

@@ -18,8 +18,11 @@ public struct BinEntry: Codable, Sendable, Hashable, Identifiable {
     public let addedAt: Date
     public let albumTitle: String
     public let artistName: String
-    public let codeLetters: String
-    public let codeNumber: Int
+    // `code_letters` / `code_number` are nullable in the catalog (V/A
+    // compilations, unfiled adds), so the bin denormalization can carry
+    // nulls through. Keep these optional to match AlbumSearchResult.
+    public let codeLetters: String?
+    public let codeNumber: Int?
 
     /// `<letters> <number>` — BinEntry doesn't carry the artist code today,
     /// so this is shorter than AlbumSearchResult.callNumber.

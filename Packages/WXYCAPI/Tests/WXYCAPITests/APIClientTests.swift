@@ -46,8 +46,12 @@ struct APIClientTests {
 
         #expect(results.count == 1)
         #expect(results.first?.artistName == "Juana Molina")
-        let request = session.recordedRequests.last!
-        #expect(request.url!.path == "/library")
+        let request = try #require(session.recordedRequests.last)
+        // URL.appending(path:) may or may not normalize the trailing slash;
+        // accept either form so the test pins behavior, not Foundation's
+        // path normalization.
+        let path = request.url!.path
+        #expect(path == "/library" || path == "/library/")
         let query = request.url!.query ?? ""
         #expect(query.contains("artist_name=Juana"))
         #expect(query.contains("n=10"))
@@ -93,6 +97,20 @@ struct APIClientTests {
         let request = session.recordedRequests.last!
         #expect(request.httpMethod == "DELETE")
         #expect(request.url!.query?.contains("album_id=200") == true)
+        #expect(request.url!.query?.contains("track_title") == false)
+    }
+
+    @Test func removeFromBinIncludesTrackTitleWhenProvided() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        session.enqueue(StubRequestSession.Stub(statusCode: 200))
+
+        try await client.removeFromBin(albumId: 200, trackTitle: "la paradoja")
+
+        let request = try #require(session.recordedRequests.last)
+        let query = request.url?.query ?? ""
+        #expect(query.contains("album_id=200"))
+        // URLQueryItem percent-encodes the space.
+        #expect(query.contains("track_title=la%20paradoja") || query.contains("track_title=la+paradoja"))
     }
 
     @Test func unauthorizedTriggersRefreshAndRetry() async throws {
@@ -113,8 +131,12 @@ struct APIClientTests {
         #expect(results.count == 1)
         // restoreSession + 401 + refresh + retry = 4 requests
         #expect(session.recordedRequests.count == 4)
-        #expect(session.recordedRequests[1].url!.path == "/library")
+        #expect(Self.isLibraryPath(session.recordedRequests[1].url!.path))
         #expect(session.recordedRequests[2].url!.path == "/auth/token")
-        #expect(session.recordedRequests[3].url!.path == "/library")
+        #expect(Self.isLibraryPath(session.recordedRequests[3].url!.path))
+    }
+
+    private static func isLibraryPath(_ path: String) -> Bool {
+        path == "/library" || path == "/library/"
     }
 }
