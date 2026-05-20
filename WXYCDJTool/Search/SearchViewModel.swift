@@ -59,6 +59,9 @@ final class SearchViewModel {
 
     private func performSearch(_ q: String) async {
         do {
+            // Pass the same query string to both artist_name and album_title.
+            // GET /library/ ORs the two columns server-side (fuzzy match
+            // either field), which matches dj-site's single-input search UX.
             let rows = try await api.searchLibrary(artist: q, title: q)
             if Task.isCancelled { return }
             results = rows
