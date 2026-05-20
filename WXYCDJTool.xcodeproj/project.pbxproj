@@ -8,10 +8,12 @@
 
 /* Begin PBXBuildFile section */
 		0029CCACCFACB521719C25AB /* SearchResultRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83E77E8762C57FB247BE3AAD /* SearchResultRow.swift */; };
+		12C4F9C4EB3A5B5A6924CC85 /* TrackMatchBadgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9151A8199D1B19C5BECF6BF /* TrackMatchBadgeTests.swift */; };
 		181633FB9326944172F539DA /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAB7C55727A737C832285916 /* SearchView.swift */; };
 		2E0BF368AB09935B12C034D8 /* AlbumDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5E5BF22B85CF46FAE3CF485 /* AlbumDetailView.swift */; };
 		333808471604429DA161B46E /* LoginViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D49AA8BD0ED10A86E3E9A12 /* LoginViewModel.swift */; };
 		35951AC643AE0E4D4E2C0A07 /* AppDependencies.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6061F9C16B998BE03F6DD393 /* AppDependencies.swift */; };
+		60CED571A32A90535369F3CB /* TrackMatchBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEA3E5813967A42CCCB770D5 /* TrackMatchBadge.swift */; };
 		66E61B80EA4873A8D9B0AC86 /* BinViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3576725D853FE37D40F62C27 /* BinViewModel.swift */; };
 		7B6359399EC825BCB6E32BFA /* StubRequestSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCCE5DE0CF9D9D12750BB163 /* StubRequestSession.swift */; };
 		817864F83CE2C6CE3AFD9E81 /* BinViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7E9934C79349CE770CF42A6 /* BinViewModelTests.swift */; };
@@ -62,7 +64,9 @@
 		CAB7C55727A737C832285916 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
 		CE6624436078760B7D5438F1 /* Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixtures.swift; sourceTree = "<group>"; };
 		D7E9934C79349CE770CF42A6 /* BinViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BinViewModelTests.swift; sourceTree = "<group>"; };
+		DEA3E5813967A42CCCB770D5 /* TrackMatchBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackMatchBadge.swift; sourceTree = "<group>"; };
 		E31033BE44902A35FA415AB9 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		E9151A8199D1B19C5BECF6BF /* TrackMatchBadgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackMatchBadgeTests.swift; sourceTree = "<group>"; };
 		F882D45D256C425E0D5F9CBC /* LoginViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginViewModelTests.swift; sourceTree = "<group>"; };
 		FCCE5DE0CF9D9D12750BB163 /* StubRequestSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubRequestSession.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -118,6 +122,7 @@
 				83E77E8762C57FB247BE3AAD /* SearchResultRow.swift */,
 				CAB7C55727A737C832285916 /* SearchView.swift */,
 				8FBD7C84899249EECF2F84AE /* SearchViewModel.swift */,
+				DEA3E5813967A42CCCB770D5 /* TrackMatchBadge.swift */,
 			);
 			path = Search;
 			sourceTree = "<group>";
@@ -200,6 +205,7 @@
 			isa = PBXGroup;
 			children = (
 				C5B1344195B0478EDDE76E1D /* SearchViewModelTests.swift */,
+				E9151A8199D1B19C5BECF6BF /* TrackMatchBadgeTests.swift */,
 			);
 			path = Search;
 			sourceTree = "<group>";
@@ -324,6 +330,7 @@
 				0029CCACCFACB521719C25AB /* SearchResultRow.swift in Sources */,
 				181633FB9326944172F539DA /* SearchView.swift in Sources */,
 				FADA492CD595FD0672DC57CF /* SearchViewModel.swift in Sources */,
+				60CED571A32A90535369F3CB /* TrackMatchBadge.swift in Sources */,
 				9A3B9A8010E49E45083AF4C7 /* WXYCDJToolApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -339,6 +346,7 @@
 				8B314F4E4DD4B15AF8EAEEB1 /* SearchViewModelTests.swift in Sources */,
 				997BA9BF5E95371321831DBB /* SignedInClient.swift in Sources */,
 				7B6359399EC825BCB6E32BFA /* StubRequestSession.swift in Sources */,
+				12C4F9C4EB3A5B5A6924CC85 /* TrackMatchBadgeTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

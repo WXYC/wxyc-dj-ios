@@ -33,6 +33,7 @@ struct SearchResultRow: View {
                         RotationBadge(bin: bin)
                     }
                 }
+                TrackMatchBadge(hints: row.matchedVia)
             }
             Spacer()
             Button("Add to Bin", systemImage: "plus.circle.fill", action: onAdd)
