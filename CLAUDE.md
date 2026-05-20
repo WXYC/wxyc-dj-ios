@@ -75,11 +75,15 @@ Test fixtures (`Tests/WXYCAPITests/Support/Fixtures.swift`) use WXYC-representat
 
 Don't add these without asking:
 
-- LML enrichment in the detail view (tracklist, styles, Wikipedia, bio) — covered in v2.
+- Artist bio + Wikipedia from `/proxy/metadata/artist` (the second LML call, with bio tokens). Album-level LML enrichment ships in v1; the artist endpoint is v2.
 - Rotation editing — requires MD/SM role; separate concept from the personal bin.
 - Flowsheet, playback, schedule, request line — different apps own those.
 - swift-openapi-generator — currently hand-rolled DTOs; the codegen pipeline is a worthwhile follow-up if scope grows.
 - PostHog, Sentry, AppleScript hooks — keep the app minimal.
+
+## LML enrichment
+
+The detail view fan-outs two calls: `GET /library/info` (catalog row, source of truth for shelf data) and `GET /proxy/metadata/album` (LML — release year, label, genres, styles, tracklist, streaming URLs, Discogs URL, Wikipedia URL). The `AlbumMetadata` DTO matches the camelCase response shape `proxy.controller.ts` emits. The metadata call is **best-effort**: a 404, decoding failure, or rate-limit is captured via `os_log` under subsystem `org.wxyc.dj-tool`, category `metadata`, and surfaced inline as a faint footer note instead of a red error banner — the catalog row still renders.
 
 ## Related repos
 
