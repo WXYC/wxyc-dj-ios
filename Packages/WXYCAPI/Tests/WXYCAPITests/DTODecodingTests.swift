@@ -115,6 +115,135 @@ struct DTODecodingTests {
         #expect(row.rotationBin == nil)
     }
 
+    @Test func decodesEmptyMatchedViaWhenFieldAbsent() throws {
+        // Backward compat: legacy rows (and any row that wasn't track-mediated)
+        // have no matched_via on the wire. Decoded as [] — never optional —
+        // so view code can read .isEmpty without unwrapping.
+        let row = try JSONCoders.decoder.decode(
+            AlbumSearchResult.self,
+            from: Data(Fixtures.juanaMolinaSearchResult.utf8)
+        )
+        #expect(row.matchedVia.isEmpty)
+    }
+
+    @Test func decodesMatchedViaCtaSource() throws {
+        // Track 1 (CTA) hit: comp-track lookup found "In a Sentimental Mood"
+        // on the Ellington/Coltrane release. Confidence pinned to 1.0 per
+        // api.yaml (CTA is curated, treated as authoritative).
+        let raw = """
+            {
+              "id": 410,
+              "add_date": "2024-03-04T00:00:00.000Z",
+              "album_title": "Duke Ellington & John Coltrane",
+              "artist_name": "Duke Ellington & John Coltrane",
+              "code_letters": "ELL",
+              "code_number": 1,
+              "code_artist_number": 1,
+              "format_name": "LP",
+              "genre_name": "Jazz",
+              "label": "Impulse Records",
+              "matched_via": [
+                {
+                  "title": "In a Sentimental Mood",
+                  "artist_credit": "Duke Ellington & John Coltrane",
+                  "confidence": 1.0,
+                  "source": "cta"
+                }
+              ]
+            }
+            """
+        let row = try JSONCoders.decoder.decode(AlbumSearchResult.self, from: Data(raw.utf8))
+        #expect(row.matchedVia.count == 1)
+        let hint = try #require(row.matchedVia.first)
+        #expect(hint.title == "In a Sentimental Mood")
+        #expect(hint.artistCredit == "Duke Ellington & John Coltrane")
+        #expect(hint.position == nil)
+        #expect(hint.confidence == 1.0)
+        #expect(hint.source == .cta)
+    }
+
+    @Test func decodesMatchedViaDiscogsMasterSource() throws {
+        // Track 2 (LML SONG_AS_TRACK) hit, pre-cross-cache-identity: matched
+        // through a Discogs master_id. Position set (vinyl-side notation).
+        let raw = """
+            {
+              "id": 60359,
+              "add_date": "2024-05-01T00:00:00.000Z",
+              "album_title": "Confield",
+              "artist_name": "Autechre",
+              "code_letters": "AUT",
+              "code_number": 7,
+              "code_artist_number": 1,
+              "format_name": "CD",
+              "genre_name": "Electronic",
+              "label": "Warp",
+              "matched_via": [
+                {
+                  "title": "VI Scose Poise",
+                  "position": "2",
+                  "confidence": 0.95,
+                  "source": "discogs_master"
+                }
+              ]
+            }
+            """
+        let row = try JSONCoders.decoder.decode(AlbumSearchResult.self, from: Data(raw.utf8))
+        let hint = try #require(row.matchedVia.first)
+        #expect(hint.title == "VI Scose Poise")
+        #expect(hint.position == "2")
+        #expect(hint.source == .discogsMaster)
+    }
+
+    @Test func decodesMatchedViaLibraryIdentitySource() throws {
+        // Track 2 post-cross-cache-identity: matched via library_identity
+        // substrate. Forward-compat — the source string is the only
+        // observable difference from `discogs_master`.
+        let raw = """
+            {
+              "id": 60359,
+              "add_date": "2024-05-01T00:00:00.000Z",
+              "album_title": "Confield",
+              "artist_name": "Autechre",
+              "code_letters": "AUT",
+              "code_number": 7,
+              "code_artist_number": 1,
+              "format_name": "CD",
+              "genre_name": "Electronic",
+              "label": "Warp",
+              "matched_via": [
+                { "title": "Eutow", "source": "library_identity" }
+              ]
+            }
+            """
+        let row = try JSONCoders.decoder.decode(AlbumSearchResult.self, from: Data(raw.utf8))
+        #expect(row.matchedVia.first?.source == .libraryIdentity)
+    }
+
+    @Test func decodesUnknownMatchedViaSourceAsUnknown() throws {
+        // Forward compatibility: server may introduce new TrackMatchSource
+        // enum cases (e.g. `musicbrainz_recording`) ahead of the client. The
+        // row must still decode; the hint falls back to `.unknown`.
+        let raw = """
+            {
+              "id": 1,
+              "add_date": "2024-05-01T00:00:00.000Z",
+              "album_title": "x",
+              "artist_name": "y",
+              "code_letters": "X",
+              "code_number": 1,
+              "code_artist_number": 1,
+              "format_name": "LP",
+              "genre_name": "Rock",
+              "label": "z",
+              "matched_via": [
+                { "title": "song", "source": "musicbrainz_recording" }
+              ]
+            }
+            """
+        let row = try JSONCoders.decoder.decode(AlbumSearchResult.self, from: Data(raw.utf8))
+        #expect(row.matchedVia.first?.source == .unknown)
+    }
+
     @Test func decodesAlbumMetadata() throws {
         let raw = """
             {

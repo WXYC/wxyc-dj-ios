@@ -32,6 +32,10 @@ public struct AlbumSearchResult: Decodable, Sendable, Hashable, Identifiable {
     public let onStreaming: Bool?
     public let albumArtist: String?
     public let artworkURL: URL?
+    /// Populated when a track-title match drove this row into results
+    /// (catalog-track-search Track 1 CTA fallback or Track 2 LML proxy).
+    /// Empty on a normal artist or album hit.
+    public let matchedVia: [TrackMatchHint]
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -51,6 +55,7 @@ public struct AlbumSearchResult: Decodable, Sendable, Hashable, Identifiable {
         case onStreaming = "on_streaming"
         case albumArtist = "album_artist"
         case artworkURL = "artwork_url"
+        case matchedVia = "matched_via"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -74,6 +79,7 @@ public struct AlbumSearchResult: Decodable, Sendable, Hashable, Identifiable {
         onStreaming = try c.decodeIfPresent(Bool.self, forKey: .onStreaming)
         albumArtist = try c.decodeIfPresent(String.self, forKey: .albumArtist)
         artworkURL = try c.decodeIfPresent(URL.self, forKey: .artworkURL)
+        matchedVia = (try c.decodeIfPresent([TrackMatchHint].self, forKey: .matchedVia)) ?? []
     }
 
     /// Shelf call number in the form "<codeLetters> <codeArtistNumber>/<codeNumber>"
