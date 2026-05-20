@@ -37,6 +37,29 @@ struct DTODecodingTests {
         #expect(components.day == 15)
     }
 
+    @Test func rotationDateRendersInGMTRegardlessOfHostTimeZone() throws {
+        // Regression: `JSONCoders.decoder` parses date-only fields like
+        // `"2025-10-15"` as midnight GMT. If the render side uses
+        // Calendar.current / TimeZone.current it slips to the previous day
+        // on any negative-UTC host (PT/MT/CT/ET). Pin the render path to
+        // GMT via `WXYCDateFormatting.dateOnlyFormatStyle`.
+        let data = Data(Fixtures.albumInfoJSON.utf8)
+        let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: data)
+        let date = try #require(info.rotation?.addDate)
+
+        let rendered = date.formatted(WXYCDateFormatting.dateOnlyFormatStyle)
+        // The fixture uses "2025-10-15". The day component must survive
+        // through the render layer, no matter the host time zone.
+        #expect(rendered.contains("15"))
+        #expect(rendered.contains("2025"))
+
+        // Pin against the exact en_US_POSIX abbreviated rendering so a
+        // future locale/calendar drift would surface here.
+        let posix = WXYCDateFormatting.dateOnlyFormatStyle
+            .locale(Locale(identifier: "en_US_POSIX"))
+        #expect(date.formatted(posix) == "Oct 15, 2025")
+    }
+
     @Test func decodesAlbumSearchResultWithNullLabel() throws {
         // Reproduces the real wire-shape Backend-Service returns for many
         // releases: `label`, `code_letters` etc. are null, the row carries a
