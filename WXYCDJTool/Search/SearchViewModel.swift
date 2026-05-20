@@ -76,8 +76,12 @@ final class SearchViewModel {
     }
 
     func addToBin(_ row: AlbumSearchResult) async -> Bool {
+        // When the row was surfaced by a track-title match (CTA fallback or
+        // LML SONG_AS_TRACK proxy), preserve which track drove the match so
+        // the bin entry remembers what the DJ was actually looking for.
+        // Empty matchedVia (normal artist/album hit) passes nil through.
         do {
-            _ = try await api.addToBin(albumId: row.id, trackTitle: nil)
+            _ = try await api.addToBin(albumId: row.id, trackTitle: row.matchedVia.first?.title)
             return true
         } catch {
             return false

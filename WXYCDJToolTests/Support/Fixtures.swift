@@ -32,6 +32,21 @@ enum Fixtures {
         ]
         """
 
+    /// Wire body for POST /djs/bin — single BinEntry. Used by tests that
+    /// only need to satisfy the response side after exercising addToBin.
+    static let singleBinEntryJSON = """
+        {
+          "id": 1,
+          "dj_id": 42,
+          "album_id": 100,
+          "added_at": "2025-11-01T22:15:00.000Z",
+          "album_title": "DOGA",
+          "artist_name": "Juana Molina",
+          "code_letters": "MOL",
+          "code_number": 12
+        }
+        """
+
     static let djBinResponseJSON = """
         {
           "dj_id": 42,

@@ -91,6 +91,44 @@ struct SearchViewModelTests {
         }
     }
 
+    @Test func addToBinForwardsFirstMatchedTrackTitle() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let viewModel = SearchViewModel(api: client)
+        let row = try AlbumSearchResult.fixture(matchedTrackTitles: ["In a Sentimental Mood"])
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.singleBinEntryJSON.utf8)
+        ))
+
+        let added = await viewModel.addToBin(row)
+
+        #expect(added)
+        let posted = try #require(session.recordedRequests.last)
+        #expect(posted.httpMethod == "POST")
+        let body = try #require(posted.httpBody)
+        let decoded = try JSONCoders.decoder.decode(AddToBinRequest.self, from: body)
+        #expect(decoded.albumId == row.id)
+        #expect(decoded.trackTitle == "In a Sentimental Mood")
+    }
+
+    @Test func addToBinOmitsTrackTitleWhenNotTrackMatched() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let viewModel = SearchViewModel(api: client)
+        let row = try AlbumSearchResult.fixture(matchedTrackTitles: [])
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.singleBinEntryJSON.utf8)
+        ))
+
+        let added = await viewModel.addToBin(row)
+
+        #expect(added)
+        let posted = try #require(session.recordedRequests.last)
+        let body = try #require(posted.httpBody)
+        let decoded = try JSONCoders.decoder.decode(AddToBinRequest.self, from: body)
+        #expect(decoded.trackTitle == nil)
+    }
+
     @Test func shorteningQueryBelowMinimumCancelsInFlightSearch() async throws {
         let (client, session) = try await SignedInClient.make()
         let viewModel = SearchViewModel(api: client)
@@ -122,5 +160,25 @@ struct SearchViewModelTests {
         while viewModel.state == .searching && Date() < deadline {
             try await Task.sleep(for: .milliseconds(25))
         }
+    }
+}
+
+// Decode-from-JSON fixture builder. Mirrors the TrackMatchHint.fixture
+// helper in TrackMatchBadgeTests — surfacing decode failures as thrown
+// errors keeps a bad fixture from crashing the runner.
+private extension AlbumSearchResult {
+    static func fixture(matchedTrackTitles: [String]) throws -> AlbumSearchResult {
+        let hints = matchedTrackTitles.map { """
+            { "title": "\($0)", "source": "cta" }
+        """ }.joined(separator: ",")
+        let payload = """
+            {
+              "id": 100,
+              "album_title": "DOGA",
+              "artist_name": "Juana Molina",
+              "matched_via": [\(hints)]
+            }
+            """
+        return try JSONCoders.decoder.decode(AlbumSearchResult.self, from: Data(payload.utf8))
     }
 }
