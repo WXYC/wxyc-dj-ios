@@ -219,10 +219,11 @@ struct DTODecodingTests {
         #expect(row.matchedVia.first?.source == .libraryIdentity)
     }
 
-    @Test func decodesUnknownMatchedViaSourceAsUnknown() throws {
+    @Test func decodesUnknownMatchedViaSourceAsNil() throws {
         // Forward compatibility: server may introduce new TrackMatchSource
         // enum cases (e.g. `musicbrainz_recording`) ahead of the client. The
-        // row must still decode; the hint falls back to `.unknown`.
+        // row must still decode; the hint's `source` is nil for the
+        // unrecognized variant. Mirrors `RotationBin`'s tolerant fallback.
         let raw = """
             {
               "id": 1,
@@ -241,7 +242,45 @@ struct DTODecodingTests {
             }
             """
         let row = try JSONCoders.decoder.decode(AlbumSearchResult.self, from: Data(raw.utf8))
-        #expect(row.matchedVia.first?.source == .unknown)
+        let hint = try #require(row.matchedVia.first)
+        #expect(hint.title == "song")
+        #expect(hint.source == nil)
+    }
+
+    @Test func decodesExplicitEmptyMatchedViaArray() throws {
+        // Server may send `"matched_via": []` explicitly (distinct from
+        // omitting the field). Both must decode to an empty array.
+        let raw = """
+            {
+              "id": 1,
+              "album_title": "DOGA",
+              "artist_name": "Juana Molina",
+              "matched_via": []
+            }
+            """
+        let row = try JSONCoders.decoder.decode(AlbumSearchResult.self, from: Data(raw.utf8))
+        #expect(row.matchedVia.isEmpty)
+    }
+
+    @Test func decodesMultiHintMatchedVia() throws {
+        // A release matched on multiple comp tracks. All hints decode;
+        // order is preserved (the badge formatter peeks at `first`).
+        let raw = """
+            {
+              "id": 60359,
+              "album_title": "Confield",
+              "artist_name": "Autechre",
+              "matched_via": [
+                { "title": "VI Scose Poise", "source": "discogs_master" },
+                { "title": "Eutow", "source": "discogs_master" },
+                { "title": "Pen Expers", "source": "discogs_master" }
+              ]
+            }
+            """
+        let row = try JSONCoders.decoder.decode(AlbumSearchResult.self, from: Data(raw.utf8))
+        #expect(row.matchedVia.count == 3)
+        #expect(row.matchedVia.map(\.title) == ["VI Scose Poise", "Eutow", "Pen Expers"])
+        #expect(row.matchedVia.allSatisfy { $0.source == .discogsMaster })
     }
 
     @Test func decodesAlbumMetadata() throws {
