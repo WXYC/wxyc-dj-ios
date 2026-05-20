@@ -26,18 +26,21 @@ final class AppDependencies {
     let api: APIClient
 
     init() {
-        let configuration = Self.resolveConfiguration()
+        let bundle = Bundle.main
+        let configuration = Self.resolveConfiguration(
+            authString: bundle.object(forInfoDictionaryKey: "WXYCAuthBaseURL") as? String,
+            apiString: bundle.object(forInfoDictionaryKey: "WXYCAPIBaseURL") as? String
+        )
         self.configuration = configuration
         let authService = AuthService(configuration: configuration)
         self.authService = authService
         self.api = APIClient(configuration: configuration, authService: authService)
     }
 
-    private static func resolveConfiguration() -> WXYCAPIConfiguration {
-        let bundle = Bundle.main
-        let authString = bundle.object(forInfoDictionaryKey: "WXYCAuthBaseURL") as? String
-        let apiString = bundle.object(forInfoDictionaryKey: "WXYCAPIBaseURL") as? String
-
+    static func resolveConfiguration(
+        authString: String?,
+        apiString: String?
+    ) -> WXYCAPIConfiguration {
         // Neither key set — production is the intended default.
         if authString == nil && apiString == nil {
             return .production
