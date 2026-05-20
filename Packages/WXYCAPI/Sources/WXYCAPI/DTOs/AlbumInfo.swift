@@ -40,8 +40,8 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
     public struct Rotation: Codable, Sendable, Hashable {
         public let id: Int
         public let rotationBin: RotationBin
-        public let addDate: String
-        public let killDate: String?
+        public let addDate: Date
+        public let killDate: Date?
 
         enum CodingKeys: String, CodingKey {
             case id
