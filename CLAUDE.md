@@ -100,7 +100,6 @@ xcodebuild test \
 
 Don't add these without asking:
 
-- Artist bio + Wikipedia from `/proxy/metadata/artist` (the second LML call, with bio tokens). Album-level LML enrichment ships in v1; the artist endpoint is v2.
 - Rotation editing — requires MD/SM role; separate concept from the personal bin.
 - Flowsheet, playback, schedule, request line — different apps own those.
 - swift-openapi-generator — currently hand-rolled DTOs; the codegen pipeline is a worthwhile follow-up if scope grows.
