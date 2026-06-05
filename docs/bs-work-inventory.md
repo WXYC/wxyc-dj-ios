@@ -332,6 +332,66 @@ Affected: ADR 0007.
 
 ---
 
+### ADR 0006 amendment — Albums axis on Diversity Readout
+
+#### BS-30: Add `albums` field to `GET /djs/{id}/play-stats` response
+
+Description: One additional field on the existing per-DJ `play-stats` response: `albums: [{id, title, artist_name, count}]`. Mirrors the existing `artists` field structure and is aggregated over the same window parameter (30d / 90d / 1y / all). Powers the new sixth coequal axis card (Albums) on iOS pick #10 Diversity Readout. No new endpoint, no schema change — extends the existing aggregation query with one additional `GROUP BY` on `album_id`. Driver of the Q15 grilling resolution (Top Played folds into Diversity Readout rather than becoming its own surface).
+
+Files:
+- [`Backend-Service/apps/backend/src/`](https://github.com/WXYC/Backend-Service/tree/main/apps/backend/src) — `djs/` controller, `play-stats` handler
+- [`wxyc-shared/api.yaml`](https://github.com/WXYC/wxyc-shared/blob/main/api.yaml) — `PlayStats` response schema extension
+
+Dependencies: BS-20 (the base `play-stats` endpoint). Can ship in the same PR as BS-20 if BS-20 hasn't merged yet.
+Size: S.
+Affected: ADR 0006 amendment.
+
+---
+
+### ADR 0008 — Per-album play history as a first-class API surface
+
+#### BS-31: `GET /library/{album_id}/play-stats` endpoint
+
+Description: Per-album station-wide play-stats endpoint, parallel to ADR 0006's per-DJ `/djs/{id}/play-stats`. Returns both granularities in one payload so the iOS user-toggle is instant — `{ year_counts: {"2017":1,"2018":7,...}, month_counts: {"2017-08":1,...}, first_played_at, last_played_at, total_plays }`. Consumes the existing `flowsheet_entries.album_id` index (already in place; no schema migration). 60s TTL cache keyed on `album_id` matching the existing per-DJ stats caching posture. Drill-in to raw rows (`GET /library/{album_id}/plays` paginated) is deferred to v2 per ADR 0008 — v1 ships tooltip-only on bar tap, no raw-rows endpoint needed.
+
+Files:
+- [`Backend-Service/apps/backend/src/`](https://github.com/WXYC/Backend-Service/tree/main/apps/backend/src) — `library/` controller (likely already exists for `GET /library/info`)
+- [`Backend-Service/shared/database/src/schema.ts`](https://github.com/WXYC/Backend-Service/blob/main/shared/database/src/schema.ts) — confirm index on `flowsheet_entries.album_id`
+- [`wxyc-shared/api.yaml`](https://github.com/WXYC/wxyc-shared/blob/main/api.yaml) — `AlbumPlayStats` response schema
+
+Dependencies: none. Shares query infrastructure with BS-19 / BS-20 / BS-21 (per-DJ plays) but does not block on them.
+Size: S.
+Affected: ADR 0008.
+
+---
+
+### ADR 0009 — Search Plays + structured filter builder
+
+#### BS-32: `POST /flowsheet/search` endpoint with structured body and always-included histogram
+
+Description: New endpoint serving iOS Search Plays. Accepts a structured JSON body — `{ filters: [{field, op, value, exact, valueTo?}, ...], sort, page, pageSize }` — rather than wxyc.info-style query-string text syntax, because the iOS UI composes filters via a row-based builder and accepting the structure directly avoids maintaining a text-syntax parser on both ends. Returns paginated `FlowsheetV2TrackEntry[]` (100 rows per page, cursor-based infinite-scroll) plus always-included `year_counts` and `month_counts` for the matched set (no opt-in flag — clients that forget the flag silently lose the headline feature, so always-on is the safer default). When `totalHits > 10000`, the histogram bucketizes the top 10k by relevance with a footer note explaining the cap — mirrors wxyc.info verbatim. 60s TTL cache keyed on a hash of `(filters, sort, page)`. Field set: Artist / Song / Album / Label / DJ / Date / Date Range. Operators between rows: AND / OR / NOT. Per-row exact-match boolean on text fields. Sort defaults to date desc, supports artist / song / release / label / dj / date columns.
+
+Files:
+- [`Backend-Service/apps/backend/src/`](https://github.com/WXYC/Backend-Service/tree/main/apps/backend/src) — new `flowsheet/` controller (or extension of existing flowsheet controller)
+- [`Backend-Service/shared/database/src/schema.ts`](https://github.com/WXYC/Backend-Service/blob/main/shared/database/src/schema.ts) — full-text indexes on `flowsheet_entries` text columns (likely already in place to back wxyc.info's existing search)
+
+Dependencies: none for v1 (operates on existing flowsheet substrate). Future PR consolidates dj-site's playlist-search backend onto this endpoint — that's a follow-up ADR in dj-site's repo, not a BS dependency.
+Size: M–L (largest single BS ticket in this batch — new endpoint, structured request body, full-text indexing integration, cursor pagination, histogram aggregation, response caching).
+Affected: ADR 0009.
+
+#### BS-33: Document `POST /flowsheet/search` in `wxyc-shared/api.yaml`
+
+Description: Add the OpenAPI path + `FlowsheetSearchRequest` / `FlowsheetSearchResponse` / `FilterRow` / `FilterOperator` / `FilterField` schemas. Schema should match the BS implementation exactly so iOS's APIClient method and dj-site's eventual migration consumer can both code-generate from `api.yaml` if/when the codegen pipeline expands. Include the histogram side-channel as a documented response field with the top-10k cap noted.
+
+Files:
+- [`wxyc-shared/api.yaml`](https://github.com/WXYC/wxyc-shared/blob/main/api.yaml) — new path + schemas
+
+Dependencies: BS-32.
+Size: S.
+Affected: ADR 0009.
+
+---
+
 ### Memo backend (from CONTEXT.md Memo term)
 
 #### BS-22: Memo storage schema

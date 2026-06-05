@@ -196,6 +196,10 @@ All three share the same underlying query infrastructure (flowsheet entries WHER
 - BS query foundation: [`flowsheet_entries`](https://github.com/WXYC/Backend-Service/blob/main/shared/database/src/schema.ts) with `dj_id` filter
 - iOS dependencies on these endpoints: Underplayed Gems Phase 2, Diversity Readout, Bin Maturity
 
+### Amendment — Albums as a sixth coequal axis on Diversity Readout
+
+The per-DJ `play-stats` response shape gains one new field: `albums: [{id, title, artist_name, count}]`, mirroring the existing `artists` field structure. iOS pick #10 (Diversity Readout) renders this as a sixth coequal axis card alongside artist, label, genre, era, and new-vs-catalog; locale remains the v2 7th axis pending LML enrichment. Tapping the Album axis card drills into a sorted-by-count list (name + count + proportional bar) per [Q15b grilling resolution](../CONTEXT.md), and each row navigates to the iOS Album Detail surface (which itself now carries the per-album play histogram per ADR 0008). No new endpoint, no schema change — one additional DTO field on the existing endpoint, one additional axis card in the readout, and one drill-in row navigation target. Drives BS-30 below.
+
 ---
 
 ## ADR 0007 — QR device authorization for shared-computer sign-in to dj.wxyc.org
@@ -226,6 +230,80 @@ The control-room computer at WXYC is shared across DJ shows; password sign-in on
 - iOS: new `QRScannerView` (AVFoundation), `QRApprovalView`, `APIClient.approveDeviceCode(_:)`, `Info.plist` adds `NSCameraUsageDescription` + `NSFaceIDUsageDescription`, new toolbar account-menu item alongside Sign Out
 - dj-site: new `QRCodeForm.tsx` in [`src/components/experiences/modern/login/Forms/`](https://github.com/WXYC/dj-site/tree/main/src/components/experiences/modern/login/Forms), extend [`login-method-storage`](https://github.com/WXYC/dj-site/blob/main/lib/features/application/login-method-storage.ts) with `"qr"`
 - wxyc-shared: `POST /auth/device/code`, `POST /auth/device/token`, `POST /auth/device/verify` in [`api.yaml`](https://github.com/WXYC/wxyc-shared/blob/main/api.yaml)
+
+---
+
+## ADR 0008 — Per-album play history is a first-class API surface, parallel to per-DJ plays
+
+**Status:** Proposed. Local canonical source: [`docs/adr/0003-per-album-play-stats.md`](./adr/0003-per-album-play-stats.md).
+
+The Album Detail screen gains a histogram of station-wide plays of the album over time, sized and shaped after Apple Health's chart surfaces. Backend adds a dedicated resource:
+
+```
+GET /library/{album_id}/play-stats
+  Returns: {
+    year_counts:  { "2017": 1, "2018": 7, ... },
+    month_counts: { "2017-08": 1, "2018-03": 2, ... },
+    first_played_at, last_played_at, total_plays
+  }
+```
+
+Both granularities arrive in one payload so the user-toggle is instant (no second round trip). Station-wide scope only — per-DJ stories for the same album are answered elsewhere (Bin Maturity badges per pick #11, Top Played fold-in on Diversity Readout per ADR 0006 amendment above). 60s TTL cache, matching ADR 0006's per-DJ stats and ADR 0009's Search Plays caching posture. Drill-in to raw rows is deferred to v2 — v1 ships tooltip-only on bar tap.
+
+iOS rendering uses Swift Charts with `.chartScrollableAxes(.horizontal)` + `.chartScrollTargetBehavior(.valueAligned)` — Apple Health's snap-aligned momentum scroll, available on iOS 17+. A segmented Year / Month toggle sits above the chart; default granularity is span-based (first-play to today > 5 years → Year, else → Month). The release year, when greater than the first-play year (the surprising case), renders as a dashed `RuleMark` annotated "Released YYYY"; the marker is suppressed when release year ≤ first-play year because the common case adds chrome with no insight. LML is best-effort for the release year — on failure, the marker is omitted, the chart still renders.
+
+### Mirrors needed
+
+- [ ] `Backend-Service/docs/adr/` — file as an ADR there
+
+### Touchpoints
+
+- BS new endpoint: `GET /library/{album_id}/play-stats`
+- BS query foundation: [`flowsheet_entries`](https://github.com/WXYC/Backend-Service/blob/main/shared/database/src/schema.ts) with `album_id` filter (same substrate as ADR 0006)
+- iOS dependencies: Pick #15 (per-album histogram on Album Detail)
+- iOS Swift Charts surface: `.chartScrollableAxes(.horizontal)` + `.chartScrollTargetBehavior(.valueAligned)` (iOS 17+, this app targets 18.4+)
+- LML interaction: `/proxy/metadata/album` for `release_year`; best-effort per project CLAUDE.md
+- Prototype: [`docs/prototypes/diversity-readout.html`](./prototypes/diversity-readout.html) (Diversity Readout six-axis grid + drill-in — relevant for the Albums axis amendment and the row→Album-Detail navigation that lands on this histogram)
+
+---
+
+## ADR 0009 — Flowsheet-archive search is a distinct iOS mode with a reusable structured filter builder
+
+**Status:** Proposed. Local canonical source: [`docs/adr/0004-search-plays-flowsheet-builder.md`](./adr/0004-search-plays-flowsheet-builder.md).
+
+iOS adds Search Plays — a new top-level Tab beside the existing Search (catalog) and Mail Bin tabs — that searches the flowsheet archive (back to Nov 2004). Distinct mode rather than a fold-in to catalog search: different backend (flowsheet entries vs library Albums), different result-row shape (date · artist · song · release · label · DJ), different histogram (matched-set plays-per-year, station-wide, mirroring wxyc.info). Backend exposes one new endpoint:
+
+```
+POST /flowsheet/search
+  Body: { filters: [{field, op, value, exact, valueTo?}, ...], sort, page, pageSize }
+  Returns: {
+    results: FlowsheetV2TrackEntry[],
+    totalHits,
+    year_counts:  {...},
+    month_counts: {...}
+  }
+```
+
+POST-with-structured-body because the iOS surface composes filters via a row-based builder UI rather than a query string; accepting the structure directly avoids a wxyc.info-style text-syntax parser that iOS doesn't need and that would have to be maintained on both ends. The histogram is always-included on the response (no opt-in flag) — a client that forgets the flag silently loses the headline feature, so always-on is the safer default. When `totalHits > 10000`, the histogram bucketizes the top 10k by relevance with a footer note explaining the cap, mirroring wxyc.info verbatim. 60s TTL cache keyed on a filter+sort+page hash.
+
+iOS UI: simple primary search bar for the 80% case (type a name, browse) plus a [Filters] affordance opening a builder sheet modeled directly on dj-site's [`PlaylistAdvancedSearch.tsx`](https://github.com/WXYC/dj-site/blob/main/src/components/experiences/modern/playlist-search/PlaylistAdvancedSearch.tsx). Unlimited rows; per-row field selector (Artist / Song / Album / Label / DJ / Date / Date Range); per-row AND/OR/NOT operator between rows; per-row exact-match checkbox for text fields; date pickers for date fields. Apply closes the sheet and renders active-filter badges below the search bar — each badge's × removes that condition. Default scope is station-wide; per-DJ scope is one DJ filter row away (`DJ contains "biscuit"` or similar), not a segmented toggle. Result row tap navigates to Album Detail (the iOS surface holding Queue, condition, review, memos, histogram) — wxyc.info navigates to show context because that's all it has; iOS has Album Detail, and that's the destination DJs need.
+
+The builder sheet ships as a reusable `FilterBuilder` primitive in `WXYCDJTool/Sources/Views/FilterBuilder/`, parameterized over a `FieldConfig` (`{ name, type: .text | .date | .dateRange, supportsExactMatch: Bool }`). dj-site's two near-identical builders (catalog `QueryBuilder.tsx` and playlist `PlaylistAdvancedSearch.tsx`) are the cautionary precedent: same shape implemented twice, diverging slowly, paying duplicated test and evolution costs. Building iOS's primitive once, parameterized over the field-config those two would have shared, prevents that drift before it starts. Search Plays is the first consumer; a future advanced catalog filter or MD review-queue search is the anticipated second.
+
+### Mirrors needed
+
+- [ ] `Backend-Service/docs/adr/` — file as an ADR there (new endpoint + structured body + caching)
+- [ ] `dj-site/docs/adr/` — file as an ADR there (acknowledges iOS adopting `PlaylistAdvancedSearch.tsx` shape; flags future dj-site convergence onto the new BS endpoint)
+
+### Touchpoints
+
+- BS new endpoint: `POST /flowsheet/search`
+- BS query foundation: existing `flowsheet_entries` full-text indexing (same substrate that backs wxyc.info's search today, ported to a structured-body endpoint)
+- iOS dependencies: Pick #16 (Search Plays + structured builder, Phase 5)
+- iOS reusable primitive: `WXYCDJTool/Sources/Views/FilterBuilder/` — `FilterBuilder<FieldConfig>` view parameterized on field-config
+- dj-site reference component: [`src/components/experiences/modern/playlist-search/PlaylistAdvancedSearch.tsx`](https://github.com/WXYC/dj-site/blob/main/src/components/experiences/modern/playlist-search/PlaylistAdvancedSearch.tsx) (the model iOS mirrors)
+- Future convergence opportunity: dj-site's playlist search migrates onto `POST /flowsheet/search` in a follow-up ADR (not committed in v1)
+- Prototype: [`docs/prototypes/search-ux-options.html`](./prototypes/search-ux-options.html) (compares text-syntax / chips / builder-sheet UX options A / D / E that informed this ADR — E was selected)
 
 ---
 
@@ -277,6 +355,10 @@ The decisions above came out of a grilling session against this design. Source a
 - [`CONTEXT.md`](../CONTEXT.md) — domain glossary (15 terms): Mail Bin, Queue, Played, Show, Flowsheet entry, Album condition, Condition transition, Role, MD, Rotation, Request, Review, Review queue, Rotation hint, Memo
 - [`docs/adr/0001-entity-id-canonical-artist-identifier.md`](./adr/0001-entity-id-canonical-artist-identifier.md) — the canonical entity_id ADR, repo-local
 - [`docs/adr/0002-qr-device-authorization-shared-computer-signin.md`](./adr/0002-qr-device-authorization-shared-computer-signin.md) — the QR device-authorization ADR, repo-local
+- [`docs/adr/0003-per-album-play-stats.md`](./adr/0003-per-album-play-stats.md) — the per-album play-stats ADR (ADR 0008 in this doc), repo-local
+- [`docs/adr/0004-search-plays-flowsheet-builder.md`](./adr/0004-search-plays-flowsheet-builder.md) — the Search Plays + filter-builder ADR (ADR 0009 in this doc), repo-local
+- [`docs/prototypes/diversity-readout.html`](./prototypes/diversity-readout.html) — interactive Diversity Readout mockup (six-axis grid, drill-in)
+- [`docs/prototypes/search-ux-options.html`](./prototypes/search-ux-options.html) — interactive comparison of three Search Plays UX options (text syntax / chips / builder sheet) that resulted in ADR 0009
 - [`CLAUDE.md`](../CLAUDE.md) — project conventions, recently corrected to reflect that artist bio + Wikipedia ship in v1 (was previously listed as v2)
 
 ## Mirror tracking
@@ -288,5 +370,7 @@ The decisions above came out of a grilling session against this design. Source a
 | 0003 in-show companion | (this doc) | needed | — | — | needed |
 | 0004 condition model | (this doc) | needed | — | — | — |
 | 0005 reviews | (this doc) | needed | — | — | needed |
-| 0006 per-DJ plays | (this doc) | needed | — | — | — |
+| 0006 per-DJ plays (+ Albums axis amendment) | (this doc) | needed | — | — | — |
 | 0007 QR device auth | ✓ filed | needed | — | — | needed |
+| 0008 per-album plays | ✓ filed | needed | — | — | — |
+| 0009 search plays + builder | ✓ filed | needed | — | — | needed |

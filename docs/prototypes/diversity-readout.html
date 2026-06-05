@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Diversity Readout + Top Played — Prototype</title>
+<style>
+  :root {
+    --ios-bg: #F2F2F7;
+    --ios-card: #FFFFFF;
+    --ios-sep: #C6C6C8;
+    --ios-blue: #007AFF;
+    --ios-purple: #5856D6;
+    --ios-pink: #FF2D55;
+    --ios-orange: #FF9500;
+    --ios-green: #34C759;
+    --ios-teal: #5AC8FA;
+    --ios-gray: #8E8E93;
+    --ios-gray-light: #E5E5EA;
+    --ios-gray-bg: #EFEFF4;
+    --ios-label: #000000;
+    --ios-label-sec: #3C3C43;
+    --ios-label-tert: #3C3C4399;
+    --frame-bg: #1c1c1e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    background: #d8d8df;
+    color: #111;
+    padding: 24px 16px 48px;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1 {
+    margin: 0 0 4px 0;
+    font-size: 22px;
+    font-weight: 600;
+    text-align: center;
+  }
+  .subtitle {
+    text-align: center;
+    color: #555;
+    margin-bottom: 24px;
+    font-size: 14px;
+  }
+  .stage {
+    max-width: 900px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  @media (max-width: 800px) {
+    .stage { grid-template-columns: 1fr; }
+  }
+
+  /* ----- Phone frame ----- */
+  .phone-frame {
+    width: 390px;
+    margin: 0 auto;
+    background: var(--frame-bg);
+    border-radius: 50px;
+    padding: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    position: relative;
+  }
+  .phone-screen {
+    background: var(--ios-bg);
+    border-radius: 40px;
+    height: 800px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .notch {
+    width: 120px;
+    height: 30px;
+    background: var(--frame-bg);
+    border-radius: 0 0 18px 18px;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+  }
+  .status-bar {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+    background: var(--ios-bg);
+    z-index: 10;
+    position: relative;
+  }
+
+  /* ----- Navigation container (stack) ----- */
+  .nav-stack {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+  .nav-page {
+    position: absolute;
+    inset: 0;
+    background: var(--ios-bg);
+    display: flex;
+    flex-direction: column;
+    transform: translateX(0);
+    transition: transform 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .nav-page.entering { transform: translateX(100%); }
+  .nav-page.exiting { transform: translateX(-25%); opacity: 0.6; }
+
+  .nav-bar {
+    padding: 6px 16px 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 44px;
+  }
+  .back-btn {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 17px;
+    cursor: pointer;
+    padding: 4px 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .back-btn svg { stroke: var(--ios-blue); }
+  .nav-title {
+    flex: 1;
+    text-align: center;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ios-label);
+  }
+  .nav-bar-large {
+    padding: 0 16px 8px;
+  }
+  .nav-bar-large h1 {
+    margin: 0;
+    text-align: left;
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+  }
+
+  .scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 24px;
+  }
+  .scroll-area::-webkit-scrollbar { width: 0; }
+
+  /* ----- Window picker ----- */
+  .window-row {
+    padding: 0 16px 16px;
+  }
+  .seg {
+    background: var(--ios-gray-light);
+    border-radius: 9px;
+    padding: 2px;
+    display: flex;
+    gap: 0;
+  }
+  .seg button {
+    flex: 1;
+    background: transparent;
+    border: none;
+    border-radius: 7px;
+    padding: 6px 4px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ios-label);
+    cursor: pointer;
+  }
+  .seg button.active {
+    background: white;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+
+  /* ----- Summary stat strip ----- */
+  .summary-card {
+    background: white;
+    margin: 0 16px 16px;
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+  .summary-cell { text-align: center; }
+  .summary-num {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--ios-label);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.5px;
+  }
+  .summary-label {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    margin-top: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  /* ----- Axis grid ----- */
+  .section-title {
+    padding: 0 16px 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ios-label-sec);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .axis-grid {
+    padding: 0 16px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .axis-card {
+    background: white;
+    border-radius: 12px;
+    padding: 12px;
+    cursor: pointer;
+    transition: transform 0.1s;
+    border: none;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+  }
+  .axis-card:active { transform: scale(0.98); }
+  .axis-card-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .axis-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .axis-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ios-label);
+    flex: 1;
+  }
+  .axis-chevron {
+    color: var(--ios-gray);
+    font-size: 14px;
+  }
+  .axis-top-list {
+    font-size: 12px;
+    color: var(--ios-label-sec);
+    line-height: 1.5;
+  }
+  .axis-top-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
+  .axis-top-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+  }
+  .axis-top-count {
+    color: var(--ios-label-tert);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+  .axis-foot {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--ios-label-tert);
+  }
+
+  /* ----- Drill-in list ----- */
+  .drill-list {
+    margin: 0 16px;
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .drill-row {
+    padding: 12px 14px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    gap: 2px 12px;
+    align-items: center;
+    cursor: pointer;
+  }
+  .drill-row:last-child { border-bottom: none; }
+  .drill-row:active { background: var(--ios-gray-bg); }
+  .drill-name {
+    grid-row: 1;
+    grid-column: 1;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--ios-label);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .drill-name-sub {
+    grid-row: 2;
+    grid-column: 1;
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .drill-count {
+    grid-row: 1;
+    grid-column: 2;
+    font-size: 15px;
+    color: var(--ios-label);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+  }
+  .drill-bar-wrap {
+    grid-row: 2;
+    grid-column: 2;
+    width: 80px;
+    height: 4px;
+    background: var(--ios-gray-light);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .drill-bar {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--ios-blue);
+  }
+  .show-all {
+    text-align: center;
+    padding: 14px;
+    color: var(--ios-blue);
+    font-size: 15px;
+    cursor: pointer;
+    background: white;
+    margin: 16px;
+    border-radius: 12px;
+    border: none;
+    width: calc(100% - 32px);
+    font: inherit;
+    font-weight: 500;
+  }
+  .drill-context {
+    padding: 0 16px 12px;
+    font-size: 12px;
+    color: var(--ios-label-tert);
+  }
+
+  /* ----- Explainer ----- */
+  .explainer {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    align-self: start;
+    position: sticky;
+    top: 16px;
+  }
+  .explainer h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .explainer h4 {
+    margin: 14px 0 6px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+  }
+  .explainer p {
+    color: #555;
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 0 0 8px 0;
+  }
+  .explainer ul {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    line-height: 1.5;
+  }
+  .explainer li { margin-bottom: 4px; }
+  .explainer code {
+    background: var(--ios-gray-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+  .opt-tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .opt-tag {
+    background: var(--ios-purple);
+    color: white;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Diversity Readout + Top Played fold-in</h1>
+<p class="subtitle">Tap an axis card → drills into a sorted-by-count list. Tap back → returns. Tap the window picker to switch 30D / 90D / 1Y / All.</p>
+
+<div class="stage">
+
+  <div class="phone-frame">
+    <div class="phone-screen">
+      <div class="notch"></div>
+      <div class="status-bar">
+        <span>9:41</span>
+        <span>•••</span>
+      </div>
+      <div class="nav-stack" id="navStack"></div>
+    </div>
+  </div>
+
+  <div class="explainer">
+    <div class="opt-tags">
+      <span class="opt-tag">Pick #10</span>
+      <span class="opt-tag">Q1 artists+albums</span>
+      <span class="opt-tag">Q2 fold-in B</span>
+      <span class="opt-tag">Q15a/b/c → A/A/A</span>
+    </div>
+    <h3>Diversity Readout, with Top Played folded in</h3>
+    <p>This is iOS pick #10 with the histogram requirement layered on. Six coequal axes (artist · <strong>album</strong> · label · genre · era · new-vs-catalog). Locale stays the v2 7th. The four-window picker (30D / 90D / 1Y / All) drives every card. Each card shows the top 3 with counts and is tappable — the drill-in is the "Top Played" view for that axis.</p>
+
+    <h4>Try it</h4>
+    <ul>
+      <li>Tap a window in the segmented picker — values change across all cards</li>
+      <li>Tap any axis card to drill into the sorted list</li>
+      <li>Drill-in rows show name + count + proportional bar (Q15b → A)</li>
+      <li>Tap <strong>Back</strong> or <strong>Diversity</strong> to return</li>
+      <li>The drill-in inherits the Readout's window (Q15c → A) — visible in the subtitle</li>
+    </ul>
+
+    <h4>What's the same in the BS contract</h4>
+    <p><code>GET /djs/{id}/play-stats?window=30d|90d|1y|all</code> from ADR 0006 — extended with one new field: <code>albums: [{id, title, artist_name, count}]</code> for the new Albums axis. No new endpoint.</p>
+
+    <h4>Row navigation (not wired in this mock)</h4>
+    <ul>
+      <li>Artist row → Artist Deep Dive (pick #8)</li>
+      <li>Album row → Album Detail (with per-album histogram, this design)</li>
+      <li>Label / Genre row → Browse-by lens (pick #9)</li>
+      <li>Era / New-vs-Catalog rows → no navigation (abstract groupings)</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+// ---------- Mock data ----------
+const WINDOWS = ["30D", "90D", "1Y", "All"];
+let currentWindow = "90D";
+
+// Six axes — each with a per-window dataset
+const AXES = [
+  {
+    key: "artist",
+    label: "Artists",
+    icon: "🎤",
+    color: "#FF2D55",
+    sub: r => r.disambig,
+    nav: "Artist Deep Dive →",
+    data: {
+      "30D": [
+        {name:"Polvo", disambig:"Chapel Hill, NC", c:7},
+        {name:"Juana Molina", disambig:"Buenos Aires", c:5},
+        {name:"Chuquimamani-Condori", disambig:"La Paz", c:4},
+        {name:"Jessica Pratt", disambig:"Los Angeles", c:4},
+        {name:"DOGA", disambig:"NYC", c:3},
+        {name:"Pavement", disambig:"Stockton, CA", c:3},
+        {name:"Archers of Loaf", disambig:"Chapel Hill", c:2},
+        {name:"Wednesday", disambig:"Asheville, NC", c:2},
+        {name:"Indigo De Souza", disambig:"Asheville, NC", c:2},
+        {name:"Yo La Tengo", disambig:"Hoboken, NJ", c:1},
+      ],
+      "90D": [
+        {name:"Polvo", disambig:"Chapel Hill, NC", c:18},
+        {name:"Juana Molina", disambig:"Buenos Aires", c:14},
+        {name:"Chuquimamani-Condori", disambig:"La Paz", c:12},
+        {name:"Jessica Pratt", disambig:"Los Angeles", c:11},
+        {name:"DOGA", disambig:"NYC", c:9},
+        {name:"Pavement", disambig:"Stockton, CA", c:8},
+        {name:"Archers of Loaf", disambig:"Chapel Hill", c:7},
+        {name:"Wednesday", disambig:"Asheville, NC", c:6},
+        {name:"Indigo De Souza", disambig:"Asheville, NC", c:5},
+        {name:"Yo La Tengo", disambig:"Hoboken, NJ", c:5},
+        {name:"Caroline Polachek", disambig:"NYC", c:4},
+        {name:"Squid", disambig:"Brighton, UK", c:4},
+      ],
+      "1Y":  [
+        {name:"Polvo", disambig:"Chapel Hill, NC", c:62},
+        {name:"Juana Molina", disambig:"Buenos Aires", c:48},
+        {name:"Jessica Pratt", disambig:"Los Angeles", c:41},
+        {name:"Chuquimamani-Condori", disambig:"La Paz", c:39},
+        {name:"DOGA", disambig:"NYC", c:32},
+        {name:"Pavement", disambig:"Stockton, CA", c:28},
+        {name:"Wednesday", disambig:"Asheville, NC", c:24},
+        {name:"Archers of Loaf", disambig:"Chapel Hill", c:22},
+        {name:"Caroline Polachek", disambig:"NYC", c:19},
+        {name:"Indigo De Souza", disambig:"Asheville, NC", c:17},
+      ],
+      "All": [
+        {name:"Polvo", disambig:"Chapel Hill, NC", c:289},
+        {name:"Yo La Tengo", disambig:"Hoboken, NJ", c:218},
+        {name:"Pavement", disambig:"Stockton, CA", c:191},
+        {name:"Juana Molina", disambig:"Buenos Aires", c:174},
+        {name:"Archers of Loaf", disambig:"Chapel Hill", c:160},
+        {name:"Jessica Pratt", disambig:"Los Angeles", c:142},
+        {name:"Chuquimamani-Condori", disambig:"La Paz", c:118},
+        {name:"DOGA", disambig:"NYC", c:97},
+        {name:"Wednesday", disambig:"Asheville, NC", c:84},
+        {name:"Caroline Polachek", disambig:"NYC", c:67},
+      ],
+    }
+  },
+  {
+    key: "album",
+    label: "Albums",
+    icon: "💿",
+    color: "#5856D6",
+    sub: r => r.artist,
+    nav: "Album Detail →",
+    data: {
+      "30D": [
+        {name:"Today's Active Lifestyles", artist:"Polvo", c:5},
+        {name:"On Your Own Love Again", artist:"Jessica Pratt", c:4},
+        {name:"Halo", artist:"Juana Molina", c:3},
+        {name:"DJ E Tape", artist:"Chuquimamani-Condori", c:3},
+        {name:"Exploded Drawing", artist:"Polvo", c:2},
+        {name:"Rat Saw God", artist:"Wednesday", c:2},
+        {name:"Edits", artist:"Chuquimamani-Condori", c:2},
+      ],
+      "90D": [
+        {name:"Today's Active Lifestyles", artist:"Polvo", c:14},
+        {name:"On Your Own Love Again", artist:"Jessica Pratt", c:10},
+        {name:"Halo", artist:"Juana Molina", c:9},
+        {name:"DJ E Tape", artist:"Chuquimamani-Condori", c:8},
+        {name:"Exploded Drawing", artist:"Polvo", c:7},
+        {name:"Rat Saw God", artist:"Wednesday", c:6},
+        {name:"Edits", artist:"Chuquimamani-Condori", c:5},
+        {name:"Slanted and Enchanted", artist:"Pavement", c:5},
+        {name:"All Hat", artist:"DOGA", c:4},
+        {name:"Cor-Crane Secret", artist:"Polvo", c:4},
+      ],
+      "1Y": [
+        {name:"Today's Active Lifestyles", artist:"Polvo", c:48},
+        {name:"Halo", artist:"Juana Molina", c:36},
+        {name:"On Your Own Love Again", artist:"Jessica Pratt", c:34},
+        {name:"DJ E Tape", artist:"Chuquimamani-Condori", c:28},
+        {name:"Rat Saw God", artist:"Wednesday", c:22},
+        {name:"Edits", artist:"Chuquimamani-Condori", c:19},
+        {name:"Slanted and Enchanted", artist:"Pavement", c:18},
+        {name:"All Hat", artist:"DOGA", c:14},
+      ],
+      "All": [
+        {name:"Today's Active Lifestyles", artist:"Polvo", c:148},
+        {name:"Slanted and Enchanted", artist:"Pavement", c:121},
+        {name:"On Your Own Love Again", artist:"Jessica Pratt", c:98},
+        {name:"Halo", artist:"Juana Molina", c:92},
+        {name:"Painted Desert", artist:"Polvo", c:81},
+        {name:"Icky Mettle", artist:"Archers of Loaf", c:74},
+        {name:"DJ E Tape", artist:"Chuquimamani-Condori", c:62},
+      ],
+    }
+  },
+  {
+    key: "label",
+    label: "Labels",
+    icon: "🏷",
+    color: "#FF9500",
+    sub: r => null,
+    nav: "Browse Label →",
+    data: {
+      "30D": [
+        {name:"Merge", c:11},
+        {name:"Drag City", c:7},
+        {name:"Touch & Go", c:6},
+        {name:"Three Lobed", c:4},
+        {name:"Hausu Mountain", c:3},
+      ],
+      "90D": [
+        {name:"Merge", c:32},
+        {name:"Touch & Go", c:22},
+        {name:"Drag City", c:18},
+        {name:"Three Lobed", c:14},
+        {name:"Hausu Mountain", c:10},
+        {name:"Domino", c:8},
+      ],
+      "1Y": [
+        {name:"Merge", c:118},
+        {name:"Touch & Go", c:84},
+        {name:"Drag City", c:62},
+        {name:"Three Lobed", c:48},
+        {name:"Hausu Mountain", c:36},
+        {name:"Domino", c:24},
+        {name:"Sub Pop", c:18},
+      ],
+      "All": [
+        {name:"Merge", c:481},
+        {name:"Touch & Go", c:332},
+        {name:"Drag City", c:284},
+        {name:"Three Lobed", c:198},
+        {name:"Sub Pop", c:142},
+        {name:"Domino", c:118},
+      ],
+    }
+  },
+  {
+    key: "genre",
+    label: "Genres",
+    icon: "♪",
+    color: "#34C759",
+    sub: r => null,
+    nav: "Browse Genre →",
+    data: {
+      "30D": [
+        {name:"Indie Rock", c:18},
+        {name:"Experimental", c:9},
+        {name:"Folk", c:6},
+        {name:"Electronic", c:5},
+        {name:"Latin Electronic", c:4},
+      ],
+      "90D": [
+        {name:"Indie Rock", c:54},
+        {name:"Experimental", c:28},
+        {name:"Folk", c:18},
+        {name:"Latin Electronic", c:14},
+        {name:"Electronic", c:12},
+        {name:"Post-Hardcore", c:8},
+      ],
+      "1Y": [
+        {name:"Indie Rock", c:201},
+        {name:"Experimental", c:102},
+        {name:"Folk", c:68},
+        {name:"Latin Electronic", c:48},
+        {name:"Electronic", c:42},
+        {name:"Post-Hardcore", c:28},
+      ],
+      "All": [
+        {name:"Indie Rock", c:864},
+        {name:"Experimental", c:428},
+        {name:"Post-Hardcore", c:218},
+        {name:"Folk", c:201},
+        {name:"Electronic", c:174},
+      ],
+    }
+  },
+  {
+    key: "era",
+    label: "Era",
+    icon: "⏱",
+    color: "#5AC8FA",
+    sub: r => null,
+    nav: null,
+    data: {
+      "30D": [
+        {name:"2020s",     c:24},
+        {name:"2010s",     c:11},
+        {name:"1990s",     c:5},
+        {name:"2000s",     c:3},
+        {name:"Pre-1990",  c:1},
+      ],
+      "90D": [
+        {name:"2020s",     c:62},
+        {name:"1990s",     c:28},
+        {name:"2010s",     c:24},
+        {name:"2000s",     c:11},
+        {name:"Pre-1990",  c:3},
+      ],
+      "1Y": [
+        {name:"2020s",     c:241},
+        {name:"1990s",     c:118},
+        {name:"2010s",     c:91},
+        {name:"2000s",     c:42},
+        {name:"Pre-1990",  c:18},
+      ],
+      "All": [
+        {name:"2020s",     c:982},
+        {name:"1990s",     c:564},
+        {name:"2010s",     c:441},
+        {name:"2000s",     c:298},
+        {name:"Pre-1990",  c:121},
+      ],
+    }
+  },
+  {
+    key: "novelty",
+    label: "New vs Catalog",
+    icon: "✦",
+    color: "#8E44AD",
+    sub: r => null,
+    nav: null,
+    data: {
+      "30D": [
+        {name:"Catalog (5+ yrs)",  c:22},
+        {name:"Catalog (1–5 yrs)", c:14},
+        {name:"New arrivals",      c:8},
+      ],
+      "90D": [
+        {name:"Catalog (5+ yrs)",  c:64},
+        {name:"Catalog (1–5 yrs)", c:42},
+        {name:"New arrivals",      c:22},
+      ],
+      "1Y": [
+        {name:"Catalog (5+ yrs)",  c:268},
+        {name:"Catalog (1–5 yrs)", c:148},
+        {name:"New arrivals",      c:94},
+      ],
+      "All": [
+        {name:"Catalog (5+ yrs)",  c:1812},
+        {name:"Catalog (1–5 yrs)", c:486},
+        {name:"New arrivals",      c:108},
+      ],
+    }
+  },
+];
+
+const SUMMARY = {
+  "30D": { plays: 39, artists: 22, albums: 18 },
+  "90D": { plays: 128, artists: 47, albums: 39 },
+  "1Y":  { plays: 514, artists: 142, albums: 118 },
+  "All": { plays: 3208, artists: 612, albums: 487 },
+};
+
+// ---------- Render Readout (root page) ----------
+function renderReadout() {
+  const s = SUMMARY[currentWindow];
+  const cardsHtml = AXES.map(axis => {
+    const top = axis.data[currentWindow].slice(0, 3);
+    const allCount = axis.data[currentWindow].length;
+    return `
+      <button class="axis-card" data-axis="${axis.key}">
+        <div class="axis-card-head">
+          <span class="axis-icon" style="background:${axis.color}">${axis.icon}</span>
+          <span class="axis-name">${axis.label}</span>
+          <span class="axis-chevron">›</span>
+        </div>
+        <div class="axis-top-list">
+          ${top.map(r => `
+            <div class="axis-top-row">
+              <span class="axis-top-name">${r.name}</span>
+              <span class="axis-top-count">${r.c}</span>
+            </div>
+          `).join("")}
+        </div>
+        <div class="axis-foot">${allCount} total · tap to see all</div>
+      </button>
+    `;
+  }).join("");
+
+  return `
+    <div class="nav-page" data-page="readout">
+      <div class="nav-bar-large"><h1>Diversity</h1></div>
+      <div class="scroll-area">
+        <div class="window-row">
+          <div class="seg" id="windowSeg">
+            ${WINDOWS.map(w => `<button data-w="${w}" class="${w===currentWindow?"active":""}">${w === "All" ? "All" : w}</button>`).join("")}
+          </div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-cell">
+            <div class="summary-num">${s.plays}</div>
+            <div class="summary-label">Plays</div>
+          </div>
+          <div class="summary-cell">
+            <div class="summary-num">${s.artists}</div>
+            <div class="summary-label">Artists</div>
+          </div>
+          <div class="summary-cell">
+            <div class="summary-num">${s.albums}</div>
+            <div class="summary-label">Albums</div>
+          </div>
+        </div>
+        <div class="section-title">Distribution</div>
+        <div class="axis-grid">${cardsHtml}</div>
+        <div style="height: 32px"></div>
+      </div>
+    </div>
+  `;
+}
+
+function renderDrillIn(axisKey) {
+  const axis = AXES.find(a => a.key === axisKey);
+  const rows = axis.data[currentWindow];
+  const max = rows[0].c;
+  const windowLabels = { "30D":"Last 30 days", "90D":"Last 90 days", "1Y":"Last year", "All":"All time" };
+  const navHint = axis.nav ? ` · ${axis.nav}` : "";
+
+  const rowsHtml = rows.map(r => {
+    const pct = (r.c / max) * 100;
+    const sub = axis.sub(r);
+    return `
+      <div class="drill-row">
+        <div class="drill-name">${r.name}</div>
+        ${sub ? `<div class="drill-name-sub">${sub}</div>` : ""}
+        <div class="drill-count">${r.c}</div>
+        <div class="drill-bar-wrap"><div class="drill-bar" style="width:${pct}%;background:${axis.color}"></div></div>
+      </div>
+    `;
+  }).join("");
+
+  return `
+    <div class="nav-page entering" data-page="drill">
+      <div class="nav-bar">
+        <button class="back-btn" id="backBtn">
+          <svg width="12" height="20" viewBox="0 0 12 20" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="10 2 2 10 10 18"/></svg>
+          Diversity
+        </button>
+        <span class="nav-title">${axis.label}</span>
+        <span style="width:80px"></span>
+      </div>
+      <div class="scroll-area">
+        <div class="drill-context">${windowLabels[currentWindow]} · sorted by play count${navHint}</div>
+        <div class="drill-list">${rowsHtml}</div>
+        ${rows.length >= 10 ? `<button class="show-all">Show all ${axis.data["All"].length} ${axis.label.toLowerCase()}</button>` : ""}
+        <div style="height: 32px"></div>
+      </div>
+    </div>
+  `;
+}
+
+// ---------- Navigation ----------
+const stack = document.getElementById("navStack");
+function mount() {
+  stack.innerHTML = renderReadout();
+  wireReadout();
+}
+function wireReadout() {
+  document.querySelectorAll("#windowSeg button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      currentWindow = btn.dataset.w;
+      mount();
+    });
+  });
+  document.querySelectorAll(".axis-card").forEach(card => {
+    card.addEventListener("click", () => pushDrillIn(card.dataset.axis));
+  });
+}
+function wireDrillIn() {
+  document.getElementById("backBtn").addEventListener("click", popDrillIn);
+}
+function pushDrillIn(axisKey) {
+  const readout = stack.querySelector('[data-page="readout"]');
+  readout.classList.add("exiting");
+  stack.insertAdjacentHTML("beforeend", renderDrillIn(axisKey));
+  const drill = stack.querySelector('[data-page="drill"]');
+  // force reflow then animate in
+  requestAnimationFrame(() => {
+    drill.classList.remove("entering");
+  });
+  wireDrillIn();
+}
+function popDrillIn() {
+  const drill = stack.querySelector('[data-page="drill"]');
+  const readout = stack.querySelector('[data-page="readout"]');
+  drill.classList.add("entering");
+  readout.classList.remove("exiting");
+  setTimeout(() => drill.remove(), 320);
+}
+
+mount();
+</script>
+</body>
+</html>

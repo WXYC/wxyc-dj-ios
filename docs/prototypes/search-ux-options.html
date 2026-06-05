@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Search Plays — UX Options Prototype</title>
+<style>
+  :root {
+    --ios-bg: #F2F2F7;
+    --ios-card: #FFFFFF;
+    --ios-sep: #C6C6C8;
+    --ios-blue: #007AFF;
+    --ios-gray: #8E8E93;
+    --ios-gray-light: #E5E5EA;
+    --ios-gray-bg: #EFEFF4;
+    --ios-red: #FF3B30;
+    --ios-label: #000000;
+    --ios-label-sec: #3C3C43;
+    --ios-label-tert: #3C3C4399;
+    --frame-bg: #1c1c1e;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    background: #d8d8df;
+    color: #111;
+    padding: 24px 16px 48px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1 {
+    margin: 0 0 4px 0;
+    font-size: 22px;
+    font-weight: 600;
+    text-align: center;
+  }
+  .subtitle {
+    text-align: center;
+    color: #555;
+    margin-bottom: 24px;
+    font-size: 14px;
+  }
+
+  .tab-bar {
+    max-width: 900px;
+    margin: 0 auto 24px;
+    display: flex;
+    gap: 8px;
+    padding: 4px;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .tab-btn {
+    flex: 1;
+    padding: 10px 14px;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    color: #444;
+    text-align: left;
+    line-height: 1.3;
+  }
+  .tab-btn .tab-title {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .tab-btn .tab-desc {
+    display: block;
+    font-size: 11px;
+    color: #777;
+    font-weight: 400;
+  }
+  .tab-btn.active {
+    background: var(--ios-blue);
+    color: white;
+  }
+  .tab-btn.active .tab-desc { color: rgba(255,255,255,0.85); }
+
+  .stage {
+    max-width: 900px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  @media (max-width: 800px) {
+    .stage { grid-template-columns: 1fr; }
+  }
+
+  .phone-frame {
+    width: 390px;
+    margin: 0 auto;
+    background: var(--frame-bg);
+    border-radius: 50px;
+    padding: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    position: relative;
+  }
+  .phone-screen {
+    background: var(--ios-bg);
+    border-radius: 40px;
+    height: 800px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .notch {
+    width: 120px;
+    height: 30px;
+    background: var(--frame-bg);
+    border-radius: 0 0 18px 18px;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 5;
+  }
+
+  .status-bar {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ios-label);
+    flex-shrink: 0;
+  }
+
+  .nav-bar {
+    padding: 6px 16px 12px;
+    flex-shrink: 0;
+  }
+  .nav-bar h2 {
+    margin: 0;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+  }
+
+  .scroll-area {
+    flex: 1;
+    overflow-y: auto;
+  }
+  .scroll-area::-webkit-scrollbar { width: 0; }
+
+  /* ----- Search bar (shared base) ----- */
+  .search-row {
+    padding: 0 16px 8px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .search-bar {
+    flex: 1;
+    background: var(--ios-gray-light);
+    border-radius: 10px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 15px;
+  }
+  .search-bar svg { flex-shrink: 0; opacity: 0.5; }
+  .search-bar input {
+    border: none;
+    background: transparent;
+    flex: 1;
+    font: inherit;
+    font-size: 15px;
+    outline: none;
+    color: var(--ios-label);
+    min-width: 0;
+  }
+  .search-bar .syntax {
+    color: var(--ios-blue);
+    font-weight: 500;
+  }
+  .filters-btn {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 4px 6px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .filter-badge-count {
+    background: var(--ios-blue);
+    color: white;
+    border-radius: 9px;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .filters-btn.has-filters { color: var(--ios-blue); }
+
+  /* ----- A: syntax hint ----- */
+  .syntax-hint {
+    padding: 0 16px 12px;
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    line-height: 1.4;
+  }
+  .syntax-hint code {
+    background: var(--ios-gray-light);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 10px;
+  }
+
+  /* ----- D: chip row + Me toggle ----- */
+  .chip-row {
+    padding: 4px 16px 12px;
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .chip-row::-webkit-scrollbar { display: none; }
+  .chip {
+    background: var(--ios-gray-light);
+    color: var(--ios-label);
+    border: none;
+    border-radius: 14px;
+    padding: 5px 12px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .chip.active {
+    background: var(--ios-blue);
+    color: white;
+  }
+  .toggle-row {
+    padding: 0 16px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 14px;
+  }
+  .toggle-switch {
+    width: 44px;
+    height: 26px;
+    background: var(--ios-gray-light);
+    border-radius: 13px;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .toggle-switch.on {
+    background: #34C759;
+  }
+  .toggle-switch::after {
+    content: "";
+    width: 22px;
+    height: 22px;
+    background: white;
+    border-radius: 50%;
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transition: left 0.2s;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  }
+  .toggle-switch.on::after { left: 20px; }
+
+  /* ----- E: filter badge row + sheet ----- */
+  .filter-badge-row {
+    padding: 0 16px 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .filter-badge {
+    background: var(--ios-blue);
+    color: white;
+    border-radius: 14px;
+    padding: 4px 10px 4px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .filter-badge .x {
+    cursor: pointer;
+    opacity: 0.85;
+    font-size: 14px;
+    line-height: 1;
+  }
+  .sheet-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 100;
+    display: none;
+  }
+  .sheet-overlay.open { display: block; }
+  .sheet {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--ios-bg);
+    border-radius: 16px 16px 0 0;
+    max-height: 88%;
+    display: flex;
+    flex-direction: column;
+    transform: translateY(100%);
+    transition: transform 0.25s ease-out;
+  }
+  .sheet-overlay.open .sheet { transform: translateY(0); }
+  .sheet-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--ios-sep);
+    background: var(--ios-bg);
+  }
+  .sheet-header .sheet-title {
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .sheet-header button {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 15px;
+    cursor: pointer;
+    padding: 4px 0;
+  }
+  .sheet-header button.primary { font-weight: 600; }
+  .sheet-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+  .row-card {
+    background: white;
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 8px;
+  }
+  .row-line {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .row-line:last-child { margin-bottom: 0; }
+  .row-label {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    width: 56px;
+    flex-shrink: 0;
+  }
+  .row-select, .row-input {
+    flex: 1;
+    background: var(--ios-gray-bg);
+    border: none;
+    border-radius: 6px;
+    padding: 6px 8px;
+    font: inherit;
+    font-size: 13px;
+    color: var(--ios-label);
+  }
+  .row-input { min-width: 0; }
+  .row-remove {
+    background: transparent;
+    border: none;
+    color: var(--ios-red);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+  }
+  .row-exact {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--ios-label-sec);
+    padding-left: 64px;
+  }
+  .row-exact input[type=checkbox] { margin: 0; }
+  .row-conjunction {
+    text-align: center;
+    padding: 4px 0;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ios-gray);
+  }
+  .row-conjunction select {
+    background: var(--ios-gray-bg);
+    border: none;
+    border-radius: 6px;
+    padding: 3px 6px;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ios-label-sec);
+  }
+  .add-row-btn {
+    width: 100%;
+    background: white;
+    border: none;
+    border-radius: 10px;
+    padding: 12px;
+    font: inherit;
+    font-size: 14px;
+    color: var(--ios-blue);
+    cursor: pointer;
+    margin-top: 4px;
+  }
+
+  /* ----- Histogram + results ----- */
+  .section-header {
+    padding: 16px 16px 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ios-label-sec);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .gran-toggle {
+    display: flex;
+    gap: 0;
+    background: var(--ios-gray-light);
+    border-radius: 7px;
+    padding: 2px;
+  }
+  .gran-toggle button {
+    background: transparent;
+    border: none;
+    padding: 3px 12px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ios-label-sec);
+    cursor: pointer;
+    border-radius: 5px;
+  }
+  .gran-toggle button.active {
+    background: white;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  }
+
+  .chart-card {
+    background: white;
+    margin: 0 16px;
+    border-radius: 12px;
+    padding: 12px;
+  }
+  .chart-scroll {
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+  }
+  .chart-scroll::-webkit-scrollbar { height: 0; }
+  .chart-svg {
+    display: block;
+    height: 120px;
+  }
+  .chart-caption {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    text-align: center;
+  }
+
+  /* tooltip */
+  .tooltip {
+    position: absolute;
+    background: rgba(0,0,0,0.85);
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    pointer-events: none;
+    display: none;
+    z-index: 10;
+    transform: translate(-50%, -120%);
+    white-space: nowrap;
+  }
+
+  .results-list {
+    background: white;
+    margin: 0 16px 16px;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .result-row {
+    padding: 10px 12px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    font-size: 13px;
+  }
+  .result-row:last-child { border-bottom: none; }
+  .result-row .top {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 2px;
+  }
+  .result-row .artist {
+    font-weight: 600;
+    color: var(--ios-label);
+  }
+  .result-row .date {
+    color: var(--ios-label-tert);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+  .result-row .song {
+    color: var(--ios-label-sec);
+  }
+  .result-row .meta {
+    color: var(--ios-label-tert);
+    font-size: 11px;
+    margin-top: 2px;
+  }
+
+  /* ----- Explanation panel ----- */
+  .explainer {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    align-self: start;
+    position: sticky;
+    top: 16px;
+  }
+  .explainer h3 {
+    margin: 0 0 4px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .explainer .opt-tag {
+    display: inline-block;
+    background: var(--ios-blue);
+    color: white;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  .explainer h4 {
+    margin: 14px 0 6px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+  }
+  .explainer ul, .explainer ol {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    line-height: 1.5;
+  }
+  .explainer li { margin-bottom: 4px; }
+  .explainer code {
+    background: var(--ios-gray-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+  .explainer .pro { color: #1e7d3d; }
+  .explainer .con { color: #aa3a30; }
+</style>
+</head>
+<body>
+
+<h1>Search Plays — UX options</h1>
+<p class="subtitle">iOS prototype for flowsheet-archive search (Q12). Tap, type, scroll — all three are interactive.</p>
+
+<nav class="tab-bar" id="tabBar">
+  <button class="tab-btn active" data-opt="A"><span class="tab-title">A · Text syntax</span><span class="tab-desc">wxyc.info parity, single bar</span></button>
+  <button class="tab-btn" data-opt="D"><span class="tab-title">D · Chips</span><span class="tab-desc">Single-select scope chips</span></button>
+  <button class="tab-btn" data-opt="E"><span class="tab-title">E · Builder sheet</span><span class="tab-desc">dj-site parity, sheet UI</span></button>
+</nav>
+
+<div class="stage">
+
+  <!-- Phone mockup (re-rendered per tab) -->
+  <div class="phone-frame">
+    <div class="phone-screen" id="screen">
+      <div class="notch"></div>
+      <div class="status-bar">
+        <span>9:41</span>
+        <span>•••</span>
+      </div>
+      <div class="nav-bar"><h2>Search Plays</h2></div>
+      <div id="searchUi"></div>
+      <div class="scroll-area" id="scrollArea">
+        <div class="section-header">
+          <span class="section-title">Plays over time</span>
+          <div class="gran-toggle" id="granToggle">
+            <button data-g="Y" class="active">Year</button>
+            <button data-g="M">Month</button>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-scroll" id="chartScroll">
+            <svg class="chart-svg" id="chart"></svg>
+          </div>
+          <div class="chart-caption" id="chartCaption"></div>
+        </div>
+        <div class="section-header">
+          <span class="section-title">Results · <span id="resultCount">247</span></span>
+        </div>
+        <div class="results-list" id="results"></div>
+        <div style="height: 32px"></div>
+      </div>
+      <div class="tooltip" id="tooltip"></div>
+      <div class="sheet-overlay" id="sheetOverlay">
+        <div class="sheet" id="sheet"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Explanation panel (re-rendered per tab) -->
+  <div class="explainer" id="explainer"></div>
+
+</div>
+
+<script>
+// ---------- Mock data ----------
+const QUERY = "polvo";
+
+// year-bucketed plays for "polvo" — 22 years, plausible curve
+const YEAR_COUNTS = {
+  "2004": 18, "2005": 14, "2006": 11, "2007": 9, "2008": 7,
+  "2009": 12, "2010": 8, "2011": 9, "2012": 22, "2013": 18,
+  "2014": 11, "2015": 8, "2016": 6, "2017": 4, "2018": 5,
+  "2019": 7, "2020": 4, "2021": 6, "2022": 8, "2023": 5,
+  "2024": 7, "2025": 3
+};
+// month-bucketed plays for the last 24 months (sample)
+const MONTH_COUNTS = (() => {
+  const out = {};
+  const months = [];
+  for (let y = 2023; y <= 2025; y++) {
+    for (let m = 1; m <= 12; m++) {
+      if (y === 2025 && m > 6) break;
+      months.push(`${y}-${String(m).padStart(2,"0")}`);
+    }
+  }
+  months.forEach(k => {
+    out[k] = Math.floor(Math.random() * 3) + (Math.random() < 0.2 ? 2 : 0);
+  });
+  return out;
+})();
+
+const RESULTS = [
+  { date: "2025-04-12", artist: "Polvo", song: "Total Pigs", release: "Today's Active Lifestyles", label: "Touch & Go", dj: "biscuit" },
+  { date: "2025-02-28", artist: "Polvo", song: "Time Isn't on My Side", release: "Today's Active Lifestyles", label: "Touch & Go", dj: "stanton" },
+  { date: "2024-11-03", artist: "Polvo", song: "Action vs. Vibe", release: "Cor-Crane Secret", label: "Merge", dj: "biscuit" },
+  { date: "2024-08-14", artist: "Polvo", song: "Tilebreaker", release: "Today's Active Lifestyles", label: "Touch & Go", dj: "rmc" },
+  { date: "2024-05-22", artist: "Polvo", song: "Vibracobra", release: "Today's Active Lifestyles", label: "Touch & Go", dj: "biscuit" },
+  { date: "2024-03-18", artist: "Polvo", song: "Lazy Comet", release: "Exploded Drawing", label: "Touch & Go", dj: "kelly" },
+  { date: "2024-01-09", artist: "Polvo", song: "My Kimono", release: "Today's Active Lifestyles", label: "Touch & Go", dj: "biscuit" },
+  { date: "2023-12-04", artist: "Polvo", song: "Fast Canoe", release: "Today's Active Lifestyles", label: "Touch & Go", dj: "stanton" },
+  { date: "2023-09-27", artist: "Polvo", song: "Stinger (Five Wigs)", release: "Today's Active Lifestyles", label: "Touch & Go", dj: "rmc" },
+  { date: "2023-07-15", artist: "Polvo", song: "Sure Shot", release: "Exploded Drawing", label: "Touch & Go", dj: "biscuit" }
+];
+
+// ---------- State ----------
+let currentOpt = "A";
+let currentGran = "Y";
+
+// option-A state
+let aQuery = "polvo";
+// option-D state
+let dScope = "all"; // all | artist | song | album | label | dj
+let dMe = false;
+// option-E state
+let eRows = [
+  { field: "Artist", op: "AND", value: "polvo", exact: false }
+];
+
+// ---------- Renderers ----------
+function renderSearchUi() {
+  const root = document.getElementById("searchUi");
+  if (currentOpt === "A") {
+    root.innerHTML = `
+      <div class="search-row">
+        <div class="search-bar">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="aInput" type="text" value="${aQuery}" placeholder="Search the archive"/>
+        </div>
+      </div>
+      <div class="syntax-hint">
+        <strong>Operators</strong> &nbsp;
+        <code>artist:</code> <code>song:</code> <code>release:</code> <code>label:</code> <code>dj:</code> &nbsp;·&nbsp;
+        <code>AND</code> <code>OR</code> <code>NOT</code> &nbsp;·&nbsp;
+        <code>"exact phrase"</code> &nbsp;·&nbsp; <code>wild*card</code>
+      </div>
+    `;
+    document.getElementById("aInput").addEventListener("input", e => {
+      aQuery = e.target.value;
+    });
+  }
+
+  if (currentOpt === "D") {
+    const chips = ["all","artist","song","album","label","dj"];
+    root.innerHTML = `
+      <div class="search-row">
+        <div class="search-bar">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" value="polvo" placeholder="Search the archive"/>
+        </div>
+      </div>
+      <div class="chip-row" id="chipRow">
+        ${chips.map(c => `<button class="chip ${dScope===c?"active":""}" data-c="${c}">${c==="all"?"All":c[0].toUpperCase()+c.slice(1)}</button>`).join("")}
+      </div>
+      <div class="toggle-row">
+        <span>Search only my plays</span>
+        <div class="toggle-switch ${dMe?"on":""}" id="meToggle"></div>
+      </div>
+    `;
+    document.querySelectorAll(".chip").forEach(el => {
+      el.addEventListener("click", () => {
+        dScope = el.dataset.c;
+        renderSearchUi();
+      });
+    });
+    document.getElementById("meToggle").addEventListener("click", () => {
+      dMe = !dMe;
+      renderSearchUi();
+    });
+  }
+
+  if (currentOpt === "E") {
+    const activeFilters = eRows
+      .filter(r => r.value)
+      .map(r => `${r.field}: ${r.value}${r.exact ? " (exact)" : ""}`);
+    root.innerHTML = `
+      <div class="search-row">
+        <div class="search-bar">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" placeholder="Search (or use Filters)"/>
+        </div>
+        <button class="filters-btn ${activeFilters.length?"has-filters":""}" id="openSheetBtn">
+          ${activeFilters.length ? `<span class="filter-badge-count">${activeFilters.length}</span>` : ""}
+          Filters
+        </button>
+      </div>
+      ${activeFilters.length ? `
+        <div class="filter-badge-row">
+          ${eRows.filter(r => r.value).map((r, i) => `
+            <span class="filter-badge">
+              <strong>${r.field}:</strong> ${r.value}${r.exact ? ' "" ' : ""}
+              <span class="x" data-rm="${i}">×</span>
+            </span>
+          `).join("")}
+        </div>
+      ` : ""}
+    `;
+    document.getElementById("openSheetBtn").addEventListener("click", openSheet);
+    document.querySelectorAll(".filter-badge .x").forEach(el => {
+      el.addEventListener("click", () => {
+        const i = parseInt(el.dataset.rm);
+        eRows.splice(i, 1);
+        if (eRows.length === 0) eRows.push({ field: "Artist", op: "AND", value: "", exact: false });
+        renderSearchUi();
+      });
+    });
+  }
+}
+
+function openSheet() {
+  renderSheet();
+  document.getElementById("sheetOverlay").classList.add("open");
+}
+function closeSheet(apply) {
+  document.getElementById("sheetOverlay").classList.remove("open");
+  if (apply) renderSearchUi();
+}
+
+function renderSheet() {
+  const FIELDS = ["Artist","Song","Album","Label","DJ","Date","Date Range"];
+  const OPS = ["AND","OR","NOT"];
+  const rowsHtml = eRows.map((r, i) => {
+    const isDateRange = r.field === "Date Range";
+    const isDate = r.field === "Date";
+    return `
+      ${i > 0 ? `
+        <div class="row-conjunction">
+          <select data-op="${i}">
+            ${OPS.map(o => `<option value="${o}" ${o===r.op?"selected":""}>${o}</option>`).join("")}
+          </select>
+        </div>` : ""}
+      <div class="row-card">
+        <div class="row-line">
+          <span class="row-label">Field</span>
+          <select class="row-select" data-field="${i}">
+            ${FIELDS.map(f => `<option value="${f}" ${f===r.field?"selected":""}>${f}</option>`).join("")}
+          </select>
+          <button class="row-remove" data-rm-row="${i}">⊖</button>
+        </div>
+        <div class="row-line">
+          <span class="row-label">${isDateRange?"From":isDate?"Date":"Value"}</span>
+          <input class="row-input" type="${isDate||isDateRange?"date":"text"}" placeholder="${isDate||isDateRange?"":"Enter…"}" value="${isDate||isDateRange?"":r.value}" data-val="${i}"/>
+        </div>
+        ${isDateRange ? `
+          <div class="row-line">
+            <span class="row-label">To</span>
+            <input class="row-input" type="date" data-valto="${i}"/>
+          </div>` : ""}
+        ${!isDate && !isDateRange ? `
+          <div class="row-exact">
+            <input type="checkbox" id="ex${i}" ${r.exact?"checked":""} data-exact="${i}"/>
+            <label for="ex${i}">Exact match</label>
+          </div>` : ""}
+      </div>
+    `;
+  }).join("");
+
+  document.getElementById("sheet").innerHTML = `
+    <div class="sheet-header">
+      <button id="cancelBtn">Cancel</button>
+      <span class="sheet-title">Search Filters</span>
+      <button class="primary" id="applyBtn">Apply</button>
+    </div>
+    <div class="sheet-body">
+      ${rowsHtml}
+      <button class="add-row-btn" id="addRowBtn">+ Add condition</button>
+    </div>
+  `;
+  document.getElementById("cancelBtn").addEventListener("click", () => closeSheet(false));
+  document.getElementById("applyBtn").addEventListener("click", () => closeSheet(true));
+  document.getElementById("addRowBtn").addEventListener("click", () => {
+    eRows.push({ field: "Song", op: "AND", value: "", exact: false });
+    renderSheet();
+  });
+  document.querySelectorAll("[data-field]").forEach(el => {
+    el.addEventListener("change", () => {
+      eRows[parseInt(el.dataset.field)].field = el.value;
+      renderSheet();
+    });
+  });
+  document.querySelectorAll("[data-op]").forEach(el => {
+    el.addEventListener("change", () => {
+      eRows[parseInt(el.dataset.op)].op = el.value;
+    });
+  });
+  document.querySelectorAll("[data-val]").forEach(el => {
+    el.addEventListener("input", () => {
+      eRows[parseInt(el.dataset.val)].value = el.value;
+    });
+  });
+  document.querySelectorAll("[data-exact]").forEach(el => {
+    el.addEventListener("change", () => {
+      eRows[parseInt(el.dataset.exact)].exact = el.checked;
+    });
+  });
+  document.querySelectorAll("[data-rm-row]").forEach(el => {
+    el.addEventListener("click", () => {
+      const i = parseInt(el.dataset.rmRow);
+      eRows.splice(i, 1);
+      if (eRows.length === 0) eRows.push({ field: "Artist", op: "AND", value: "", exact: false });
+      renderSheet();
+    });
+  });
+}
+
+// ---------- Histogram ----------
+function renderChart() {
+  const svg = document.getElementById("chart");
+  const data = currentGran === "Y" ? YEAR_COUNTS : MONTH_COUNTS;
+  const keys = Object.keys(data).sort();
+  const values = keys.map(k => data[k]);
+  const maxV = Math.max(...values);
+  const barW = currentGran === "Y" ? 28 : 14;
+  const barGap = currentGran === "Y" ? 8 : 3;
+  const padL = 12, padR = 12, padT = 12, padB = 22;
+  const w = padL + padR + keys.length * (barW + barGap) - barGap;
+  const h = 120;
+  svg.setAttribute("width", w);
+  svg.setAttribute("height", h);
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+
+  const chartH = h - padT - padB;
+  let html = "";
+  // grid
+  for (let g = 0; g <= 4; g++) {
+    const y = padT + chartH * (g / 4);
+    html += `<line x1="${padL}" y1="${y}" x2="${w-padR}" y2="${y}" stroke="#eee" stroke-width="0.5"/>`;
+  }
+  // bars
+  keys.forEach((k, i) => {
+    const v = values[i];
+    const barH = v === 0 ? 0 : Math.max(2, (v / maxV) * chartH);
+    const x = padL + i * (barW + barGap);
+    const y = padT + chartH - barH;
+    html += `<rect x="${x}" y="${y}" width="${barW}" height="${barH}" rx="2" fill="#007AFF" data-k="${k}" data-v="${v}" class="bar"/>`;
+    if (currentGran === "Y" && (i % 3 === 0 || i === keys.length - 1)) {
+      html += `<text x="${x + barW/2}" y="${h - 6}" text-anchor="middle" font-size="9" fill="#8E8E93">${k}</text>`;
+    }
+    if (currentGran === "M" && (i % 6 === 0 || i === keys.length - 1)) {
+      html += `<text x="${x + barW/2}" y="${h - 6}" text-anchor="middle" font-size="9" fill="#8E8E93">${k.slice(2)}</text>`;
+    }
+  });
+  svg.innerHTML = html;
+  // tooltip
+  const tt = document.getElementById("tooltip");
+  document.querySelectorAll(".bar").forEach(b => {
+    b.addEventListener("mouseenter", e => {
+      const v = b.dataset.v;
+      const k = b.dataset.k;
+      tt.style.display = "block";
+      tt.textContent = `${k} · ${v} ${v == 1 ? "play" : "plays"}`;
+      const rect = b.getBoundingClientRect();
+      const screenRect = document.getElementById("screen").getBoundingClientRect();
+      tt.style.left = (rect.left + rect.width / 2 - screenRect.left) + "px";
+      tt.style.top = (rect.top - screenRect.top) + "px";
+    });
+    b.addEventListener("mouseleave", () => { tt.style.display = "none"; });
+  });
+  const total = values.reduce((a,b) => a+b, 0);
+  document.getElementById("chartCaption").textContent = `${total} ${total === 1 ? "play" : "plays"} · top 10,000 results by relevance`;
+}
+
+function renderResults() {
+  const root = document.getElementById("results");
+  root.innerHTML = RESULTS.map(r => `
+    <div class="result-row">
+      <div class="top">
+        <span class="artist">${r.artist}</span>
+        <span class="date">${r.date}</span>
+      </div>
+      <div class="song">${r.song}</div>
+      <div class="meta">${r.release} · ${r.label} · ${r.dj}</div>
+    </div>
+  `).join("");
+}
+
+// ---------- Explainer ----------
+function renderExplainer() {
+  const el = document.getElementById("explainer");
+  if (currentOpt === "A") {
+    el.innerHTML = `
+      <span class="opt-tag">Option A</span>
+      <h3>Text syntax (wxyc.info parity)</h3>
+      <p style="color:#555;font-size:13px;line-height:1.5;margin:0 0 4px 0">Single search bar. All scoping, boolean operators, exact phrases, and wildcards are typed inline.</p>
+      <h4>Try it</h4>
+      <ul>
+        <li>Plain: <code>polvo</code> — searches all fields</li>
+        <li>Scoped: <code>artist:polvo</code></li>
+        <li>Combined: <code>artist:polvo dj:biscuit</code></li>
+        <li>Boolean: <code>artist:polvo OR artist:archers</code></li>
+        <li>Exclude: <code>polvo NOT live</code></li>
+        <li>Phrase: <code>"jimmy carl black"</code></li>
+        <li>Wildcard: <code>elect*</code></li>
+      </ul>
+      <h4>Pros</h4>
+      <ul><li class="pro">Direct parity with wxyc.info — zero relearning</li><li class="pro">Smallest iOS scope (just an input field)</li><li class="pro">Highest expressive ceiling</li></ul>
+      <h4>Cons</h4>
+      <ul><li class="con">Syntax invisible until DJ taps the help icon</li><li class="con">Typing operators on mobile is friction</li><li class="con">No first-class date filter</li></ul>
+    `;
+  }
+  if (currentOpt === "D") {
+    el.innerHTML = `
+      <span class="opt-tag">Option D</span>
+      <h3>Single-select chips (mobile-native)</h3>
+      <p style="color:#555;font-size:13px;line-height:1.5;margin:0 0 4px 0">Scope chips above the keyboard area. Tap to change field. Substring matching by default — no operators.</p>
+      <h4>Try it</h4>
+      <ul>
+        <li>Tap chips to rescope (Artist / Song / etc.)</li>
+        <li>Toggle "Search only my plays" to scope by DJ</li>
+        <li>No typed operators — substring match handles most cases</li>
+      </ul>
+      <h4>Pros</h4>
+      <ul><li class="pro">Discoverable — chips visible always</li><li class="pro">Most mobile-native pattern</li><li class="pro">Cleanest BS contract (q + scope + dj_filter)</li></ul>
+      <h4>Cons</h4>
+      <ul><li class="con">No multi-field queries (<code>artist:X dj:Y</code> needs two searches)</li><li class="con">No <code>OR</code> / <code>NOT</code> / phrases / dates</li><li class="con">Breaks wxyc.info parity for power users</li></ul>
+    `;
+  }
+  if (currentOpt === "E") {
+    el.innerHTML = `
+      <span class="opt-tag">Option E</span>
+      <h3>Builder sheet (dj-site parity)</h3>
+      <p style="color:#555;font-size:13px;line-height:1.5;margin:0 0 4px 0">Simple search bar with a Filters affordance. Tap Filters → sheet opens with the dj-site <code>PlaylistAdvancedSearch</code> shape: unlimited rows, per-row field + operator + value, optional exact match, native date pickers.</p>
+      <h4>Try it</h4>
+      <ol>
+        <li>Tap <strong>Filters</strong> top-right</li>
+        <li>Tap <strong>+ Add condition</strong></li>
+        <li>Change the new row's field to <strong>DJ</strong>, type a value</li>
+        <li>Add another row, change field to <strong>Date Range</strong> — date pickers appear</li>
+        <li>Tap <strong>Apply</strong> — sheet closes, badges appear on the search bar with active filters</li>
+        <li>Tap × on a badge to remove that condition</li>
+      </ol>
+      <h4>Pros</h4>
+      <ul><li class="pro">Strict superset of wxyc.info (gains date / date-range)</li><li class="pro">Direct dj-site parity — same model on web and iOS</li><li class="pro">Discoverable AND powerful — opt-in complexity</li></ul>
+      <h4>Cons</h4>
+      <ul><li class="con">Largest iOS scope (sheet, dynamic rows, badge UI, state mgmt)</li><li class="con">No grouping/parentheses (matches dj-site — linear evaluation only)</li></ul>
+    `;
+  }
+}
+
+// ---------- Tab switching ----------
+document.getElementById("tabBar").addEventListener("click", e => {
+  const btn = e.target.closest(".tab-btn");
+  if (!btn) return;
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  currentOpt = btn.dataset.opt;
+  renderSearchUi();
+  renderExplainer();
+});
+
+document.getElementById("granToggle").addEventListener("click", e => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  document.querySelectorAll(".gran-toggle button").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  currentGran = btn.dataset.g;
+  renderChart();
+});
+
+// ---------- Boot ----------
+renderSearchUi();
+renderChart();
+renderResults();
+renderExplainer();
+</script>
+</body>
+</html>
