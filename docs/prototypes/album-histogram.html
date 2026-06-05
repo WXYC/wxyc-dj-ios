@@ -1,0 +1,1211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Per-Album Play Histogram — Prototype</title>
+<style>
+  :root {
+    --ios-bg: #F2F2F7;
+    --ios-card: #FFFFFF;
+    --ios-sep: #C6C6C8;
+    --ios-blue: #007AFF;
+    --ios-blue-bright: #339DFF;
+    --ios-purple: #5856D6;
+    --ios-pink: #FF2D55;
+    --ios-orange: #FF9500;
+    --ios-green: #34C759;
+    --ios-teal: #5AC8FA;
+    --ios-gray: #8E8E93;
+    --ios-gray-light: #E5E5EA;
+    --ios-gray-bg: #EFEFF4;
+    --ios-label: #000000;
+    --ios-label-sec: #3C3C43;
+    --ios-label-tert: #3C3C4399;
+    --ios-label-quat: #3C3C434D;
+    --frame-bg: #1c1c1e;
+    --grid-line: #EAEAEC;
+    --rule-mark: #FF9500;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    background: #d8d8df;
+    color: #111;
+    padding: 24px 16px 48px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1 {
+    margin: 0 0 4px 0;
+    font-size: 22px;
+    font-weight: 600;
+    text-align: center;
+  }
+  .subtitle {
+    text-align: center;
+    color: #555;
+    margin-bottom: 24px;
+    font-size: 14px;
+  }
+
+  /* ----- Mode toggle (top tab bar) ----- */
+  .tab-bar {
+    max-width: 900px;
+    margin: 0 auto 24px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    padding: 4px;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .tab-btn {
+    padding: 10px 12px;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    color: #444;
+    text-align: left;
+    line-height: 1.3;
+  }
+  .tab-btn .tab-title {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .tab-btn .tab-desc {
+    display: block;
+    font-size: 10.5px;
+    color: #777;
+    font-weight: 400;
+  }
+  .tab-btn.active {
+    background: var(--ios-blue);
+    color: white;
+  }
+  .tab-btn.active .tab-desc { color: rgba(255,255,255,0.85); }
+
+  .stage {
+    max-width: 900px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  @media (max-width: 800px) {
+    .stage { grid-template-columns: 1fr; }
+  }
+
+  /* ----- Phone frame ----- */
+  .phone-frame {
+    width: 390px;
+    margin: 0 auto;
+    background: var(--frame-bg);
+    border-radius: 50px;
+    padding: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    position: relative;
+  }
+  .phone-screen {
+    background: var(--ios-bg);
+    border-radius: 40px;
+    height: 800px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .notch {
+    width: 120px;
+    height: 30px;
+    background: var(--frame-bg);
+    border-radius: 0 0 18px 18px;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+  }
+  .status-bar {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+    background: var(--ios-bg);
+    z-index: 10;
+    position: relative;
+  }
+
+  /* ----- Nav bar ----- */
+  .nav-bar {
+    padding: 6px 16px 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 44px;
+    flex-shrink: 0;
+  }
+  .back-btn {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 17px;
+    cursor: pointer;
+    padding: 4px 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .back-btn svg { stroke: var(--ios-blue); }
+  .nav-title-spacer { flex: 1; }
+  .nav-action {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 17px;
+    cursor: pointer;
+    padding: 4px 6px;
+  }
+
+  .scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 24px;
+  }
+  .scroll-area::-webkit-scrollbar { width: 0; }
+
+  /* ----- Hero (cover + meta) ----- */
+  .hero {
+    padding: 4px 16px 18px;
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+  }
+  .cover {
+    width: 96px;
+    height: 96px;
+    border-radius: 8px;
+    flex-shrink: 0;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    position: relative;
+    overflow: hidden;
+  }
+  .cover-art {
+    position: absolute;
+    inset: 0;
+  }
+  .meta {
+    flex: 1;
+    min-width: 0;
+    padding-top: 2px;
+  }
+  .meta .artist {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ios-blue);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-bottom: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .meta .title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--ios-label);
+    line-height: 1.15;
+    letter-spacing: -0.2px;
+    margin-bottom: 6px;
+  }
+  .meta .label-year {
+    font-size: 13px;
+    color: var(--ios-label-tert);
+    margin-bottom: 8px;
+  }
+  .meta .meta-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .meta-action-btn {
+    background: var(--ios-gray-bg);
+    border: none;
+    border-radius: 7px;
+    padding: 5px 11px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ios-blue);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  /* ----- Section headers ----- */
+  .section-header {
+    padding: 18px 16px 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ios-label-sec);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .section-foot {
+    padding: 6px 16px 0;
+    font-size: 11px;
+    color: var(--ios-label-tert);
+  }
+
+  /* ----- Tracklist ----- */
+  .tracklist {
+    background: white;
+    margin: 0 16px;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .track-row {
+    padding: 9px 14px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    display: grid;
+    grid-template-columns: 18px 1fr auto;
+    gap: 10px;
+    align-items: center;
+    font-size: 14px;
+  }
+  .track-row:last-child { border-bottom: none; }
+  .track-num {
+    color: var(--ios-label-tert);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .track-title {
+    color: var(--ios-label);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .track-dur {
+    color: var(--ios-label-tert);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ----- Plays-at-WXYC section ----- */
+  .plays-card {
+    background: white;
+    margin: 0 16px;
+    border-radius: 12px;
+    padding: 14px 4px 12px;
+    position: relative;
+  }
+  .plays-summary {
+    padding: 0 12px 10px;
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    line-height: 1.45;
+  }
+  .plays-summary .strong {
+    color: var(--ios-label);
+    font-weight: 600;
+  }
+  .gran-row {
+    padding: 0 12px 12px;
+  }
+  .gran-toggle {
+    display: flex;
+    gap: 0;
+    background: var(--ios-gray-light);
+    border-radius: 8px;
+    padding: 2px;
+  }
+  .gran-toggle button {
+    flex: 1;
+    background: transparent;
+    border: none;
+    padding: 5px 0;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ios-label-sec);
+    cursor: pointer;
+    border-radius: 6px;
+  }
+  .gran-toggle button.active {
+    background: white;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    color: var(--ios-label);
+  }
+
+  /* ----- Chart ----- */
+  .chart-wrap {
+    position: relative;
+    padding: 0 0 0 0;
+    /* margin keeps the y-axis label gutter aligned with the card */
+  }
+  .chart-yaxis {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 34px;
+    height: 168px;
+    pointer-events: none;
+    z-index: 2;
+    background: linear-gradient(90deg, white 0%, white 75%, rgba(255,255,255,0) 100%);
+  }
+  .chart-scroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    padding: 0 12px 0 38px;
+    position: relative;
+  }
+  .chart-scroll::-webkit-scrollbar { height: 0; }
+  .chart-svg {
+    display: block;
+    height: 168px;
+  }
+  /* invisible per-bar snap targets layered on top of the SVG so the browser has
+     real scroll-snap-align children. The SVG stays the visual source of truth. */
+  .snap-track {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    display: flex;
+    pointer-events: none;
+  }
+  .snap-cell {
+    flex-shrink: 0;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+    height: 100%;
+  }
+  .chart-svg .bar {
+    cursor: pointer;
+    transition: fill 0.12s ease-out;
+  }
+  .chart-svg .bar.selected {
+    fill: var(--ios-blue-bright);
+    filter: drop-shadow(0 2px 4px rgba(0, 122, 255, 0.35));
+  }
+  .chart-svg .grid-line {
+    stroke: var(--grid-line);
+    stroke-width: 0.5;
+  }
+  .chart-svg .y-tick {
+    font-size: 9.5px;
+    fill: var(--ios-label-tert);
+    font-variant-numeric: tabular-nums;
+  }
+  .chart-svg .x-tick {
+    font-size: 9.5px;
+    fill: var(--ios-label-tert);
+    font-variant-numeric: tabular-nums;
+  }
+  .chart-svg .rule-mark {
+    stroke: var(--rule-mark);
+    stroke-width: 1.2;
+    stroke-dasharray: 3 3;
+  }
+  .chart-svg .rule-label {
+    font-size: 9.5px;
+    fill: var(--rule-mark);
+    font-weight: 600;
+  }
+  .empty-state {
+    padding: 18px 12px 22px;
+    text-align: center;
+    font-size: 14px;
+    color: var(--ios-label-tert);
+    font-style: italic;
+  }
+  .empty-state .empty-icon {
+    display: block;
+    font-size: 28px;
+    margin-bottom: 8px;
+    opacity: 0.5;
+  }
+
+  /* tooltip — Apple Health style */
+  .tooltip {
+    position: absolute;
+    background: rgba(28, 28, 30, 0.95);
+    color: white;
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 11.5px;
+    pointer-events: none;
+    display: none;
+    z-index: 30;
+    transform: translate(-50%, -130%);
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.3;
+  }
+  .tooltip .tt-period {
+    color: rgba(255,255,255,0.7);
+    font-size: 10px;
+    font-weight: 500;
+    margin-bottom: 1px;
+  }
+  .tooltip .tt-value {
+    font-weight: 600;
+    font-size: 13px;
+  }
+  .tooltip .tt-value .tt-unit {
+    font-weight: 400;
+    font-size: 11px;
+    color: rgba(255,255,255,0.7);
+    margin-left: 3px;
+  }
+  .tooltip::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 4px solid transparent;
+    border-top-color: rgba(28, 28, 30, 0.95);
+  }
+
+  /* ----- LML extras stub ----- */
+  .extras-card {
+    background: white;
+    margin: 0 16px;
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .extras-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    font-size: 14px;
+    border-bottom: 0.5px solid var(--ios-sep);
+  }
+  .extras-row:last-child { border-bottom: none; }
+  .extras-label {
+    color: var(--ios-label-tert);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .extras-value {
+    color: var(--ios-label);
+    font-weight: 500;
+  }
+  .extras-link {
+    color: var(--ios-blue);
+    font-size: 13px;
+  }
+
+  /* ----- Explainer ----- */
+  .explainer {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    align-self: start;
+    position: sticky;
+    top: 16px;
+  }
+  .explainer h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .explainer h4 {
+    margin: 14px 0 6px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+  }
+  .explainer p {
+    color: #555;
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 0 0 8px 0;
+  }
+  .explainer ul {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    line-height: 1.5;
+  }
+  .explainer li { margin-bottom: 4px; }
+  .explainer code {
+    background: var(--ios-gray-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+  .explainer pre {
+    background: var(--ios-gray-bg);
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    line-height: 1.45;
+    overflow-x: auto;
+    margin: 8px 0 0 0;
+    color: var(--ios-label-sec);
+  }
+  .opt-tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .opt-tag {
+    background: var(--ios-purple);
+    color: white;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .opt-tag.alt-1 { background: var(--ios-blue); }
+  .opt-tag.alt-2 { background: var(--ios-orange); }
+  .opt-tag.alt-3 { background: var(--ios-pink); }
+  .explainer .note {
+    color: var(--ios-label-tert);
+    font-size: 12px;
+    line-height: 1.45;
+    margin-top: 6px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Per-album play histogram — Album Detail</h1>
+<p class="subtitle">Apple Health-style snap-aligned bar chart. Switch albums to see the chart, marker, and default granularity adapt.</p>
+
+<nav class="tab-bar" id="tabBar">
+  <button class="tab-btn active" data-mode="polvo">
+    <span class="tab-title">Polvo · TAL</span>
+    <span class="tab-desc">Long-tail · marker · Year</span>
+  </button>
+  <button class="tab-btn" data-mode="wednesday">
+    <span class="tab-title">Wednesday · RSG</span>
+    <span class="tab-desc">Recent dense · Month</span>
+  </button>
+  <button class="tab-btn" data-mode="chuqui">
+    <span class="tab-title">Chuqui · DJ E Tape</span>
+    <span class="tab-desc">Sparse new release</span>
+  </button>
+  <button class="tab-btn" data-mode="squid">
+    <span class="tab-title">Squid · BGF</span>
+    <span class="tab-desc">Never played</span>
+  </button>
+</nav>
+
+<div class="stage">
+
+  <div class="phone-frame">
+    <div class="phone-screen">
+      <div class="notch"></div>
+      <div class="status-bar">
+        <span>9:41</span>
+        <span>•••</span>
+      </div>
+      <div class="nav-bar">
+        <button class="back-btn">
+          <svg width="12" height="20" viewBox="0 0 12 20" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="10 2 2 10 10 18"/></svg>
+          Albums
+        </button>
+        <span class="nav-title-spacer"></span>
+        <button class="nav-action" title="Add to bin">＋</button>
+      </div>
+      <div class="scroll-area" id="scrollArea">
+        <!-- hero -->
+        <div class="hero">
+          <div class="cover" id="cover">
+            <div class="cover-art" id="coverArt"></div>
+          </div>
+          <div class="meta">
+            <div class="artist" id="artistName">Polvo</div>
+            <div class="title" id="albumTitle">Today's Active Lifestyles</div>
+            <div class="label-year" id="labelYear">Touch &amp; Go · 1993</div>
+            <div class="meta-actions">
+              <button class="meta-action-btn">＋ Bin</button>
+              <button class="meta-action-btn">↗ Discogs</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- tracklist -->
+        <div class="section-header"><span class="section-title">Tracklist</span></div>
+        <div class="tracklist" id="tracklist"></div>
+
+        <!-- Plays at WXYC -->
+        <div class="section-header"><span class="section-title">Plays at WXYC</span></div>
+        <div class="plays-card">
+          <div class="plays-summary" id="playsSummary"></div>
+          <div class="gran-row" id="granRow">
+            <div class="gran-toggle" id="granToggle">
+              <button data-g="Y">Year</button>
+              <button data-g="M">Month</button>
+            </div>
+          </div>
+          <div class="chart-wrap" id="chartWrap">
+            <svg class="chart-yaxis" id="chartYaxis"></svg>
+            <div class="chart-scroll" id="chartScroll">
+              <svg class="chart-svg" id="chart"></svg>
+            </div>
+            <div class="tooltip" id="tooltip">
+              <div class="tt-period"></div>
+              <div class="tt-value"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- LML extras stub -->
+        <div class="section-header"><span class="section-title">From the LML</span></div>
+        <div class="extras-card" id="extrasCard">
+          <div class="extras-row"><span class="extras-label">Genres</span><span class="extras-value" id="exGenres">Indie Rock</span></div>
+          <div class="extras-row"><span class="extras-label">Styles</span><span class="extras-value" id="exStyles">Math Rock, Post-Hardcore</span></div>
+          <div class="extras-row"><span class="extras-label">Wikipedia</span><span class="extras-link">View →</span></div>
+        </div>
+
+        <div style="height: 32px"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="explainer">
+    <div class="opt-tags">
+      <span class="opt-tag">Phase 3</span>
+      <span class="opt-tag alt-1">ADR 0008</span>
+      <span class="opt-tag alt-2">Pick #15</span>
+      <span class="opt-tag alt-3">Apple Health</span>
+    </div>
+    <h3>Per-album play histogram — Swift Charts, snap-aligned scroll</h3>
+    <p>Each Album Detail view gets a <strong>station-wide</strong> history of how often this exact release has spun on WXYC. The chart surface mirrors Apple Health: y-axis pinned at left, x-axis ticks below, snap-aligned horizontal momentum scroll, single tap raises a floating tooltip. Swift Charts in iOS 18 hits this shape natively — <code>BarMark</code> + <code>chartScrollableAxes(.horizontal)</code> + <code>chartScrollTargetBehavior(.valueAligned)</code>.</p>
+
+    <p>Per-DJ stories don't live here. "Who plays this most" is answered by the <strong>Bin Maturity</strong> badges and the Diversity Readout's <strong>Top Played</strong> rollups; mixing those into the Album Detail would invite per-DJ jealousy reads that the station has explicitly avoided. The page answers <em>"how often does this album get played?"</em>, not <em>"who plays it?"</em>.</p>
+
+    <p>Default granularity is span-based: if the album's play span (first → last) exceeds <strong>5 years</strong>, default to Year; otherwise Month. The user can flip either way with the segmented control — both granularities ship in one payload so the toggle is instant and never re-fetches.</p>
+
+    <p>The dashed orange <code>RuleMark</code> labelled <em>"Released YYYY"</em> only renders when the release year sits <strong>before</strong> the first-play year. For everything new (release year == first-play year, the common case), the marker would add chrome and no insight — Polvo's 1993 release first hitting WXYC in 2017 is the kind of long-tail catalog story the marker is here to tell.</p>
+
+    <h4>Try it</h4>
+    <ul>
+      <li>Switch albums in the top toggle — watch the chart shape, marker, default granularity, and summary line all swap</li>
+      <li>Toggle <strong>Year</strong> / <strong>Month</strong> — the same payload renders both granularities, no re-fetch</li>
+      <li>Scroll the chart horizontally — bars snap one notch per swipe (Apple Health momentum)</li>
+      <li>Tap any bar — tooltip floats above with period + count, bar brightens + lifts</li>
+      <li>The <strong>Squid · Bright Green Field</strong> variant shows the empty-state caption — no segmented control, no chart</li>
+    </ul>
+
+    <h4>BS contract</h4>
+    <pre>GET /library/{album_id}/play-stats
+Returns: {
+  year_counts:  { "2017": 1, "2018": 12, ... },
+  month_counts: { "2017-08": 1, "2018-03": 2, ... },
+  first_played_at, last_played_at, total_plays
+}</pre>
+    <p class="note">60s TTL cache on the API side. Both granularities in one payload — Year/Month toggle never triggers a second round trip. Release year comes from LML's <code>/proxy/metadata/album</code> as best-effort; if LML 404s or rate-limits, the marker is silently omitted (the histogram itself still renders fine).</p>
+
+    <h4>Deferred to v2</h4>
+    <ul>
+      <li>Drill into the raw play rows from a bar tap — v1 stays tooltip-only</li>
+      <li>Per-DJ filter (out of scope; lives in Bin / Diversity instead)</li>
+      <li>Cross-album comparisons</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+// ---------- Cover art generator (deterministic gradient per album) ----------
+function coverGradient(seed, accents) {
+  // Just a CSS gradient swatch + initials — no external assets
+  const [a, b] = accents;
+  return `background: linear-gradient(135deg, ${a} 0%, ${b} 100%);`;
+}
+
+// ---------- Mock catalog ----------
+const ALBUMS = {
+  polvo: {
+    artist: "Polvo",
+    title: "Today's Active Lifestyles",
+    label: "Touch & Go",
+    releaseYear: 1993,
+    firstPlayed: "2017-08-14",
+    lastPlayed:  "2026-03-22",
+    totalPlays: 289,
+    coverAccents: ["#2C3E50", "#E74C3C"],
+    coverGlyph: "TAL",
+    tracklist: [
+      { n: 1, t: "Thermal Treasure",       d: "4:42" },
+      { n: 2, t: "Lazy Comet",             d: "5:08" },
+      { n: 3, t: "Time Isn't on My Side",  d: "3:54" },
+      { n: 4, t: "Tilebreaker",            d: "3:21" },
+      { n: 5, t: "My Kimono",              d: "4:33" },
+      { n: 6, t: "Stinger (Five Wigs)",    d: "6:11" },
+    ],
+    genres: "Indie Rock",
+    styles: "Math Rock, Post-Hardcore",
+    yearCounts: {
+      "2017": 1,  "2018": 12, "2019": 18, "2020": 22,
+      "2021": 28, "2022": 41, "2023": 47, "2024": 54,
+      "2025": 49, "2026": 17
+    },
+    monthCounts: buildMonthCounts(2017, 8, 2026, 3, [
+      // synthesized to roughly match the year totals; clusters around show-time months
+      0, 0, 0, 0, 1, 0,                        // 2017 Aug-Dec partial -> 1 play
+      1, 1, 0, 2, 1, 1, 1, 1, 0, 2, 1, 1,      // 2018 12 plays
+      1, 2, 1, 1, 2, 1, 1, 2, 2, 1, 2, 2,      // 2019 18
+      2, 1, 2, 2, 1, 2, 2, 2, 2, 1, 2, 3,      // 2020 22
+      2, 2, 2, 3, 2, 2, 3, 2, 3, 2, 3, 2,      // 2021 28
+      3, 4, 3, 3, 4, 3, 4, 3, 4, 3, 4, 3,      // 2022 41
+      4, 4, 4, 5, 3, 4, 4, 5, 3, 4, 4, 3,      // 2023 47
+      4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5,      // 2024 54
+      5, 4, 5, 4, 5, 4, 4, 4, 4, 4, 3, 3,      // 2025 49
+      6, 6, 5                                   // 2026 Jan-Mar 17
+    ]),
+  },
+
+  wednesday: {
+    artist: "Wednesday",
+    title: "Rat Saw God",
+    label: "Dead Oceans",
+    releaseYear: 2023,
+    firstPlayed: "2023-04-08",
+    lastPlayed:  "2026-05-18",
+    totalPlays: 47,
+    coverAccents: ["#7B3F9E", "#F39C12"],
+    coverGlyph: "RSG",
+    tracklist: [
+      { n: 1, t: "Hot Rotten Grass Smell",       d: "1:35" },
+      { n: 2, t: "Bull Believer",                d: "8:31" },
+      { n: 3, t: "Bath County",                  d: "3:11" },
+      { n: 4, t: "Chosen to Deserve",            d: "3:48" },
+      { n: 5, t: "Got Shocked",                  d: "2:39" },
+      { n: 6, t: "Quarry",                       d: "3:24" },
+    ],
+    genres: "Indie Rock",
+    styles: "Shoegaze, Alt-Country",
+    yearCounts: {
+      "2023": 14, "2024": 16, "2025": 12, "2026": 5
+    },
+    monthCounts: buildMonthCounts(2023, 4, 2026, 5, [
+      // Apr 2023 onwards
+      2, 3, 2, 1, 2, 1, 1, 2,            // 2023 Apr-Dec 14
+      0, 1, 2, 2, 2, 1, 2, 1, 1, 2, 1, 1, // 2024 16
+      1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 0, 1, // 2025 12
+      1, 2, 1, 0, 1                       // 2026 Jan-May 5
+    ]),
+  },
+
+  chuqui: {
+    artist: "Chuquimamani-Condori",
+    title: "DJ E Tape",
+    label: "Hausu Mountain",
+    releaseYear: 2023,
+    firstPlayed: "2023-11-04",
+    lastPlayed:  "2024-08-22",
+    totalPlays: 8,
+    coverAccents: ["#16A085", "#F1C40F"],
+    coverGlyph: "DJE",
+    tracklist: [
+      { n: 1, t: "E1",     d: "5:22" },
+      { n: 2, t: "E2",     d: "4:48" },
+      { n: 3, t: "E3",     d: "6:01" },
+      { n: 4, t: "E4",     d: "3:55" },
+      { n: 5, t: "E5",     d: "7:14" },
+    ],
+    genres: "Latin Electronic",
+    styles: "Huayño, Edits",
+    yearCounts: {
+      "2023": 3, "2024": 5
+    },
+    monthCounts: buildMonthCounts(2023, 11, 2024, 8, [
+      1, 2,             // 2023 Nov-Dec 3
+      0, 1, 0, 1, 0, 0, 2, 1  // 2024 Jan-Aug 5
+    ]),
+  },
+
+  squid: {
+    artist: "Squid",
+    title: "Bright Green Field",
+    label: "Warp",
+    releaseYear: 2021,
+    firstPlayed: null,
+    lastPlayed:  null,
+    totalPlays: 0,
+    coverAccents: ["#27AE60", "#1ABC9C"],
+    coverGlyph: "BGF",
+    tracklist: [
+      { n: 1, t: "Resolution Square",   d: "2:11" },
+      { n: 2, t: "G.S.K.",              d: "4:25" },
+      { n: 3, t: "Narrator",            d: "8:35" },
+      { n: 4, t: "Boy Racers",          d: "7:21" },
+      { n: 5, t: "Paddling",            d: "5:43" },
+    ],
+    genres: "Indie Rock",
+    styles: "Post-Punk, Art Rock",
+    yearCounts: {},
+    monthCounts: {},
+  },
+};
+
+// helper: build a {"YYYY-MM": n} map from a starting year/month and a flat array
+function buildMonthCounts(startY, startM, endY, endM, values) {
+  const out = {};
+  let i = 0;
+  let y = startY, m = startM;
+  while (y < endY || (y === endY && m <= endM)) {
+    const key = `${y}-${String(m).padStart(2, "0")}`;
+    out[key] = values[i] ?? 0;
+    i += 1;
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return out;
+}
+
+// ---------- State ----------
+let currentMode = "polvo";
+let currentGran = "Y";
+let selectedKey = null;
+
+// ---------- Helpers ----------
+function fmtDate(iso) {
+  if (!iso) return "—";
+  const [y, m, d] = iso.split("-").map(Number);
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${months[m-1]} ${d}, ${y}`;
+}
+function spanYears(firstIso, lastIso) {
+  if (!firstIso || !lastIso) return 0;
+  const f = new Date(firstIso), l = new Date(lastIso);
+  return (l - f) / (1000 * 60 * 60 * 24 * 365.25);
+}
+function pickDefaultGran(album) {
+  if (!album.firstPlayed) return "Y";
+  return spanYears(album.firstPlayed, album.lastPlayed) > 5 ? "Y" : "M";
+}
+function monthLabel(key) {
+  const [y, m] = key.split("-");
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${months[Number(m)-1]} '${y.slice(2)}`;
+}
+
+// ---------- Renderers ----------
+function renderHero(album) {
+  document.getElementById("artistName").textContent = album.artist;
+  document.getElementById("albumTitle").textContent = album.title;
+  document.getElementById("labelYear").textContent = `${album.label} · ${album.releaseYear}`;
+  const cover = document.getElementById("coverArt");
+  cover.style.cssText = coverGradient(album.coverGlyph, album.coverAccents);
+  cover.innerHTML = `
+    <div style="position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:flex-start;padding:8px;
+         color:rgba(255,255,255,0.92);font-weight:800;font-size:26px;letter-spacing:-1px;
+         text-shadow:0 1px 4px rgba(0,0,0,0.3);">
+      ${album.coverGlyph}
+    </div>
+    <div style="position:absolute;top:8px;right:10px;color:rgba(255,255,255,0.55);font-size:9px;font-weight:600;letter-spacing:0.4px;">
+      WXYC
+    </div>
+  `;
+  document.getElementById("exGenres").textContent = album.genres;
+  document.getElementById("exStyles").textContent = album.styles;
+}
+
+function renderTracklist(album) {
+  const root = document.getElementById("tracklist");
+  root.innerHTML = album.tracklist.map(t => `
+    <div class="track-row">
+      <div class="track-num">${t.n}</div>
+      <div class="track-title">${t.t}</div>
+      <div class="track-dur">${t.d}</div>
+    </div>
+  `).join("");
+}
+
+function renderPlaysSummary(album) {
+  const root = document.getElementById("playsSummary");
+  if (album.totalPlays === 0) {
+    root.innerHTML = `<span class="strong">${album.title}</span> is in the WXYC library but has no logged plays yet.`;
+    return;
+  }
+  const playText = album.totalPlays === 1 ? "play" : "plays";
+  root.innerHTML = `
+    <span class="strong">${album.totalPlays} ${playText}</span>
+    since ${fmtDate(album.firstPlayed)} ·
+    last played ${fmtDate(album.lastPlayed)}
+  `;
+}
+
+function renderEmpty() {
+  const wrap = document.getElementById("chartWrap");
+  document.getElementById("granRow").style.display = "none";
+  wrap.innerHTML = `
+    <div class="empty-state">
+      <span class="empty-icon">📻</span>
+      Not yet played at WXYC
+    </div>
+  `;
+}
+
+function resetChartWrap() {
+  // Wipe and rebuild the chart-wrap content (the empty-state mode obliterates it).
+  document.getElementById("granRow").style.display = "";
+  const wrap = document.getElementById("chartWrap");
+  wrap.innerHTML = `
+    <svg class="chart-yaxis" id="chartYaxis"></svg>
+    <div class="chart-scroll" id="chartScroll">
+      <svg class="chart-svg" id="chart"></svg>
+    </div>
+    <div class="tooltip" id="tooltip">
+      <div class="tt-period"></div>
+      <div class="tt-value"></div>
+    </div>
+  `;
+}
+
+function renderChart(album) {
+  const data = currentGran === "Y" ? album.yearCounts : album.monthCounts;
+  const keys = Object.keys(data).sort();
+  const values = keys.map(k => data[k]);
+  if (keys.length === 0) { renderEmpty(); return; }
+
+  // dimensions
+  const barW = currentGran === "Y" ? 36 : 16;
+  const barGap = currentGran === "Y" ? 16 : 6;
+  const padL = 8;
+  const padR = 16;
+  const padT = 16;
+  const padB = 28;
+  const chartH = 124;
+  const totalH = chartH + padT + padB;
+  const innerW = keys.length * (barW + barGap) - barGap;
+  const w = padL + padR + innerW;
+
+  const maxV = Math.max(...values, 1);
+  // round up to a "nice" max for the y-axis
+  const niceMax = niceCeil(maxV);
+
+  // ----- Y-axis (rendered in the sticky-left SVG) -----
+  const yaxis = document.getElementById("chartYaxis");
+  yaxis.setAttribute("width", 34);
+  yaxis.setAttribute("height", totalH);
+  yaxis.setAttribute("viewBox", `0 0 34 ${totalH}`);
+  const yticks = [0, niceMax / 2, niceMax];
+  let yHtml = "";
+  yticks.forEach(t => {
+    const y = padT + chartH - (t / niceMax) * chartH;
+    yHtml += `<text class="y-tick" x="30" y="${y + 3}" text-anchor="end">${Math.round(t)}</text>`;
+  });
+  yaxis.innerHTML = yHtml;
+
+  // ----- Main chart SVG -----
+  const svg = document.getElementById("chart");
+  svg.setAttribute("width", w);
+  svg.setAttribute("height", totalH);
+  svg.setAttribute("viewBox", `0 0 ${w} ${totalH}`);
+
+  let html = "";
+  // grid lines (full width)
+  yticks.forEach(t => {
+    const y = padT + chartH - (t / niceMax) * chartH;
+    html += `<line class="grid-line" x1="0" y1="${y}" x2="${w}" y2="${y}"/>`;
+  });
+
+  // RuleMark: "Released YYYY" — only if release year < first-play year
+  let firstPlayYear = null;
+  if (album.firstPlayed) firstPlayYear = parseInt(album.firstPlayed.slice(0, 4), 10);
+  const showRuleMark = firstPlayYear !== null && album.releaseYear < firstPlayYear;
+  if (showRuleMark) {
+    // Position the rule mark to the left of the first bar (i.e., where the release year would sit).
+    // In Year view, project the release year onto the same x-scale as the bars; we render the line
+    // just before the first bar (since the year axis starts at firstPlayYear).
+    const ruleX = padL - 4;
+    html += `<line class="rule-mark" x1="${ruleX}" y1="${padT - 4}" x2="${ruleX}" y2="${padT + chartH}"/>`;
+    html += `<text class="rule-label" x="${ruleX + 4}" y="${padT + 6}">Released ${album.releaseYear}</text>`;
+  }
+
+  // bars + x-axis labels
+  keys.forEach((k, i) => {
+    const v = values[i];
+    const barH = v === 0 ? 0 : Math.max(2, (v / niceMax) * chartH);
+    const x = padL + i * (barW + barGap);
+    const y = padT + chartH - barH;
+    const selectedClass = (selectedKey === k) ? " selected" : "";
+    html += `<rect class="bar${selectedClass}" x="${x}" y="${y}" width="${barW}" height="${barH}" rx="3.5" ry="3.5" fill="#007AFF" data-k="${k}" data-v="${v}"/>`;
+
+    // x tick label cadence: Year shows every year; Month shows every 3rd + last
+    let showTick = false;
+    let tickLabel = "";
+    if (currentGran === "Y") {
+      showTick = true;
+      tickLabel = k;
+    } else {
+      // every 3 months, plus the last bar
+      showTick = (i % 3 === 0) || (i === keys.length - 1);
+      tickLabel = monthLabel(k);
+    }
+    if (showTick) {
+      html += `<text class="x-tick" x="${x + barW/2}" y="${padT + chartH + 16}" text-anchor="middle">${tickLabel}</text>`;
+    }
+  });
+
+  svg.innerHTML = html;
+
+  // Add invisible per-bar snap targets so the scroll-snap actually catches each bar.
+  const scroll = document.getElementById("chartScroll");
+  const oldTrack = scroll.querySelector(".snap-track");
+  if (oldTrack) oldTrack.remove();
+  const track = document.createElement("div");
+  track.className = "snap-track";
+  track.style.left = padL + "px";
+  const stepW = barW + barGap;
+  for (let i = 0; i < keys.length; i++) {
+    const cell = document.createElement("div");
+    cell.className = "snap-cell";
+    cell.style.width = stepW + "px";
+    track.appendChild(cell);
+  }
+  scroll.appendChild(track);
+
+  // wire bar taps for tooltip + selection
+  const tt = document.getElementById("tooltip");
+  document.querySelectorAll(".bar").forEach(bar => {
+    bar.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const k = bar.dataset.k;
+      const v = parseInt(bar.dataset.v, 10);
+      selectedKey = (selectedKey === k) ? null : k;
+      // re-paint bars (selection state)
+      document.querySelectorAll(".bar").forEach(b => {
+        if (b.dataset.k === selectedKey) b.classList.add("selected");
+        else b.classList.remove("selected");
+      });
+      if (selectedKey === null) { tt.style.display = "none"; return; }
+      const period = currentGran === "Y" ? k : monthLabel(k);
+      const unit = v === 1 ? "play" : "plays";
+      tt.querySelector(".tt-period").textContent = period;
+      tt.querySelector(".tt-value").innerHTML = `${v}<span class="tt-unit">${unit}</span>`;
+      tt.style.display = "block";
+      // position relative to the chart-wrap (offsetParent)
+      const wrap = document.getElementById("chartWrap");
+      const wrapRect = wrap.getBoundingClientRect();
+      const barRect = bar.getBoundingClientRect();
+      const cx = barRect.left + barRect.width / 2 - wrapRect.left;
+      const cy = barRect.top - wrapRect.top;
+      tt.style.left = cx + "px";
+      tt.style.top = (cy + 4) + "px";
+    });
+  });
+
+  // tap empty chart area → clear selection
+  scroll.addEventListener("click", (e) => {
+    if (e.target.tagName !== "rect") {
+      selectedKey = null;
+      document.querySelectorAll(".bar.selected").forEach(b => b.classList.remove("selected"));
+      tt.style.display = "none";
+    }
+  });
+
+  scroll.style.scrollPaddingLeft = padL + "px";
+
+  // Boot scroll position: jump to the right edge so the latest data is visible first (Apple Health convention).
+  requestAnimationFrame(() => {
+    scroll.scrollLeft = scroll.scrollWidth;
+  });
+}
+
+function niceCeil(n) {
+  // round up to a tick-friendly number
+  if (n <= 5) return 5;
+  if (n <= 10) return 10;
+  if (n <= 20) return 20;
+  if (n <= 30) return 30;
+  if (n <= 50) return 50;
+  if (n <= 75) return 75;
+  if (n <= 100) return 100;
+  const m = Math.pow(10, Math.floor(Math.log10(n)));
+  return Math.ceil(n / m) * m;
+}
+
+function renderForMode(mode) {
+  const album = ALBUMS[mode];
+  renderHero(album);
+  renderTracklist(album);
+  renderPlaysSummary(album);
+
+  selectedKey = null;
+
+  if (album.totalPlays === 0) {
+    renderEmpty();
+    return;
+  }
+
+  // ensure the chart-wrap is fully restored (might have been replaced by empty-state earlier)
+  resetChartWrap();
+
+  // default granularity per album
+  currentGran = pickDefaultGran(album);
+  document.querySelectorAll(".gran-toggle button").forEach(b => {
+    b.classList.toggle("active", b.dataset.g === currentGran);
+  });
+
+  renderChart(album);
+}
+
+// ---------- Wire global controls ----------
+document.getElementById("tabBar").addEventListener("click", e => {
+  const btn = e.target.closest(".tab-btn");
+  if (!btn) return;
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  currentMode = btn.dataset.mode;
+  renderForMode(currentMode);
+});
+
+// granularity toggle uses event delegation (since the row gets re-rendered on mode switch)
+document.addEventListener("click", e => {
+  const btn = e.target.closest(".gran-toggle button");
+  if (!btn) return;
+  const album = ALBUMS[currentMode];
+  if (!album || album.totalPlays === 0) return;
+  if (btn.dataset.g === currentGran) return;
+  currentGran = btn.dataset.g;
+  selectedKey = null;
+  document.querySelectorAll(".gran-toggle button").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  renderChart(album);
+});
+
+// boot
+renderForMode("polvo");
+</script>
+</body>
+</html>

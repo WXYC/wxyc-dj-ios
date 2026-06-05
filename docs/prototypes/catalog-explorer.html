@@ -1,0 +1,1442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Catalog Explorer — Lens-based Prototype</title>
+<style>
+  :root {
+    --ios-bg: #F2F2F7;
+    --ios-card: #FFFFFF;
+    --ios-sep: #C6C6C8;
+    --ios-blue: #007AFF;
+    --ios-purple: #5856D6;
+    --ios-pink: #FF2D55;
+    --ios-orange: #FF9500;
+    --ios-yellow: #FFCC00;
+    --ios-green: #34C759;
+    --ios-teal: #5AC8FA;
+    --ios-indigo: #5E5CE6;
+    --ios-gray: #8E8E93;
+    --ios-gray-light: #E5E5EA;
+    --ios-gray-bg: #EFEFF4;
+    --ios-label: #000000;
+    --ios-label-sec: #3C3C43;
+    --ios-label-tert: #3C3C4399;
+    --frame-bg: #1c1c1e;
+
+    /* Rotation tier colors */
+    --tier-h: #FF3B30;
+    --tier-m: #FF9500;
+    --tier-l: #34C759;
+    --tier-s: #5E5CE6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    background: #d8d8df;
+    color: #111;
+    padding: 24px 16px 48px;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1 {
+    margin: 0 0 4px 0;
+    font-size: 22px;
+    font-weight: 600;
+    text-align: center;
+  }
+  .subtitle {
+    text-align: center;
+    color: #555;
+    margin-bottom: 24px;
+    font-size: 14px;
+  }
+  .stage {
+    max-width: 960px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  @media (max-width: 860px) {
+    .stage { grid-template-columns: 1fr; }
+  }
+
+  /* ----- Phone frame ----- */
+  .phone-frame {
+    width: 390px;
+    margin: 0 auto;
+    background: var(--frame-bg);
+    border-radius: 50px;
+    padding: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    position: relative;
+  }
+  .phone-screen {
+    background: var(--ios-bg);
+    border-radius: 40px;
+    height: 800px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .notch {
+    width: 120px;
+    height: 30px;
+    background: var(--frame-bg);
+    border-radius: 0 0 18px 18px;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+  }
+  .status-bar {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+    background: var(--ios-bg);
+    z-index: 10;
+    position: relative;
+  }
+
+  /* ----- Navigation container (stack) ----- */
+  .nav-stack {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+  .nav-page {
+    position: absolute;
+    inset: 0;
+    background: var(--ios-bg);
+    display: flex;
+    flex-direction: column;
+    transform: translateX(0);
+    transition: transform 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .nav-page.entering { transform: translateX(100%); }
+  .nav-page.exiting { transform: translateX(-25%); opacity: 0.6; }
+
+  .nav-bar {
+    padding: 6px 16px 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 44px;
+  }
+  .back-btn {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 17px;
+    cursor: pointer;
+    padding: 4px 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .back-btn svg { stroke: var(--ios-blue); }
+  .nav-title {
+    flex: 1;
+    text-align: center;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ios-label);
+  }
+  .nav-bar-large {
+    padding: 0 16px 4px;
+  }
+  .nav-bar-large h1 {
+    margin: 0;
+    text-align: left;
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+  }
+
+  .scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 24px;
+  }
+  .scroll-area::-webkit-scrollbar { width: 0; }
+
+  /* ----- Lens picker (chips row) ----- */
+  .lens-row {
+    padding: 4px 16px 10px;
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .lens-row::-webkit-scrollbar { display: none; }
+  .lens {
+    background: var(--ios-gray-light);
+    color: var(--ios-label);
+    border: none;
+    border-radius: 14px;
+    padding: 6px 13px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .lens-emoji {
+    font-size: 12px;
+    line-height: 1;
+  }
+  .lens.active {
+    background: var(--ios-blue);
+    color: white;
+  }
+
+  /* ----- Secondary filter row ----- */
+  .filter-toolbar {
+    padding: 0 16px 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .filter-chip-scroll {
+    flex: 1;
+    display: flex;
+    gap: 5px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-right: 4px;
+  }
+  .filter-chip-scroll::-webkit-scrollbar { display: none; }
+  .fchip {
+    background: white;
+    color: var(--ios-label-sec);
+    border: 0.5px solid var(--ios-sep);
+    border-radius: 12px;
+    padding: 4px 10px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .fchip.active {
+    background: var(--ios-label);
+    color: white;
+    border-color: var(--ios-label);
+  }
+  .fchip.tier-h.active { background: var(--tier-h); border-color: var(--tier-h); }
+  .fchip.tier-m.active { background: var(--tier-m); border-color: var(--tier-m); }
+  .fchip.tier-l.active { background: var(--tier-l); border-color: var(--tier-l); }
+  .fchip.tier-s.active { background: var(--tier-s); border-color: var(--tier-s); }
+  .tier-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .fchip.active .tier-dot { background: white !important; }
+
+  /* ----- View toggle ----- */
+  .view-toggle {
+    background: var(--ios-gray-light);
+    border-radius: 7px;
+    padding: 2px;
+    display: flex;
+    gap: 0;
+    flex-shrink: 0;
+  }
+  .view-toggle button {
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+    padding: 4px 8px;
+    font: inherit;
+    cursor: pointer;
+    color: var(--ios-label-sec);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
+  }
+  .view-toggle button svg {
+    width: 14px;
+    height: 14px;
+  }
+  .view-toggle button.active {
+    background: white;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+    color: var(--ios-label);
+  }
+
+  /* ----- Context line ----- */
+  .context-line {
+    padding: 0 16px 6px;
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .context-line .count {
+    font-weight: 600;
+    color: var(--ios-label-sec);
+    font-variant-numeric: tabular-nums;
+  }
+  .context-line .sort-link {
+    color: var(--ios-blue);
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  /* ----- Album list (list mode) ----- */
+  .list-card {
+    background: white;
+    margin: 0 16px 12px;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .list-row {
+    padding: 10px 12px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    display: grid;
+    grid-template-columns: 52px 1fr auto;
+    gap: 10px;
+    align-items: center;
+    cursor: pointer;
+    background: white;
+    border-left: none;
+    border-right: none;
+    border-top: none;
+    width: 100%;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+  }
+  .list-row:last-child { border-bottom: none; }
+  .list-row:active { background: var(--ios-gray-bg); }
+  .cover-thumb {
+    width: 52px;
+    height: 52px;
+    border-radius: 6px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: 700;
+    color: white;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    letter-spacing: -1px;
+    position: relative;
+    overflow: hidden;
+  }
+  .cover-thumb::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent 50%, rgba(0,0,0,0.15));
+  }
+  .list-text {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .list-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ios-label);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .list-artist {
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .list-meta {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .list-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .tier-badge {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: white;
+    text-transform: uppercase;
+  }
+  .tier-badge.h { background: var(--tier-h); }
+  .tier-badge.m { background: var(--tier-m); }
+  .tier-badge.l { background: var(--tier-l); }
+  .tier-badge.s { background: var(--tier-s); }
+  .added-tag {
+    font-size: 10px;
+    color: var(--ios-label-tert);
+    font-variant-numeric: tabular-nums;
+  }
+  .added-tag.new {
+    color: var(--ios-green);
+    font-weight: 600;
+  }
+  .chevron-fade {
+    color: var(--ios-gray);
+    font-size: 16px;
+    line-height: 1;
+    align-self: center;
+    margin-left: 4px;
+  }
+
+  /* ----- Album grid (grid mode) ----- */
+  .grid {
+    padding: 0 16px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  .grid-cell {
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    padding: 0;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+  }
+  .grid-cell:active { opacity: 0.7; }
+  .grid-cover {
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 38px;
+    font-weight: 800;
+    color: white;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.25);
+    letter-spacing: -2px;
+    margin-bottom: 6px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+  }
+  .grid-cover::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,0.18), transparent 50%, rgba(0,0,0,0.18));
+  }
+  .grid-cover .grid-tier-badge {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: white;
+    text-transform: uppercase;
+    z-index: 2;
+    backdrop-filter: blur(4px);
+  }
+  .grid-cover .grid-tier-badge.h { background: var(--tier-h); }
+  .grid-cover .grid-tier-badge.m { background: var(--tier-m); }
+  .grid-cover .grid-tier-badge.l { background: var(--tier-l); }
+  .grid-cover .grid-tier-badge.s { background: var(--tier-s); }
+  .grid-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ios-label);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-bottom: 1px;
+  }
+  .grid-artist {
+    font-size: 12px;
+    color: var(--ios-label-sec);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ----- Empty state ----- */
+  .empty-state {
+    padding: 40px 24px;
+    text-align: center;
+    color: var(--ios-label-tert);
+    font-size: 13px;
+  }
+  .empty-state strong {
+    display: block;
+    color: var(--ios-label-sec);
+    font-size: 15px;
+    margin-bottom: 4px;
+  }
+
+  /* ----- Album Detail page ----- */
+  .detail-hero {
+    padding: 12px 16px 16px;
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+  }
+  .detail-cover {
+    width: 120px;
+    height: 120px;
+    border-radius: 12px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    font-weight: 800;
+    color: white;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.25);
+    letter-spacing: -2px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    position: relative;
+    overflow: hidden;
+  }
+  .detail-cover::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,0.18), transparent 50%, rgba(0,0,0,0.18));
+  }
+  .detail-meta-stack {
+    flex: 1;
+    min-width: 0;
+    padding-top: 4px;
+  }
+  .detail-title {
+    font-size: 19px;
+    font-weight: 700;
+    color: var(--ios-label);
+    line-height: 1.2;
+    margin-bottom: 4px;
+  }
+  .detail-artist {
+    font-size: 15px;
+    color: var(--ios-label-sec);
+    margin-bottom: 10px;
+  }
+  .detail-row {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    margin-bottom: 2px;
+  }
+  .detail-row strong {
+    color: var(--ios-label-sec);
+    font-weight: 500;
+  }
+  .detail-tier-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    padding: 2px 8px;
+    border-radius: 5px;
+    color: white;
+    text-transform: uppercase;
+    margin-top: 8px;
+  }
+  .detail-tier-badge.h { background: var(--tier-h); }
+  .detail-tier-badge.m { background: var(--tier-m); }
+  .detail-tier-badge.l { background: var(--tier-l); }
+  .detail-tier-badge.s { background: var(--tier-s); }
+
+  /* Streaming buttons */
+  .stream-row {
+    padding: 4px 16px 18px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+  }
+  .stream-btn {
+    border: none;
+    border-radius: 10px;
+    padding: 8px 6px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    color: white;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    line-height: 1.2;
+  }
+  .stream-btn .stream-glyph {
+    font-size: 14px;
+  }
+  .stream-btn.spotify   { background: #1DB954; }
+  .stream-btn.apple     { background: #FA243C; }
+  .stream-btn.bandcamp  { background: #1DA0C3; }
+  .stream-btn:active { transform: scale(0.97); }
+
+  /* Detail sections */
+  .detail-section-title {
+    padding: 4px 16px 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ios-label-sec);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .tracklist-card {
+    background: white;
+    margin: 0 16px 16px;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .track-row {
+    padding: 11px 14px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    display: grid;
+    grid-template-columns: 26px 1fr auto auto;
+    gap: 10px;
+    align-items: center;
+    cursor: pointer;
+    background: white;
+    border-left: none;
+    border-right: none;
+    border-top: none;
+    width: 100%;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+  }
+  .track-row:last-child { border-bottom: none; }
+  .track-row:active { background: var(--ios-gray-bg); }
+  .track-row.playing { background: rgba(0,122,255,0.06); }
+  .track-num {
+    color: var(--ios-label-tert);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+  .track-row.playing .track-num {
+    color: var(--ios-blue);
+    font-weight: 600;
+  }
+  .track-title {
+    font-size: 14px;
+    color: var(--ios-label);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .track-row.playing .track-title { color: var(--ios-blue); font-weight: 500; }
+  .track-dur {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    font-variant-numeric: tabular-nums;
+  }
+  .track-play-icon {
+    width: 18px;
+    height: 18px;
+    color: var(--ios-blue);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .preview-banner {
+    margin: 0 16px 12px;
+    padding: 10px 12px;
+    background: rgba(0,122,255,0.08);
+    border-radius: 10px;
+    font-size: 12px;
+    color: var(--ios-blue);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .preview-banner .pulse {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--ios-blue);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.4; transform: scale(1); }
+    50%      { opacity: 1;   transform: scale(1.4); }
+  }
+
+  /* ----- Explainer ----- */
+  .explainer {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    align-self: start;
+    position: sticky;
+    top: 16px;
+  }
+  .explainer h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .explainer h4 {
+    margin: 14px 0 6px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+  }
+  .explainer p {
+    color: #555;
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 0 0 8px 0;
+  }
+  .explainer ul {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    line-height: 1.5;
+  }
+  .explainer li { margin-bottom: 4px; }
+  .explainer code {
+    background: var(--ios-gray-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  .explainer .code-block {
+    background: var(--ios-gray-bg);
+    border-radius: 7px;
+    padding: 10px 12px;
+    margin: 6px 0 8px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px;
+    color: var(--ios-label);
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-x: auto;
+  }
+  .explainer .code-block .k { color: var(--ios-purple); }
+  .explainer .code-block .v { color: var(--ios-blue); }
+  .explainer .code-block .c { color: #6e6e72; font-style: italic; }
+  .opt-tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .opt-tag {
+    background: var(--ios-purple);
+    color: white;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .opt-tag.phase { background: var(--ios-green); }
+  .opt-tag.cross { background: var(--ios-blue); }
+  .note-callout {
+    background: rgba(94,92,230,0.08);
+    border-left: 3px solid var(--ios-indigo);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-top: 14px;
+    font-size: 12px;
+    color: var(--ios-label-sec);
+    line-height: 1.5;
+  }
+  .note-callout strong { color: var(--ios-indigo); }
+</style>
+</head>
+<body>
+
+<h1>Catalog Explorer — one surface, many lenses</h1>
+<p class="subtitle">Pick a lens (All / New Arrivals / Rotation / By Label / By Genre). Tap an album → detail view with streaming URLs. List ⇄ Grid toggles.</p>
+
+<div class="stage">
+
+  <div class="phone-frame">
+    <div class="phone-screen">
+      <div class="notch"></div>
+      <div class="status-bar">
+        <span>9:41</span>
+        <span>•••</span>
+      </div>
+      <div class="nav-stack" id="navStack"></div>
+    </div>
+  </div>
+
+  <div class="explainer">
+    <div class="opt-tags">
+      <span class="opt-tag phase">Phase 1</span>
+      <span class="opt-tag">Pick #3</span>
+      <span class="opt-tag">Pick #4</span>
+      <span class="opt-tag">Pick #9</span>
+      <span class="opt-tag cross">Cross-cutting</span>
+    </div>
+    <h3>Unified Catalog explorer — one surface, many lenses</h3>
+    <p>The Catalog Explorer is the Phase 1 primitive that picks #3 (New Arrivals), #4 (Rotation browser), and #9 (Browse-by-label/genre/era) all plug into. Rather than ship three separate views with three flavors of list / filter / sort behavior, we ship <strong>one</strong> list surface and compose a <code>lens</code> with filter and sort options.</p>
+    <p>Each lens is just a pre-baked query against <code>/library/query</code> plus a per-lens secondary filter row (window for New Arrivals, tier chips for Rotation, label selector for By Label, genre selector for By Genre). The list/grid toggle, the row layout, and the drill-in to <strong>Album Detail</strong> are shared across every lens — so adding a new lens later (era, country, decade, your own bin) is a small addition, not a new feature.</p>
+    <p>This makes #3 / #4 / #9 fall out of one cohesive design instead of three competing ones.</p>
+
+    <h4>Try it</h4>
+    <ul>
+      <li>Switch between the 5 lenses in the top chip row</li>
+      <li>In <strong>New Arrivals</strong>, switch the 30D / 90D / All-time window</li>
+      <li>In <strong>Rotation</strong>, multi-select H / M / L / S tier chips</li>
+      <li>In <strong>By Label</strong> and <strong>By Genre</strong>, pick a facet</li>
+      <li>Toggle <strong>list ⇄ grid</strong> in the top-right of the filter row</li>
+      <li>Tap any album → <strong>Album Detail</strong> with streaming URL buttons (Pick #2)</li>
+      <li>On Album Detail, tap a track row to simulate preview playback</li>
+    </ul>
+
+    <h4>BS contract — one endpoint per the substrate</h4>
+    <div class="code-block"><span class="k">GET</span> <span class="v">/library/query</span>
+  ?<span class="k">lens</span>=<span class="v">all|new|rotation|label|genre</span>
+  &<span class="k">sort</span>=<span class="v">add_date_desc|title_asc|year_desc</span>
+  &<span class="k">tier</span>=<span class="v">H,M,L,S</span>      <span class="c">// rotation lens</span>
+  &<span class="k">label</span>=<span class="v">merge</span>      <span class="c">// label lens</span>
+  &<span class="k">genre</span>=<span class="v">indie-rock</span>  <span class="c">// genre lens</span>
+  &<span class="k">era</span>=<span class="v">2020s</span>        <span class="c">// future lens</span>
+  &<span class="k">window</span>=<span class="v">30d|90d|all</span> <span class="c">// new arrivals lens</span>
+  &<span class="k">cursor</span>=<span class="v">&lt;page&gt;</span></div>
+    <p>Rotation membership comes from joining <code>rotation</code> onto <code>library</code> on the backend; the Rotation lens is the only one that needs it. LML <code>proxy/metadata/album</code> on detail surfaces the Spotify / Apple Music / Bandcamp URLs for Pick #2 streaming preview.</p>
+
+    <div class="note-callout">
+      <strong>Substrate, not a feature.</strong> Album Detail in this prototype is the same view that backs per-album histogram (Pick #15), Album condition (Pick #5), and Memos (Pick #6). Every later catalog-touching feature plugs into this same row → detail pipeline — so the cost of Phase 2 picks comes down.
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// Data
+// ============================================================
+
+// Cover colors derived from artist + title for variety
+function coverColor(s) {
+  const colors = [
+    ["#FF2D55", "#5856D6"], // pink → purple
+    ["#FF9500", "#FF3B30"], // orange → red
+    ["#5AC8FA", "#007AFF"], // teal → blue
+    ["#34C759", "#5AC8FA"], // green → teal
+    ["#5E5CE6", "#007AFF"], // indigo → blue
+    ["#FF9500", "#FFCC00"], // orange → yellow
+    ["#FF2D55", "#FF9500"], // pink → orange
+    ["#5856D6", "#FF2D55"], // purple → pink
+    ["#1A535C", "#4ECDC4"], // dark teal → mint
+    ["#2D3047", "#93B7BE"], // navy → sage
+    ["#6B5B95", "#FFA177"], // muted purple → peach
+    ["#3D5A80", "#98C1D9"], // steel blue → ice
+  ];
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return colors[h % colors.length];
+}
+function coverGrad(s) {
+  const [a, b] = coverColor(s);
+  return `linear-gradient(135deg, ${a}, ${b})`;
+}
+function coverInitials(title) {
+  const words = title.split(/[\s'!.,()-]+/).filter(Boolean);
+  if (!words.length) return "??";
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+}
+
+// Album dataset — WXYC-representative only
+// tier: H | M | L | S | null   (null = not in rotation)
+// added: ISO date the album was added to the library
+const ALBUMS = [
+  // Polvo
+  { id: "pol-tal",  title: "Today's Active Lifestyles", artist: "Polvo", label: "Merge", year: 1993, cat: "MRG-061", genre: "Indie Rock", tier: "L", added: "2024-09-12" },
+  { id: "pol-exp",  title: "Exploded Drawing", artist: "Polvo", label: "Touch & Go", year: 1996, cat: "TG-156", genre: "Post-Hardcore", tier: null, added: "2023-04-18" },
+  { id: "pol-cor",  title: "Cor-Crane Secret", artist: "Polvo", label: "Merge", year: 1992, cat: "MRG-027", genre: "Indie Rock", tier: null, added: "2022-11-02" },
+
+  // Juana Molina
+  { id: "jm-halo",  title: "Halo", artist: "Juana Molina", label: "Crammed Discs", year: 2017, cat: "CRAM-256", genre: "Folktronica", tier: "M", added: "2025-08-04" },
+  { id: "jm-wed",   title: "Wed 21", artist: "Juana Molina", label: "Crammed Discs", year: 2013, cat: "CRAM-198", genre: "Folktronica", tier: null, added: "2024-02-22" },
+
+  // Jessica Pratt
+  { id: "jp-oyl",   title: "On Your Own Love Again", artist: "Jessica Pratt", label: "Drag City", year: 2015, cat: "DC-602", genre: "Folk", tier: null, added: "2024-12-08" },
+  { id: "jp-qs",    title: "Quiet Signs", artist: "Jessica Pratt", label: "Mexican Summer", year: 2019, cat: "MEX-258", genre: "Folk", tier: null, added: "2025-09-21" },
+
+  // Chuquimamani-Condori
+  { id: "cc-djet",  title: "DJ E Tape", artist: "Chuquimamani-Condori", label: "Self-released", year: 2023, cat: "CC-001", genre: "Latin Electronic", tier: null, added: "2024-06-30" },
+  { id: "cc-ed",    title: "Edits", artist: "Chuquimamani-Condori", label: "Hausu Mountain", year: 2024, cat: "HAUSMO-129", genre: "Latin Electronic", tier: "H", added: "2025-11-14" },
+
+  // DOGA
+  { id: "doga-ah", title: "All Hat", artist: "DOGA", label: "Hausu Mountain", year: 2024, cat: "HAUSMO-131", genre: "Experimental", tier: "H", added: "2025-10-22" },
+
+  // Pavement
+  { id: "pv-sae",   title: "Slanted and Enchanted", artist: "Pavement", label: "Matador", year: 1992, cat: "MAT-038", genre: "Indie Rock", tier: null, added: "2021-07-12" },
+
+  // Wednesday
+  { id: "wed-rsg", title: "Rat Saw God", artist: "Wednesday", label: "Dead Oceans", year: 2023, cat: "DOC-228", genre: "Indie Rock", tier: "H", added: "2024-03-15" },
+
+  // Archers of Loaf
+  { id: "aol-icky", title: "Icky Mettle", artist: "Archers of Loaf", label: "Alias", year: 1993, cat: "ALI-054", genre: "Indie Rock", tier: null, added: "2022-05-08" },
+
+  // Indigo De Souza
+  { id: "ids-asy", title: "Any Shape You Take", artist: "Indigo De Souza", label: "Saddle Creek", year: 2021, cat: "SC-302", genre: "Indie Rock", tier: "L", added: "2025-06-18" },
+
+  // Caroline Polachek
+  { id: "cp-pang", title: "Pang", artist: "Caroline Polachek", label: "Perpetual Novice", year: 2019, cat: "PN-101", genre: "Art Pop", tier: null, added: "2023-08-11" },
+  { id: "cp-des",  title: "Desire, I Want to Turn Into You", artist: "Caroline Polachek", label: "Perpetual Novice", year: 2023, cat: "PN-203", genre: "Art Pop", tier: "M", added: "2024-10-04" },
+
+  // Squid
+  { id: "sq-bgf",  title: "Bright Green Field", artist: "Squid", label: "Warp", year: 2021, cat: "WARP-313", genre: "Post-Punk", tier: "S", added: "2025-12-01" },
+
+  // Yo La Tengo
+  { id: "ylt-pn",  title: "Painful", artist: "Yo La Tengo", label: "Matador", year: 1993, cat: "MAT-068", genre: "Indie Rock", tier: null, added: "2020-03-14" },
+];
+
+// Tracklists per album (5-6 tracks; canonical-ish)
+const TRACKLISTS = {
+  "pol-tal":  ["Vibracobra","Lazy Comet","Time Isn't on My Side","My Kimono","Stinger (Five Wigs)","Tilebreaker"],
+  "pol-exp":  ["Fast Canoe","Light, Eclipsed","Bombs That Fall From Your Eyes","Action vs. Vibe","Crumbling Down"],
+  "pol-cor":  ["Channel Changer","Vibracobra","Kalgon","Sense of It","Sequenced"],
+  "jm-halo":  ["Paraguaya","Cosoco","In the Lassa","Estalacticas","Andó","Lentísimo Halo"],
+  "jm-wed":   ["Eras","Bicho Auto","Wed 21","Sin Guía, No","Sólo Tu Sabes","Final Feliz"],
+  "jp-oyl":   ["Wrong Hand","Game That I Play","Strange Melody","Greycedes","Back, Baby","Jacquelyn in the Background"],
+  "jp-qs":    ["Opening Night","As the World Turns","Fare Thee Well","Here My Love","Poly Blue","Aeroplane"],
+  "cc-djet":  ["Side A","Side B","Side C","Side D"],
+  "cc-ed":    ["Estrella del Oriente","Espíritu","Llajwa","Mi Linda Wawita","Sumaq","Pollerita Verde"],
+  "doga-ah":  ["All Hat","Coal Roller","Slot Pull","Pearl Snap","Bull Rope","Last Call"],
+  "pv-sae":   ["Summer Babe (Winter Version)","Trigger Cut","In the Mouth a Desert","Here","Two States","Loretta's Scars"],
+  "wed-rsg":  ["Hot Rotten Grass Smell","Bull Believer","Bath County","Chosen to Deserve","Quarry","Got Shocked"],
+  "aol-icky": ["Web in Front","Last Word","Wrong","You and Me","Might","Fat"],
+  "ids-asy":  ["17","Darker Than Death","Hold U","Real Pain","Kill Me","Bad Dream"],
+  "cp-pang":  ["The Gate","Pang","Door","So Hot You're Hurting My Feelings","Caroline Shut Up","Look at Me Now"],
+  "cp-des":   ["Welcome To My Island","Pretty In Possible","Bunny Is a Rider","Sunset","Crude Drawing of an Angel","Smoke"],
+  "sq-bgf":   ["Resolution Square","G.S.K.","Narrator","Boy Racers","Documentary Filmmaker","2010"],
+  "ylt-pn":   ["Big Day Coming","From a Motel 6","Sudden Organ","Nowhere Near","Double Dare","I Was the Fool Beside You for Too Long"],
+};
+
+const TIER_LABEL = { H: "Heavy", M: "Medium", L: "Light", S: "Spotlight" };
+
+// Labels and genres surfaced as facets (matches what's in the dataset)
+const ALL_LABELS = ["Merge","Drag City","Touch & Go","Three Lobed","Hausu Mountain","Domino","Sub Pop","Matador","Dead Oceans","Crammed Discs","Mexican Summer","Saddle Creek","Warp","Alias","Perpetual Novice"];
+const ALL_GENRES = ["Indie Rock","Folk","Folktronica","Latin Electronic","Experimental","Post-Hardcore","Post-Punk","Art Pop"];
+
+// Streaming URL stubs (Pick #2 — LML proxy fields)
+const STREAM_URLS = {
+  spotify:  "spotify://album/—",
+  apple:    "music.apple.com/album/—",
+  bandcamp: "bandcamp.com/album/—",
+};
+
+// ============================================================
+// State
+// ============================================================
+const LENSES = [
+  { key: "all",      label: "All",          emoji: "📚" },
+  { key: "new",      label: "New Arrivals", emoji: "✨" },
+  { key: "rotation", label: "Rotation",     emoji: "🔁" },
+  { key: "label",    label: "By Label",     emoji: "🏷" },
+  { key: "genre",    label: "By Genre",     emoji: "♪" },
+];
+
+const state = {
+  lens: "all",
+  view: "list",      // list | grid
+  window: "90D",     // for new lens: 30D | 90D | All
+  tiers: new Set(["H","M","L","S"]), // for rotation lens (multi-select)
+  selectedLabel: "Merge",
+  selectedGenre: "Indie Rock",
+};
+
+// Today, for "added recently" coloring
+const TODAY = new Date("2026-06-04");
+
+// ============================================================
+// Filtering / sorting per lens
+// ============================================================
+function daysSince(iso) {
+  const d = new Date(iso);
+  return Math.floor((TODAY - d) / (1000 * 60 * 60 * 24));
+}
+
+function albumsForLens() {
+  let rows = ALBUMS.slice();
+  if (state.lens === "all") {
+    rows.sort((a,b) => b.added.localeCompare(a.added));
+    return rows;
+  }
+  if (state.lens === "new") {
+    const window = state.window;
+    if (window === "30D") rows = rows.filter(r => daysSince(r.added) <= 30);
+    else if (window === "90D") rows = rows.filter(r => daysSince(r.added) <= 90);
+    // All: keep everything
+    rows.sort((a,b) => b.added.localeCompare(a.added));
+    return rows;
+  }
+  if (state.lens === "rotation") {
+    rows = rows.filter(r => r.tier && state.tiers.has(r.tier));
+    // Sort by tier order then title
+    const tierRank = { H: 0, M: 1, L: 2, S: 3 };
+    rows.sort((a,b) => (tierRank[a.tier] - tierRank[b.tier]) || a.title.localeCompare(b.title));
+    return rows;
+  }
+  if (state.lens === "label") {
+    rows = rows.filter(r => r.label === state.selectedLabel);
+    rows.sort((a,b) => b.year - a.year);
+    return rows;
+  }
+  if (state.lens === "genre") {
+    rows = rows.filter(r => r.genre === state.selectedGenre);
+    rows.sort((a,b) => b.year - a.year);
+    return rows;
+  }
+  return rows;
+}
+
+function sortDescription() {
+  switch (state.lens) {
+    case "all":      return "Sorted by recently-added";
+    case "new":      return "Sorted by date added";
+    case "rotation": return "Sorted by tier";
+    case "label":    return "Sorted by year ↓";
+    case "genre":    return "Sorted by year ↓";
+  }
+  return "";
+}
+
+// ============================================================
+// Rendering — Explorer (root page)
+// ============================================================
+function renderLensRow() {
+  return `
+    <div class="lens-row" id="lensRow">
+      ${LENSES.map(L => `
+        <button class="lens ${state.lens === L.key ? "active" : ""}" data-lens="${L.key}">
+          <span class="lens-emoji">${L.emoji}</span>${L.label}
+        </button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderFilterToolbar() {
+  let chips = "";
+
+  if (state.lens === "new") {
+    const opts = [["30D","Last 30 days"], ["90D","Last 90 days"], ["All","All time"]];
+    chips = opts.map(([k,lbl]) => `
+      <button class="fchip ${state.window === k ? "active" : ""}" data-window="${k}">${lbl}</button>
+    `).join("");
+  } else if (state.lens === "rotation") {
+    chips = ["H","M","L","S"].map(t => `
+      <button class="fchip tier-${t.toLowerCase()} ${state.tiers.has(t) ? "active" : ""}" data-tier="${t}">
+        <span class="tier-dot" style="background:var(--tier-${t.toLowerCase()})"></span>${TIER_LABEL[t]}
+      </button>
+    `).join("");
+  } else if (state.lens === "label") {
+    chips = ["Merge","Drag City","Touch & Go","Three Lobed","Hausu Mountain","Domino","Sub Pop","Matador","Dead Oceans"].map(lbl => `
+      <button class="fchip ${state.selectedLabel === lbl ? "active" : ""}" data-label="${lbl}">${lbl}</button>
+    `).join("");
+  } else if (state.lens === "genre") {
+    chips = ALL_GENRES.map(g => `
+      <button class="fchip ${state.selectedGenre === g ? "active" : ""}" data-genre="${g}">${g}</button>
+    `).join("");
+  } else {
+    // all: no filter chips
+    chips = `<span style="color:var(--ios-label-tert);font-size:12px;padding:4px 2px;">Every album, newest first</span>`;
+  }
+
+  return `
+    <div class="filter-toolbar">
+      <div class="filter-chip-scroll" id="fchipRow">${chips}</div>
+      <div class="view-toggle" id="viewToggle">
+        <button data-view="list" class="${state.view === "list" ? "active" : ""}" aria-label="List view">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+            <line x1="4" y1="6" x2="20" y2="6"/>
+            <line x1="4" y1="12" x2="20" y2="12"/>
+            <line x1="4" y1="18" x2="20" y2="18"/>
+          </svg>
+        </button>
+        <button data-view="grid" class="${state.view === "grid" ? "active" : ""}" aria-label="Grid view">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7"/>
+            <rect x="14" y="3" width="7" height="7"/>
+            <rect x="3" y="14" width="7" height="7"/>
+            <rect x="14" y="14" width="7" height="7"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function renderAddedTag(album) {
+  const d = daysSince(album.added);
+  if (d <= 30) return `<span class="added-tag new">NEW · ${d}d ago</span>`;
+  if (d <= 90) return `<span class="added-tag">${d}d ago</span>`;
+  // older
+  const yr = album.added.slice(0, 4);
+  const mo = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][parseInt(album.added.slice(5,7))-1];
+  return `<span class="added-tag">Added ${mo} ${yr}</span>`;
+}
+
+function renderListRow(album) {
+  const grad = coverGrad(album.artist + album.title);
+  const initials = coverInitials(album.title);
+  const showTier = album.tier && (state.lens === "rotation" || state.lens === "all");
+  const tierEl = showTier
+    ? `<span class="tier-badge ${album.tier.toLowerCase()}">${album.tier} · ${TIER_LABEL[album.tier]}</span>`
+    : "";
+  const showAdded = state.lens === "new" || state.lens === "all";
+  const rightCol = `
+    <div class="list-right">
+      ${tierEl}
+      ${showAdded ? renderAddedTag(album) : ""}
+    </div>
+  `;
+  return `
+    <button class="list-row" data-album="${album.id}">
+      <div class="cover-thumb" style="background:${grad}">${initials}</div>
+      <div class="list-text">
+        <div class="list-title">${album.title}</div>
+        <div class="list-artist">${album.artist}</div>
+        <div class="list-meta">${album.label} · ${album.year} · ${album.cat}</div>
+      </div>
+      ${rightCol}
+    </button>
+  `;
+}
+
+function renderGridCell(album) {
+  const grad = coverGrad(album.artist + album.title);
+  const initials = coverInitials(album.title);
+  const showTier = album.tier && (state.lens === "rotation" || state.lens === "all");
+  return `
+    <button class="grid-cell" data-album="${album.id}">
+      <div class="grid-cover" style="background:${grad}">
+        ${showTier ? `<span class="grid-tier-badge ${album.tier.toLowerCase()}">${album.tier}</span>` : ""}
+        ${initials}
+      </div>
+      <div class="grid-title">${album.title}</div>
+      <div class="grid-artist">${album.artist}</div>
+    </button>
+  `;
+}
+
+function renderExplorer() {
+  const rows = albumsForLens();
+  const contextLine = `
+    <div class="context-line">
+      <span><span class="count">${rows.length}</span> ${rows.length === 1 ? "album" : "albums"}</span>
+      <span>${sortDescription()}</span>
+    </div>
+  `;
+
+  let body;
+  if (rows.length === 0) {
+    body = `<div class="empty-state"><strong>No albums match</strong>Adjust the filter chips above.</div>`;
+  } else if (state.view === "list") {
+    body = `<div class="list-card">${rows.map(renderListRow).join("")}</div>`;
+  } else {
+    body = `<div class="grid">${rows.map(renderGridCell).join("")}</div>`;
+  }
+
+  return `
+    <div class="nav-page" data-page="explorer">
+      <div class="nav-bar-large"><h1>Catalog</h1></div>
+      <div class="scroll-area">
+        ${renderLensRow()}
+        ${renderFilterToolbar()}
+        ${contextLine}
+        ${body}
+        <div style="height: 24px"></div>
+      </div>
+    </div>
+  `;
+}
+
+function wireExplorer() {
+  document.querySelectorAll("#lensRow .lens").forEach(btn => {
+    btn.addEventListener("click", () => {
+      state.lens = btn.dataset.lens;
+      remount();
+    });
+  });
+  document.querySelectorAll("[data-window]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      state.window = btn.dataset.window;
+      remount();
+    });
+  });
+  document.querySelectorAll("[data-tier]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const t = btn.dataset.tier;
+      if (state.tiers.has(t)) {
+        // Don't allow all-off — keeps the screen meaningful
+        if (state.tiers.size > 1) state.tiers.delete(t);
+      } else {
+        state.tiers.add(t);
+      }
+      remount();
+    });
+  });
+  document.querySelectorAll("[data-label]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      state.selectedLabel = btn.dataset.label;
+      remount();
+    });
+  });
+  document.querySelectorAll("[data-genre]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      state.selectedGenre = btn.dataset.genre;
+      remount();
+    });
+  });
+  document.querySelectorAll("#viewToggle button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      state.view = btn.dataset.view;
+      remount();
+    });
+  });
+  document.querySelectorAll("[data-album]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      pushDetail(btn.dataset.album);
+    });
+  });
+}
+
+// ============================================================
+// Rendering — Album Detail
+// ============================================================
+function renderDetail(albumId) {
+  const album = ALBUMS.find(a => a.id === albumId);
+  if (!album) return "";
+  const tracks = TRACKLISTS[album.id] || [];
+  const grad = coverGrad(album.artist + album.title);
+  const initials = coverInitials(album.title);
+
+  const tierLine = album.tier
+    ? `<span class="detail-tier-badge ${album.tier.toLowerCase()}">${album.tier} · ${TIER_LABEL[album.tier]} Rotation</span>`
+    : `<div class="detail-row" style="margin-top:8px"><em>Not in rotation</em></div>`;
+
+  const tracksHtml = tracks.map((t, i) => `
+    <button class="track-row" data-track="${i}">
+      <div class="track-num">${i+1}</div>
+      <div class="track-title">${t}</div>
+      <div class="track-dur">${randDur(album.id, i)}</div>
+      <div class="track-play-icon">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+      </div>
+    </button>
+  `).join("");
+
+  return `
+    <div class="nav-page entering" data-page="detail">
+      <div class="nav-bar">
+        <button class="back-btn" id="backBtn">
+          <svg width="12" height="20" viewBox="0 0 12 20" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="10 2 2 10 10 18"/></svg>
+          Catalog
+        </button>
+        <span class="nav-title">Album</span>
+        <span style="width:80px"></span>
+      </div>
+      <div class="scroll-area">
+        <div class="detail-hero">
+          <div class="detail-cover" style="background:${grad}">${initials}</div>
+          <div class="detail-meta-stack">
+            <div class="detail-title">${album.title}</div>
+            <div class="detail-artist">${album.artist}</div>
+            <div class="detail-row"><strong>Label</strong> · ${album.label}</div>
+            <div class="detail-row"><strong>Year</strong> · ${album.year}</div>
+            <div class="detail-row"><strong>Catalog</strong> · ${album.cat}</div>
+            <div class="detail-row"><strong>Genre</strong> · ${album.genre}</div>
+            ${tierLine}
+          </div>
+        </div>
+
+        <div class="stream-row">
+          <button class="stream-btn spotify" data-stream="spotify">
+            <span class="stream-glyph">♫</span>
+            Spotify
+          </button>
+          <button class="stream-btn apple" data-stream="apple">
+            <span class="stream-glyph">♫</span>
+            Apple Music
+          </button>
+          <button class="stream-btn bandcamp" data-stream="bandcamp">
+            <span class="stream-glyph">♫</span>
+            Bandcamp
+          </button>
+        </div>
+
+        <div id="previewBannerHost"></div>
+
+        <div class="detail-section-title">Tracklist</div>
+        <div class="tracklist-card" id="tracklist">
+          ${tracksHtml}
+        </div>
+
+        <div class="detail-section-title">Added</div>
+        <div class="list-card">
+          <div style="padding:12px 14px;font-size:13px;color:var(--ios-label-sec)">
+            ${formatLongDate(album.added)} · ${daysSince(album.added)} days ago
+          </div>
+        </div>
+
+        <div style="height:32px"></div>
+      </div>
+    </div>
+  `;
+}
+
+function randDur(seed, i) {
+  let h = 0;
+  for (let c of seed + i) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  const total = 150 + (h % 180); // 2:30 – 5:30
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2,"0")}`;
+}
+
+function formatLongDate(iso) {
+  const d = new Date(iso);
+  const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+}
+
+function wireDetail() {
+  document.getElementById("backBtn").addEventListener("click", popDetail);
+  document.querySelectorAll("[data-stream]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      flashStreamBanner(btn.dataset.stream);
+    });
+  });
+  document.querySelectorAll("[data-track]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.dataset.track);
+      togglePreview(idx);
+    });
+  });
+}
+
+let _previewIdx = null;
+function togglePreview(idx) {
+  if (_previewIdx === idx) {
+    _previewIdx = null;
+  } else {
+    _previewIdx = idx;
+  }
+  document.querySelectorAll(".track-row").forEach((row, i) => {
+    if (i === _previewIdx) row.classList.add("playing");
+    else row.classList.remove("playing");
+  });
+  const host = document.getElementById("previewBannerHost");
+  if (_previewIdx == null) {
+    host.innerHTML = "";
+  } else {
+    const titleEl = document.querySelectorAll(".track-row")[_previewIdx].querySelector(".track-title");
+    const title = titleEl ? titleEl.textContent : "";
+    host.innerHTML = `
+      <div class="preview-banner">
+        <span class="pulse"></span>
+        <span>Previewing <strong>${title}</strong> via LML proxy preview URL</span>
+      </div>
+    `;
+  }
+}
+
+function flashStreamBanner(kind) {
+  const host = document.getElementById("previewBannerHost");
+  const label = { spotify: "Spotify", apple: "Apple Music", bandcamp: "Bandcamp" }[kind];
+  const url = STREAM_URLS[kind];
+  host.innerHTML = `
+    <div class="preview-banner" style="background:rgba(94,92,230,0.08);color:var(--ios-indigo)">
+      <span class="pulse" style="background:var(--ios-indigo)"></span>
+      <span>Would open <strong>${label}</strong> · <code style="font-size:11px">${url}</code></span>
+    </div>
+  `;
+  // Auto-clear after a moment so the surface stays clean
+  setTimeout(() => {
+    if (host.innerHTML.includes(label)) host.innerHTML = "";
+  }, 2400);
+}
+
+// ============================================================
+// Navigation
+// ============================================================
+const stack = document.getElementById("navStack");
+
+function remount() {
+  // Re-render in place to preserve any drill state if it exists.
+  // For simplicity in this mock we only fully remount the explorer.
+  const detail = stack.querySelector('[data-page="detail"]');
+  stack.innerHTML = renderExplorer();
+  if (detail) stack.appendChild(detail);
+  wireExplorer();
+  if (detail) wireDetail();
+}
+
+function pushDetail(albumId) {
+  const explorer = stack.querySelector('[data-page="explorer"]');
+  if (explorer) explorer.classList.add("exiting");
+  stack.insertAdjacentHTML("beforeend", renderDetail(albumId));
+  const detail = stack.querySelector('[data-page="detail"]');
+  requestAnimationFrame(() => {
+    detail.classList.remove("entering");
+  });
+  _previewIdx = null;
+  wireDetail();
+}
+
+function popDetail() {
+  const detail = stack.querySelector('[data-page="detail"]');
+  const explorer = stack.querySelector('[data-page="explorer"]');
+  detail.classList.add("entering");
+  if (explorer) explorer.classList.remove("exiting");
+  setTimeout(() => detail.remove(), 320);
+}
+
+// ============================================================
+// Boot
+// ============================================================
+remount();
+</script>
+</body>
+</html>

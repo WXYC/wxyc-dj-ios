@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bin Maturity — Prototype</title>
+<style>
+  :root {
+    --ios-bg: #F2F2F7;
+    --ios-card: #FFFFFF;
+    --ios-sep: #C6C6C8;
+    --ios-blue: #007AFF;
+    --ios-purple: #5856D6;
+    --ios-pink: #FF2D55;
+    --ios-orange: #FF9500;
+    --ios-green: #34C759;
+    --ios-teal: #5AC8FA;
+    --ios-gray: #8E8E93;
+    --ios-gray-light: #E5E5EA;
+    --ios-gray-bg: #EFEFF4;
+    --ios-label: #000000;
+    --ios-label-sec: #3C3C43;
+    --ios-label-tert: #3C3C4399;
+    --frame-bg: #1c1c1e;
+    --fresh: #5AC8FA;
+    --aired: #34C759;
+    --stale: #FF9500;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    background: #d8d8df;
+    color: #111;
+    padding: 24px 16px 48px;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1 {
+    margin: 0 0 4px 0;
+    font-size: 22px;
+    font-weight: 600;
+    text-align: center;
+  }
+  .subtitle {
+    text-align: center;
+    color: #555;
+    margin-bottom: 24px;
+    font-size: 14px;
+  }
+  .stage {
+    max-width: 900px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  @media (max-width: 800px) {
+    .stage { grid-template-columns: 1fr; }
+  }
+
+  /* ----- Phone frame ----- */
+  .phone-frame {
+    width: 390px;
+    margin: 0 auto;
+    background: var(--frame-bg);
+    border-radius: 50px;
+    padding: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    position: relative;
+  }
+  .phone-screen {
+    background: var(--ios-bg);
+    border-radius: 40px;
+    height: 800px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .notch {
+    width: 120px;
+    height: 30px;
+    background: var(--frame-bg);
+    border-radius: 0 0 18px 18px;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+  }
+  .status-bar {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+    background: var(--ios-bg);
+    z-index: 10;
+    position: relative;
+  }
+
+  /* ----- Nav ----- */
+  .nav-bar {
+    padding: 4px 16px 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 36px;
+    flex-shrink: 0;
+  }
+  .nav-bar-icons {
+    display: flex;
+    gap: 4px;
+  }
+  .icon-btn {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .icon-btn:active { background: var(--ios-gray-light); }
+  .nav-bar-large {
+    padding: 4px 16px 6px;
+    flex-shrink: 0;
+  }
+  .nav-bar-large h1 {
+    margin: 0;
+    text-align: left;
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+  }
+  .nav-subtitle {
+    font-size: 14px;
+    color: var(--ios-label-tert);
+    margin-top: 2px;
+  }
+
+  .scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 24px;
+    position: relative;
+  }
+  .scroll-area::-webkit-scrollbar { width: 0; }
+
+  /* ----- Summary band ----- */
+  .summary-card {
+    background: white;
+    margin: 12px 16px 12px;
+    border-radius: 12px;
+    padding: 14px 14px 12px;
+  }
+  .summary-tiles {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+    margin-bottom: 12px;
+  }
+  .summary-cell {
+    text-align: center;
+    padding: 2px 0;
+  }
+  .summary-cell + .summary-cell {
+    border-left: 0.5px solid var(--ios-sep);
+  }
+  .summary-num {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--ios-label);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.5px;
+    line-height: 1.1;
+  }
+  .summary-num.untouched { color: var(--ios-label); }
+  .summary-num.aired { color: var(--aired); }
+  .summary-num.stale { color: var(--stale); }
+  .summary-label {
+    font-size: 10px;
+    color: var(--ios-label-tert);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    line-height: 1.2;
+  }
+  .mix-bar-label {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-bottom: 4px;
+  }
+  .mix-bar {
+    height: 10px;
+    background: var(--ios-gray-light);
+    border-radius: 5px;
+    overflow: hidden;
+    display: flex;
+  }
+  .mix-bar-seg {
+    height: 100%;
+    transition: width 0.3s ease;
+  }
+  .mix-bar-seg.fresh { background: var(--fresh); }
+  .mix-bar-seg.aired { background: var(--aired); }
+  .mix-bar-seg.stale { background: var(--stale); }
+  .mix-legend {
+    display: flex;
+    gap: 14px;
+    margin-top: 7px;
+    font-size: 11px;
+    color: var(--ios-label-sec);
+  }
+  .mix-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .mix-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .mix-dot.fresh { background: var(--fresh); }
+  .mix-dot.aired { background: var(--aired); }
+  .mix-dot.stale { background: var(--stale); }
+  .mix-count {
+    color: var(--ios-label-tert);
+    margin-left: 2px;
+  }
+
+  /* ----- Filter chips ----- */
+  .chip-row {
+    padding: 0 16px 12px;
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .chip-row::-webkit-scrollbar { display: none; }
+  .chip {
+    background: var(--ios-gray-light);
+    color: var(--ios-label);
+    border: none;
+    border-radius: 14px;
+    padding: 6px 12px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: background 0.12s, color 0.12s;
+  }
+  .chip.active {
+    background: var(--ios-blue);
+    color: white;
+  }
+  .chip-count {
+    margin-left: 4px;
+    font-size: 11px;
+    opacity: 0.7;
+    font-variant-numeric: tabular-nums;
+  }
+  .chip.active .chip-count { opacity: 0.85; }
+
+  /* ----- Bin list ----- */
+  .bin-list {
+    margin: 0 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .bin-row {
+    background: white;
+    border-radius: 12px;
+    padding: 12px;
+    display: grid;
+    grid-template-columns: 52px 1fr auto;
+    gap: 12px;
+    align-items: start;
+    transition: opacity 0.2s;
+  }
+  .bin-row:active {
+    background: var(--ios-gray-bg);
+  }
+  .cover {
+    width: 52px;
+    height: 52px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    flex-shrink: 0;
+    overflow: hidden;
+    position: relative;
+  }
+  .cover-text {
+    z-index: 1;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+  }
+  .bin-meta {
+    min-width: 0;
+    overflow: hidden;
+  }
+  .bin-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ios-label);
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bin-artist {
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bin-sublabel {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bin-action {
+    background: transparent;
+    border: none;
+    color: var(--ios-gray);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+    align-self: start;
+    margin-top: -2px;
+  }
+  .bin-action:active { color: var(--ios-blue); }
+
+  /* ----- Maturity badges ----- */
+  .badges-row {
+    grid-column: 2 / 4;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-top: 8px;
+  }
+  .badge {
+    border-radius: 5px;
+    padding: 3px 7px;
+    font-size: 11px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    line-height: 1.2;
+  }
+  .badge-you {
+    background: rgba(52, 199, 89, 0.14);
+    color: #1d7a39;
+  }
+  .badge-you.zero {
+    background: var(--ios-gray-light);
+    color: var(--ios-label-sec);
+  }
+  .badge-station {
+    background: rgba(0, 122, 255, 0.12);
+    color: #0058b8;
+  }
+  .badge-added {
+    color: var(--ios-label-tert);
+    font-size: 11px;
+    font-weight: 400;
+    margin-left: auto;
+    padding-left: 4px;
+    flex-shrink: 0;
+  }
+  .badge-stale {
+    background: var(--ios-orange);
+    color: white;
+    border-radius: 9px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .badge-icon {
+    font-size: 9px;
+    opacity: 0.85;
+  }
+
+  /* ----- Sort sheet ----- */
+  .sheet-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 100;
+    display: none;
+  }
+  .sheet-overlay.open { display: block; }
+  .sheet {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--ios-bg);
+    border-radius: 16px 16px 0 0;
+    display: flex;
+    flex-direction: column;
+    transform: translateY(100%);
+    transition: transform 0.25s ease-out;
+    max-height: 70%;
+  }
+  .sheet-overlay.open .sheet { transform: translateY(0); }
+  .sheet-handle {
+    width: 36px;
+    height: 5px;
+    background: var(--ios-gray-light);
+    border-radius: 3px;
+    margin: 8px auto 4px;
+  }
+  .sheet-header {
+    text-align: center;
+    padding: 8px 16px 12px;
+    border-bottom: 0.5px solid var(--ios-sep);
+  }
+  .sheet-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ios-label);
+  }
+  .sheet-subtitle {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    margin-top: 2px;
+  }
+  .sheet-body {
+    padding: 8px 16px 24px;
+  }
+  .sort-card {
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .sort-option {
+    width: 100%;
+    background: transparent;
+    border: none;
+    padding: 13px 14px;
+    text-align: left;
+    font: inherit;
+    font-size: 15px;
+    color: var(--ios-label);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 0.5px solid var(--ios-sep);
+  }
+  .sort-option:last-child { border-bottom: none; }
+  .sort-option:active { background: var(--ios-gray-bg); }
+  .sort-option .check {
+    color: var(--ios-blue);
+    font-size: 16px;
+    font-weight: 600;
+    display: none;
+  }
+  .sort-option.selected .check { display: inline; }
+  .sort-option.selected .label-text { color: var(--ios-blue); }
+
+  .empty-state {
+    text-align: center;
+    color: var(--ios-label-tert);
+    font-size: 13px;
+    padding: 32px 16px;
+    background: white;
+    border-radius: 12px;
+    margin: 0 16px;
+  }
+
+  /* ----- Explainer ----- */
+  .explainer {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    align-self: start;
+    position: sticky;
+    top: 16px;
+  }
+  .explainer h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .explainer h4 {
+    margin: 14px 0 6px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+  }
+  .explainer p {
+    color: #555;
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 0 0 8px 0;
+  }
+  .explainer ul {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    line-height: 1.5;
+  }
+  .explainer li { margin-bottom: 4px; }
+  .explainer code {
+    background: var(--ios-gray-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+  .explainer pre {
+    background: var(--ios-gray-bg);
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    line-height: 1.45;
+    overflow-x: auto;
+    margin: 4px 0 0;
+    color: #2a2a35;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .opt-tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .opt-tag {
+    background: var(--ios-purple);
+    color: white;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .opt-tag.gated {
+    background: var(--ios-orange);
+  }
+  .key-callout {
+    background: #fff8ef;
+    border-left: 3px solid var(--ios-orange);
+    padding: 10px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #5a3d10;
+    line-height: 1.45;
+    margin: 10px 0;
+  }
+  .key-callout strong { color: #3a2706; }
+</style>
+</head>
+<body>
+
+<h1>Bin Maturity — per-entry badges + view summary</h1>
+<p class="subtitle">Tap a filter chip · tap the sort icon top-right · scroll the bin to see the badge mix.</p>
+
+<div class="stage">
+
+  <div class="phone-frame">
+    <div class="phone-screen">
+      <div class="notch"></div>
+      <div class="status-bar">
+        <span>9:41</span>
+        <span>•••</span>
+      </div>
+
+      <div class="nav-bar">
+        <button class="icon-btn" title="Back" aria-label="Back">
+          <svg width="11" height="18" viewBox="0 0 12 20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="10 2 2 10 10 18"/></svg>
+        </button>
+        <div class="nav-bar-icons">
+          <button class="icon-btn" id="sortBtn" title="Sort" aria-label="Sort">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="6" y1="12" x2="18" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+          </button>
+          <button class="icon-btn" title="More" aria-label="More">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="nav-bar-large">
+        <h1>Mail Bin</h1>
+        <div class="nav-subtitle" id="navSubtitle">12 albums</div>
+      </div>
+
+      <div class="scroll-area" id="scrollArea">
+        <div class="summary-card">
+          <div class="summary-tiles">
+            <div class="summary-cell">
+              <div class="summary-num untouched" id="tileUntouched">7</div>
+              <div class="summary-label">Untouched</div>
+            </div>
+            <div class="summary-cell">
+              <div class="summary-num aired" id="tileAired">5</div>
+              <div class="summary-label">Aired by you</div>
+            </div>
+            <div class="summary-cell">
+              <div class="summary-num stale" id="tileStale">6</div>
+              <div class="summary-label">Stale &gt; 8w</div>
+            </div>
+          </div>
+          <div class="mix-bar-label">Mix</div>
+          <div class="mix-bar" id="mixBar">
+            <div class="mix-bar-seg fresh" style="width:8.3%"></div>
+            <div class="mix-bar-seg aired" style="width:41.7%"></div>
+            <div class="mix-bar-seg stale" style="width:50%"></div>
+          </div>
+          <div class="mix-legend">
+            <span class="mix-legend-item"><span class="mix-dot fresh"></span>Fresh <span class="mix-count" id="legendFresh">1</span></span>
+            <span class="mix-legend-item"><span class="mix-dot aired"></span>Aired by you <span class="mix-count" id="legendAired">5</span></span>
+            <span class="mix-legend-item"><span class="mix-dot stale"></span>Stale <span class="mix-count" id="legendStale">6</span></span>
+          </div>
+        </div>
+
+        <div class="chip-row" id="chipRow">
+          <button class="chip active" data-f="all">All <span class="chip-count">12</span></button>
+          <button class="chip" data-f="untouched">Untouched <span class="chip-count">7</span></button>
+          <button class="chip" data-f="aired">Aired by you <span class="chip-count">5</span></button>
+          <button class="chip" data-f="stale">Stale <span class="chip-count">6</span></button>
+        </div>
+
+        <div class="bin-list" id="binList"></div>
+        <div style="height: 32px"></div>
+      </div>
+
+      <div class="sheet-overlay" id="sheetOverlay">
+        <div class="sheet">
+          <div class="sheet-handle"></div>
+          <div class="sheet-header">
+            <div class="sheet-title">Sort Bin</div>
+            <div class="sheet-subtitle">Current: <span id="currentSortName">Recently added</span></div>
+          </div>
+          <div class="sheet-body">
+            <div class="sort-card" id="sortCard"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="explainer">
+    <div class="opt-tags">
+      <span class="opt-tag">Phase 3</span>
+      <span class="opt-tag">Pick #11</span>
+      <span class="opt-tag gated">ADR 0006-gated</span>
+    </div>
+    <h3>Bin Maturity — per-entry badges + view summary</h3>
+    <p>The Mail Bin grows. Without a maturity overlay, a DJ scrolling their bin sees just a list — every entry visually equal — and forgets which they've already aired versus which are still sitting unplayed. This pick layers two play counts and a freshness signal onto every row, plus a summary band that tells the DJ the shape of the whole bin at a glance.</p>
+    <p>Two counts because they answer different questions. <strong>You · N</strong> says "am I in a rut on this one, or have I moved on?" <strong>Station · N</strong> says "is this a station tentpole or a long-tail surprise that hasn't gotten the spins it deserves?" Together they distinguish a 0 / 218 (Yo La Tengo's <em>Painful</em> — heavily aired by everyone but you) from a 0 / 12 (Chuquimamani-Condori's <em>Edits</em> — fresh for the station too).</p>
+    <p>The orange <strong>Stale</strong> pill marks the cross-product: <strong>added ≥ 8 weeks ago AND you have 0 plays</strong>. It's the "you've been sitting on this — either play it or clean it out" prompt. 8 weeks is two months — long enough to forgive any reasonable backlog, short enough that the pill actually surfaces things.</p>
+
+    <div class="key-callout">
+      <strong>Why the summary band?</strong> The per-row badges are useful while scanning, but the three tiles at the top answer the meta-question — "what's the shape of my bin right now?" — without scrolling. The stacked mix bar makes the ratio legible at a glance.
+    </div>
+
+    <h4>Try it</h4>
+    <ul>
+      <li>Tap a filter chip (<strong>Untouched</strong>, <strong>Aired by you</strong>, <strong>Stale</strong>) — list narrows, summary tiles dim contextually</li>
+      <li>Tap the sort icon (top-right) — sheet with 5 options slides up</li>
+      <li>Pick a sort — list reorders, sheet dismisses</li>
+      <li>Notice the orange <strong>Stale</strong> pill on entries sitting ≥ 8 weeks with zero plays from you</li>
+      <li>Compare entry #11 (<em>Icky Mettle</em> — 0/74, stale) vs #10 (<em>Today's Active Lifestyles</em> — 5/148, your most-played) — both are tentpoles for the station, only one is dormant for you</li>
+    </ul>
+
+    <h4>BS contract</h4>
+    <p>Bin contents come from the existing <code>GET /djs/{id}/bin</code> endpoint — the per-album play counts join in as a separate batched lookup so this can ship as a pure additive layer.</p>
+<pre>GET /djs/{id}/has-played?album_ids=1,2,3,...
+  -&gt; { "1": 0, "2": 1, "3": 2, ... }
+
+GET /library/play-counts?album_ids=1,2,3,...
+  -&gt; { "1": 12, "2": 8, "3": 21, ... }
+
+# both fan out from a single Bin fetch:
+GET /djs/{id}/bin
+  -&gt; [ { album_id, added_at, ... }, ... ]</pre>
+
+    <h4>Performance notes</h4>
+    <ul>
+      <li><strong>Badge latency is the binding constraint.</strong> DJ opens Bin → expects badges immediately. One batched <code>has-played</code> call (not N round-trips) is intentional.</li>
+      <li>Stale-ness is computed client-side from <code>added_at</code> + the personal count — no extra endpoint.</li>
+      <li>The summary tiles and mix bar are also client-side aggregates over the in-memory bin. No <code>/bin/summary</code> endpoint needed.</li>
+      <li>If <code>/library/play-counts</code> proves too costly as a wholesale lookup, fall back to piggy-backing on the existing <code>/library/info</code> response shape (which already exposes a station play count per album).</li>
+    </ul>
+
+    <h4>Out of scope (later picks)</h4>
+    <ul>
+      <li>Tapping a badge → drill into the per-album play history</li>
+      <li>"Bulk clean up stale" action</li>
+      <li>Time-window selector on the station count (this prototype shows all-time)</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+// ---------- Mock data ----------
+// 12 entries; addedWeeks = weeks since added, you = personal play count, station = station-wide count.
+const BIN = [
+  { id:1,  title:"Edits",                       artist:"Chuquimamani-Condori", label:"Hausu Mountain", year:2023, addedWeeks:0.6, you:0, station:12,  color:"#FF6F61" },
+  { id:2,  title:"All Hat",                     artist:"DOGA",                  label:"Hausu Mountain", year:2024, addedWeeks:1,   you:1, station:8,   color:"#34A0A4" },
+  { id:3,  title:"Rat Saw God",                 artist:"Wednesday",             label:"Dead Oceans",    year:2023, addedWeeks:2,   you:2, station:21,  color:"#7E57C2" },
+  { id:4,  title:"Pang",                        artist:"Caroline Polachek",     label:"Perpetual Novice", year:2019, addedWeeks:3, you:0, station:47,  color:"#EC407A" },
+  { id:5,  title:"Bright Green Field",          artist:"Squid",                 label:"Warp",           year:2021, addedWeeks:4.3, you:0, station:18,  color:"#26A69A" },
+  { id:6,  title:"Painted Desert",              artist:"Polvo",                 label:"Touch & Go",     year:1995, addedWeeks:6,   you:0, station:81,  color:"#FF9F43" },
+  { id:7,  title:"Halo",                        artist:"Juana Molina",          label:"Crammed Discs",  year:2017, addedWeeks:9,   you:4, station:92,  color:"#AB47BC" },
+  { id:8,  title:"Quiet Signs",                 artist:"Jessica Pratt",         label:"Mexican Summer", year:2019, addedWeeks:10,  you:1, station:22,  color:"#5C6BC0" },
+  { id:9,  title:"On Your Own Love Again",      artist:"Jessica Pratt",         label:"Drag City",      year:2015, addedWeeks:13,  you:0, station:98,  color:"#8D6E63" },
+  { id:10, title:"Today's Active Lifestyles",   artist:"Polvo",                 label:"Touch & Go",     year:1993, addedWeeks:17,  you:5, station:148, color:"#D84315" },
+  { id:11, title:"Icky Mettle",                 artist:"Archers of Loaf",       label:"Alias",          year:1993, addedWeeks:22,  you:0, station:74,  color:"#558B2F" },
+  { id:12, title:"Painful",                     artist:"Yo La Tengo",           label:"Matador",        year:1993, addedWeeks:26,  you:0, station:218, color:"#3949AB" },
+];
+
+const STALE_WEEKS = 8;
+
+function isStale(entry) {
+  return entry.addedWeeks >= STALE_WEEKS && entry.you === 0;
+}
+function isAired(entry) {
+  return entry.you >= 1;
+}
+function isUntouched(entry) {
+  return entry.you === 0;
+}
+function isFresh(entry) {
+  return entry.addedWeeks < STALE_WEEKS && entry.you === 0;
+}
+
+function relativeAdded(weeks) {
+  if (weeks < 1) {
+    const days = Math.max(1, Math.round(weeks * 7));
+    return `Added ${days} day${days === 1 ? "" : "s"} ago`;
+  }
+  if (weeks < 4.4) {
+    const w = Math.round(weeks);
+    return `Added ${w} week${w === 1 ? "" : "s"} ago`;
+  }
+  if (weeks < 8.7) {
+    const m = Math.round(weeks / 4.345);
+    return `Added ${m} month${m === 1 ? "" : "s"} ago`;
+  }
+  const m = Math.round(weeks / 4.345);
+  return `Added ${m} months ago`;
+}
+
+const SORT_OPTIONS = [
+  { key:"recent",     label:"Recently added",        cmp: (a,b) => a.addedWeeks - b.addedWeeks },
+  { key:"oldest",     label:"Oldest in bin",         cmp: (a,b) => b.addedWeeks - a.addedWeeks },
+  { key:"youMost",    label:"Most played by you",    cmp: (a,b) => b.you - a.you || a.addedWeeks - b.addedWeeks },
+  { key:"youLeast",   label:"Least played by you",   cmp: (a,b) => a.you - b.you || b.addedWeeks - a.addedWeeks },
+  { key:"stationMost",label:"Most played station-wide", cmp: (a,b) => b.station - a.station },
+];
+
+// ---------- State ----------
+let currentFilter = "all";
+let currentSort = "recent";
+
+// ---------- Renderers ----------
+function visibleEntries() {
+  let list = BIN.slice();
+  if (currentFilter === "untouched") list = list.filter(isUntouched);
+  if (currentFilter === "aired")     list = list.filter(isAired);
+  if (currentFilter === "stale")     list = list.filter(isStale);
+  const sort = SORT_OPTIONS.find(s => s.key === currentSort) ?? SORT_OPTIONS[0];
+  list.sort(sort.cmp);
+  return list;
+}
+
+function renderSummary() {
+  // Counts are always over the FULL bin, not the current filter — they describe the bin shape itself.
+  const untouched = BIN.filter(isUntouched).length;
+  const aired     = BIN.filter(isAired).length;
+  const stale     = BIN.filter(isStale).length;
+  const fresh     = BIN.filter(isFresh).length;
+  const total     = BIN.length;
+
+  document.getElementById("tileUntouched").textContent = untouched;
+  document.getElementById("tileAired").textContent     = aired;
+  document.getElementById("tileStale").textContent     = stale;
+
+  // Stacked bar: fresh + aired + stale = 100% of bin
+  const pct = (n) => (n / total) * 100;
+  const mixBar = document.getElementById("mixBar");
+  mixBar.innerHTML = `
+    <div class="mix-bar-seg fresh" style="width:${pct(fresh)}%"></div>
+    <div class="mix-bar-seg aired" style="width:${pct(aired)}%"></div>
+    <div class="mix-bar-seg stale" style="width:${pct(stale)}%"></div>
+  `;
+
+  document.getElementById("legendFresh").textContent = fresh;
+  document.getElementById("legendAired").textContent = aired;
+  document.getElementById("legendStale").textContent = stale;
+
+  document.getElementById("navSubtitle").textContent = `${total} albums`;
+}
+
+function renderChips() {
+  const untouched = BIN.filter(isUntouched).length;
+  const aired     = BIN.filter(isAired).length;
+  const stale     = BIN.filter(isStale).length;
+  const all       = BIN.length;
+  const counts = { all, untouched, aired, stale };
+  document.querySelectorAll(".chip").forEach(btn => {
+    const f = btn.dataset.f;
+    btn.classList.toggle("active", f === currentFilter);
+    const countEl = btn.querySelector(".chip-count");
+    if (countEl) countEl.textContent = counts[f];
+  });
+}
+
+function renderBinList() {
+  const root = document.getElementById("binList");
+  const entries = visibleEntries();
+
+  if (entries.length === 0) {
+    root.innerHTML = `<div class="empty-state">No entries match this filter.<br/>Nice — you're current.</div>`;
+    return;
+  }
+
+  root.innerHTML = entries.map(e => {
+    const stale = isStale(e);
+    const youZeroClass = e.you === 0 ? "zero" : "";
+    const initials = e.title
+      .split(" ")
+      .filter(w => /^[A-Za-z0-9]/.test(w))
+      .slice(0, 2)
+      .map(w => w[0])
+      .join("")
+      .toUpperCase();
+    return `
+      <div class="bin-row" data-id="${e.id}">
+        <div class="cover" style="background:linear-gradient(135deg, ${e.color}, ${e.color}cc);">
+          <span class="cover-text">${initials}</span>
+        </div>
+        <div class="bin-meta">
+          <div class="bin-title">${e.title}</div>
+          <div class="bin-artist">${e.artist}</div>
+          <div class="bin-sublabel">${e.label} · ${e.year}</div>
+        </div>
+        <button class="bin-action" aria-label="Actions">⋯</button>
+        <div class="badges-row">
+          <span class="badge badge-you ${youZeroClass}">You · ${e.you}${e.you === 1 ? " play" : e.you === 0 ? "" : " plays"}</span>
+          <span class="badge badge-station">Station · ${e.station}</span>
+          ${stale ? `<span class="badge-stale">Stale</span>` : ""}
+          <span class="badge-added">${relativeAdded(e.addedWeeks)}</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderSortSheet() {
+  const root = document.getElementById("sortCard");
+  root.innerHTML = SORT_OPTIONS.map(s => `
+    <button class="sort-option ${s.key === currentSort ? "selected" : ""}" data-s="${s.key}">
+      <span class="label-text">${s.label}</span>
+      <span class="check">✓</span>
+    </button>
+  `).join("");
+  document.querySelectorAll(".sort-option").forEach(btn => {
+    btn.addEventListener("click", () => {
+      currentSort = btn.dataset.s;
+      const sortObj = SORT_OPTIONS.find(s => s.key === currentSort);
+      document.getElementById("currentSortName").textContent = sortObj.label;
+      renderSortSheet();
+      renderBinList();
+      // dismiss after selection — iOS pattern
+      setTimeout(closeSheet, 180);
+    });
+  });
+  document.getElementById("currentSortName").textContent =
+    (SORT_OPTIONS.find(s => s.key === currentSort) ?? SORT_OPTIONS[0]).label;
+}
+
+// ---------- Sheet ----------
+function openSheet() {
+  renderSortSheet();
+  document.getElementById("sheetOverlay").classList.add("open");
+}
+function closeSheet() {
+  document.getElementById("sheetOverlay").classList.remove("open");
+}
+
+// ---------- Wiring ----------
+document.getElementById("chipRow").addEventListener("click", e => {
+  const btn = e.target.closest(".chip");
+  if (!btn) return;
+  currentFilter = btn.dataset.f;
+  renderChips();
+  renderBinList();
+});
+
+document.getElementById("sortBtn").addEventListener("click", openSheet);
+document.getElementById("sheetOverlay").addEventListener("click", e => {
+  if (e.target.id === "sheetOverlay") closeSheet();
+});
+
+// ---------- Boot ----------
+renderSummary();
+renderChips();
+renderBinList();
+renderSortSheet();
+</script>
+</body>
+</html>

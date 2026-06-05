@@ -1,0 +1,1575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QR Sign-In — Prototype</title>
+<style>
+  :root {
+    --ios-bg: #F2F2F7;
+    --ios-card: #FFFFFF;
+    --ios-sep: #C6C6C8;
+    --ios-blue: #007AFF;
+    --ios-purple: #5856D6;
+    --ios-pink: #FF2D55;
+    --ios-orange: #FF9500;
+    --ios-green: #34C759;
+    --ios-teal: #5AC8FA;
+    --ios-red: #FF3B30;
+    --ios-gray: #8E8E93;
+    --ios-gray-light: #E5E5EA;
+    --ios-gray-bg: #EFEFF4;
+    --ios-label: #000000;
+    --ios-label-sec: #3C3C43;
+    --ios-label-tert: #3C3C4399;
+    --frame-bg: #1c1c1e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    background: #d8d8df;
+    color: #111;
+    padding: 24px 16px 48px;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1 {
+    margin: 0 0 4px 0;
+    font-size: 22px;
+    font-weight: 600;
+    text-align: center;
+  }
+  .subtitle {
+    text-align: center;
+    color: #555;
+    margin-bottom: 24px;
+    font-size: 14px;
+  }
+
+  .tab-bar {
+    max-width: 900px;
+    margin: 0 auto 24px;
+    display: flex;
+    gap: 8px;
+    padding: 4px;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .tab-btn {
+    flex: 1;
+    padding: 10px 14px;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    color: #444;
+    text-align: left;
+    line-height: 1.3;
+  }
+  .tab-btn .tab-title {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .tab-btn .tab-desc {
+    display: block;
+    font-size: 11px;
+    color: #777;
+    font-weight: 400;
+  }
+  .tab-btn.active {
+    background: var(--ios-blue);
+    color: white;
+  }
+  .tab-btn.active .tab-desc { color: rgba(255,255,255,0.85); }
+
+  .stage {
+    max-width: 900px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  @media (max-width: 800px) {
+    .stage { grid-template-columns: 1fr; }
+  }
+
+  /* ----- Phone frame ----- */
+  .phone-frame {
+    width: 390px;
+    margin: 0 auto;
+    background: var(--frame-bg);
+    border-radius: 50px;
+    padding: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    position: relative;
+  }
+  .phone-screen {
+    background: var(--ios-bg);
+    border-radius: 40px;
+    height: 800px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .notch {
+    width: 120px;
+    height: 30px;
+    background: var(--frame-bg);
+    border-radius: 0 0 18px 18px;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 200;
+  }
+  .status-bar {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+    background: var(--ios-bg);
+    z-index: 10;
+    position: relative;
+    color: var(--ios-label);
+  }
+  .status-bar.over-camera {
+    background: transparent;
+    color: white;
+  }
+
+  /* ----- Navigation container (stack) ----- */
+  .nav-stack {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+  .nav-page {
+    position: absolute;
+    inset: 0;
+    background: var(--ios-bg);
+    display: flex;
+    flex-direction: column;
+    transform: translateX(0);
+    transition: transform 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .nav-page.entering { transform: translateX(100%); }
+  .nav-page.exiting { transform: translateX(-25%); opacity: 0.6; }
+  .nav-page[data-page="scanner"] {
+    background: #0b0b0f;
+  }
+  .nav-page[data-page="success"] {
+    background: var(--ios-bg);
+  }
+
+  .nav-bar {
+    padding: 6px 16px 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 44px;
+  }
+  .nav-bar.over-dark {
+    color: white;
+  }
+  .nav-bar-large {
+    padding: 0 16px 8px;
+  }
+  .nav-bar-large h1 {
+    margin: 0;
+    text-align: left;
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+  }
+  .nav-btn {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 17px;
+    cursor: pointer;
+    padding: 4px 6px;
+  }
+  .nav-btn.dark {
+    color: white;
+  }
+  .nav-title {
+    flex: 1;
+    text-align: center;
+    font-size: 17px;
+    font-weight: 600;
+  }
+
+  /* ----- Search-stub home screen ----- */
+  .home-search-row {
+    padding: 4px 16px 12px;
+  }
+  .home-search-bar {
+    background: var(--ios-gray-light);
+    border-radius: 10px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 15px;
+    color: var(--ios-gray);
+  }
+  .home-search-bar svg { flex-shrink: 0; opacity: 0.55; }
+  .placeholder-list {
+    background: white;
+    margin: 0 16px;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .placeholder-row {
+    padding: 12px 14px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    font-size: 13px;
+  }
+  .placeholder-row:last-child { border-bottom: none; }
+  .placeholder-row .artist {
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--ios-label);
+  }
+  .placeholder-row .album {
+    color: var(--ios-label-sec);
+    margin-top: 2px;
+  }
+  .placeholder-row .meta {
+    color: var(--ios-label-tert);
+    font-size: 11px;
+    margin-top: 2px;
+  }
+  .empty-hint {
+    text-align: center;
+    color: var(--ios-label-tert);
+    font-size: 13px;
+    padding: 36px 24px 0;
+    line-height: 1.45;
+  }
+
+  /* ----- Profile avatar button ----- */
+  .profile-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--ios-blue);
+    color: white;
+    border: none;
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  }
+  .profile-btn:active { transform: scale(0.96); }
+
+  /* ----- Action sheet (iOS-style) ----- */
+  .sheet-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 100;
+    display: none;
+    opacity: 0;
+    transition: opacity 0.2s ease-out;
+  }
+  .sheet-overlay.open {
+    display: block;
+    opacity: 1;
+  }
+  .action-sheet {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transform: translateY(100%);
+    transition: transform 0.28s cubic-bezier(0.32, 0.72, 0.3, 1);
+  }
+  .sheet-overlay.open .action-sheet { transform: translateY(0); }
+  .action-group {
+    background: rgba(248, 248, 252, 0.92);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .action-item {
+    width: 100%;
+    background: transparent;
+    border: none;
+    padding: 16px 18px;
+    font: inherit;
+    font-size: 19px;
+    color: var(--ios-blue);
+    cursor: pointer;
+    text-align: center;
+    border-bottom: 0.5px solid rgba(60, 60, 67, 0.18);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .action-item:last-child { border-bottom: none; }
+  .action-item:active { background: rgba(0,0,0,0.05); }
+  .action-item.destructive { color: var(--ios-red); }
+  .action-item.cancel {
+    background: rgba(255, 255, 255, 0.95);
+    font-weight: 600;
+  }
+  .action-item .icon {
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .action-header {
+    padding: 14px 16px 12px;
+    text-align: center;
+    border-bottom: 0.5px solid rgba(60, 60, 67, 0.18);
+  }
+  .action-header .who {
+    font-size: 13px;
+    color: var(--ios-label-tert);
+    margin-bottom: 2px;
+  }
+  .action-header .role-pill {
+    display: inline-block;
+    margin-left: 4px;
+    background: var(--ios-blue);
+    color: white;
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    letter-spacing: 0.4px;
+    vertical-align: 1px;
+  }
+
+  /* ----- Scanner screen ----- */
+  .camera-bg {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse at 35% 30%, #2a2638 0%, #100f1a 55%, #060611 100%);
+    overflow: hidden;
+  }
+  .camera-bg::before {
+    content: "";
+    position: absolute;
+    inset: -20%;
+    background:
+      radial-gradient(circle at 80% 80%, rgba(88, 86, 214, 0.25), transparent 40%),
+      radial-gradient(circle at 20% 90%, rgba(255, 45, 85, 0.18), transparent 35%);
+    filter: blur(40px);
+    z-index: 1;
+  }
+  .camera-grain {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    opacity: 0.18;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.6'/></svg>");
+  }
+  .scanner-screen {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    color: white;
+    z-index: 5;
+  }
+  .scanner-top {
+    padding: 6px 16px 8px;
+    display: flex;
+    align-items: center;
+    z-index: 6;
+  }
+  .scanner-top .nav-btn { color: white; font-weight: 500; }
+  .scanner-body {
+    flex: 1;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 0 24px;
+  }
+  .reticle {
+    width: 240px;
+    height: 240px;
+    position: relative;
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.04);
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.42);
+  }
+  .corner {
+    position: absolute;
+    width: 30px;
+    height: 30px;
+    border-color: white;
+    border-style: solid;
+    border-width: 0;
+  }
+  .corner.tl { top: -2px; left: -2px; border-top-width: 4px; border-left-width: 4px; border-top-left-radius: 12px; }
+  .corner.tr { top: -2px; right: -2px; border-top-width: 4px; border-right-width: 4px; border-top-right-radius: 12px; }
+  .corner.bl { bottom: -2px; left: -2px; border-bottom-width: 4px; border-left-width: 4px; border-bottom-left-radius: 12px; }
+  .corner.br { bottom: -2px; right: -2px; border-bottom-width: 4px; border-right-width: 4px; border-bottom-right-radius: 12px; }
+  .reticle.locking .corner {
+    border-color: var(--ios-green);
+    transition: border-color 0.2s;
+  }
+  .scan-line {
+    position: absolute;
+    left: 6%;
+    right: 6%;
+    top: 8px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #5AC8FA, transparent);
+    box-shadow: 0 0 12px #5AC8FA;
+    animation: scan 2s ease-in-out infinite;
+    border-radius: 2px;
+  }
+  @keyframes scan {
+    0%   { transform: translateY(0); opacity: 0.85; }
+    50%  { transform: translateY(220px); opacity: 1; }
+    100% { transform: translateY(0); opacity: 0.85; }
+  }
+  .reticle.locking .scan-line { animation: none; opacity: 0; }
+  .qr-preview {
+    position: absolute;
+    inset: 24px;
+    opacity: 0;
+    transition: opacity 0.4s;
+  }
+  .reticle.locking .qr-preview { opacity: 0.92; }
+  .scanner-caption {
+    margin-top: 32px;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 15px;
+    line-height: 1.4;
+    max-width: 280px;
+  }
+  .scanner-detail {
+    margin-top: 8px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.55);
+  }
+
+  /* ----- Approval bottom sheet ----- */
+  .approval-sheet {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--ios-bg);
+    border-radius: 18px 18px 0 0;
+    padding: 8px 20px 28px;
+    transform: translateY(100%);
+    transition: transform 0.3s cubic-bezier(0.32, 0.72, 0.3, 1);
+    z-index: 80;
+    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.4);
+  }
+  .approval-sheet.open { transform: translateY(0); }
+  .grabber {
+    width: 36px;
+    height: 5px;
+    background: var(--ios-gray);
+    border-radius: 3px;
+    margin: 0 auto 14px;
+    opacity: 0.4;
+  }
+  .approval-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-bottom: 14px;
+    border-bottom: 0.5px solid var(--ios-sep);
+  }
+  .site-icon {
+    width: 46px;
+    height: 46px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #007AFF, #5AC8FA);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .approval-head .who {
+    flex: 1;
+    min-width: 0;
+  }
+  .site-name {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ios-label);
+  }
+  .request-meta {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    margin-top: 2px;
+  }
+  .approval-body {
+    padding: 16px 0 0;
+  }
+  .identity-row {
+    background: white;
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .identity-avatar {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: var(--ios-blue);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  .identity-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .identity-label {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .identity-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ios-label);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .role-badge {
+    display: inline-block;
+    background: var(--ios-blue);
+    color: white;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    letter-spacing: 0.4px;
+  }
+  .role-badge.member {
+    background: var(--ios-gray);
+  }
+  .scope-list {
+    background: white;
+    border-radius: 12px;
+    padding: 4px 0;
+    margin-bottom: 18px;
+  }
+  .scope-row {
+    padding: 10px 14px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+  }
+  .scope-row:last-child { border-bottom: none; }
+  .scope-row .check {
+    color: var(--ios-green);
+    width: 16px;
+    flex-shrink: 0;
+  }
+  .approval-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .btn-primary {
+    width: 100%;
+    background: var(--ios-blue);
+    color: white;
+    border: none;
+    border-radius: 14px;
+    padding: 14px;
+    font: inherit;
+    font-size: 17px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-primary:active { background: #005ec4; }
+  .btn-secondary {
+    width: 100%;
+    background: transparent;
+    color: var(--ios-red);
+    border: none;
+    border-radius: 14px;
+    padding: 12px;
+    font: inherit;
+    font-size: 16px;
+    cursor: pointer;
+  }
+  .btn-primary.disabled,
+  .btn-primary[disabled] {
+    background: var(--ios-gray-light);
+    color: var(--ios-gray);
+    cursor: not-allowed;
+  }
+
+  /* ----- Denial card variant ----- */
+  .denial-card {
+    background: white;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 8px;
+  }
+  .denial-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: rgba(255, 59, 48, 0.12);
+    color: var(--ios-red);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .denial-title {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ios-label);
+  }
+  .denial-msg {
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    line-height: 1.45;
+  }
+
+  /* ----- Face ID overlay ----- */
+  .faceid-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.62);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    z-index: 150;
+    display: none;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 0 12px 12px;
+  }
+  .faceid-overlay.open { display: flex; }
+  .faceid-card {
+    background: rgba(245, 245, 250, 0.96);
+    backdrop-filter: blur(20px);
+    border-radius: 18px;
+    width: 100%;
+    padding: 22px 20px;
+    text-align: center;
+    transform: translateY(20px);
+    opacity: 0;
+    transition: transform 0.3s, opacity 0.3s;
+  }
+  .faceid-overlay.open .faceid-card {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  .faceid-icon {
+    width: 72px;
+    height: 72px;
+    margin: 0 auto 12px;
+    color: var(--ios-label);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .faceid-icon.scanning {
+    animation: faceid-pulse 1s ease-in-out infinite;
+  }
+  .faceid-icon.success {
+    color: var(--ios-green);
+  }
+  @keyframes faceid-pulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.06); }
+  }
+  .faceid-title {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ios-label);
+  }
+  .faceid-msg {
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    margin-top: 4px;
+  }
+
+  /* ----- Success screen ----- */
+  .success-stage {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 0 28px;
+    text-align: center;
+  }
+  .success-check {
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    background: var(--ios-green);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 18px;
+    box-shadow: 0 8px 24px rgba(52, 199, 89, 0.35);
+    animation: pop-in 0.32s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  @keyframes pop-in {
+    from { transform: scale(0.6); opacity: 0; }
+    to   { transform: scale(1); opacity: 1; }
+  }
+  .success-title {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--ios-label);
+  }
+  .success-subtitle {
+    margin-top: 8px;
+    font-size: 14px;
+    line-height: 1.45;
+    color: var(--ios-label-sec);
+    max-width: 280px;
+  }
+  .success-meta {
+    margin-top: 18px;
+    padding: 10px 16px;
+    background: white;
+    border-radius: 10px;
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    font-variant-numeric: tabular-nums;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .success-meta strong {
+    color: var(--ios-label-sec);
+    font-weight: 600;
+  }
+  .success-done {
+    margin-top: 28px;
+    background: transparent;
+    color: var(--ios-blue);
+    border: none;
+    font: inherit;
+    font-size: 17px;
+    cursor: pointer;
+    padding: 8px 16px;
+  }
+
+  /* ----- Flow toast banner (above keyboard) ----- */
+  .flow-toast {
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    background: rgba(28, 28, 30, 0.92);
+    backdrop-filter: blur(12px);
+    color: white;
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    z-index: 50;
+    transform: translateY(120%);
+    transition: transform 0.3s cubic-bezier(0.32, 0.72, 0.3, 1);
+  }
+  .flow-toast.open { transform: translateY(0); }
+  .flow-toast .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--ios-green);
+    flex-shrink: 0;
+  }
+  .flow-toast .dot.red { background: var(--ios-red); }
+  .flow-toast .dot.amber { background: var(--ios-orange); }
+
+  /* ----- Explainer ----- */
+  .explainer {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    align-self: start;
+    position: sticky;
+    top: 16px;
+  }
+  .explainer h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .explainer h4 {
+    margin: 14px 0 6px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+  }
+  .explainer p {
+    color: #555;
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 0 0 8px 0;
+  }
+  .explainer ul, .explainer ol {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    line-height: 1.5;
+  }
+  .explainer li { margin-bottom: 4px; }
+  .explainer code {
+    background: var(--ios-gray-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+  .explainer pre {
+    background: var(--ios-gray-bg);
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 11px;
+    line-height: 1.5;
+    overflow-x: auto;
+    margin: 8px 0 0;
+  }
+  .explainer pre code {
+    background: transparent;
+    padding: 0;
+    font-size: 11px;
+  }
+  .opt-tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .opt-tag {
+    background: var(--ios-purple);
+    color: white;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .opt-tag.adr { background: var(--ios-blue); }
+  .opt-tag.parallel { background: var(--ios-green); }
+  .note-row {
+    border-left: 3px solid var(--ios-orange);
+    padding: 6px 10px;
+    background: #FFF7EB;
+    border-radius: 0 6px 6px 0;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--ios-label-sec);
+    line-height: 1.45;
+  }
+  .restart-btn {
+    margin-top: 16px;
+    width: 100%;
+    background: var(--ios-gray-bg);
+    color: var(--ios-label-sec);
+    border: none;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .restart-btn:active { background: var(--ios-gray-light); }
+</style>
+</head>
+<body>
+
+<h1>QR sign-in for the shared control-room computer</h1>
+<p class="subtitle">DJ taps the profile icon → scans the QR on dj.wxyc.org → approves with Face ID. The browser is signed in without a keyboard ever touching the studio computer.</p>
+
+<nav class="tab-bar" id="tabBar">
+  <button class="tab-btn active" data-flow="happy">
+    <span class="tab-title">Happy path</span>
+    <span class="tab-desc">DJ scans → approves → success</span>
+  </button>
+  <button class="tab-btn" data-flow="reject">
+    <span class="tab-title">Rejection</span>
+    <span class="tab-desc">DJ taps Reject — browser stays signed-out</span>
+  </button>
+  <button class="tab-btn" data-flow="member">
+    <span class="tab-title">Member denied</span>
+    <span class="tab-desc">Role gate: only DJ and above can approve</span>
+  </button>
+</nav>
+
+<div class="stage">
+
+  <div class="phone-frame">
+    <div class="phone-screen" id="screen">
+      <div class="notch"></div>
+      <div class="status-bar" id="statusBar">
+        <span>9:41</span>
+        <span>•••</span>
+      </div>
+      <div class="nav-stack" id="navStack"></div>
+      <div class="sheet-overlay" id="sheetOverlay">
+        <div class="action-sheet" id="actionSheet"></div>
+      </div>
+      <div class="faceid-overlay" id="faceidOverlay">
+        <div class="faceid-card" id="faceidCard"></div>
+      </div>
+      <div class="flow-toast" id="flowToast">
+        <span class="dot" id="toastDot"></span>
+        <span id="toastText"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="explainer" id="explainer"></div>
+
+</div>
+
+<script>
+// ============================================================
+// State
+// ============================================================
+let currentFlow = "happy"; // "happy" | "reject" | "member"
+let stepTimers = [];
+
+function clearTimers() {
+  stepTimers.forEach(clearTimeout);
+  stepTimers = [];
+}
+function schedule(fn, ms) {
+  const t = setTimeout(fn, ms);
+  stepTimers.push(t);
+  return t;
+}
+
+// ============================================================
+// SVG icons (inlined for self-containment)
+// ============================================================
+const ICONS = {
+  search: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
+  qr: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="3" width="6" height="6" rx="1"/><rect x="3" y="15" width="6" height="6" rx="1"/><path d="M15 15h2v2h-2zM19 15h2M19 19h2v2M15 19h2"/></svg>`,
+  person: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
+  out: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>`,
+  globe: `<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><path d="M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>`,
+  check: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
+  bigCheck: `<svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
+  clock: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>`,
+  warn: `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+  // Face ID icon — flat outline, like iOS
+  faceid: `<svg width="64" height="64" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14 22V18a4 4 0 0 1 4-4h4"/>
+    <path d="M42 14h4a4 4 0 0 1 4 4v4"/>
+    <path d="M50 42v4a4 4 0 0 1-4 4h-4"/>
+    <path d="M22 50h-4a4 4 0 0 1-4-4v-4"/>
+    <line x1="24" y1="26" x2="24" y2="30"/>
+    <line x1="40" y1="26" x2="40" y2="30"/>
+    <path d="M32 26v8l-3 2"/>
+    <path d="M24 40c2 2 5 3 8 3s6-1 8-3"/>
+  </svg>`,
+  faceidSuccess: `<svg width="64" height="64" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="32" cy="32" r="22"/>
+    <polyline points="22 32 30 40 44 24"/>
+  </svg>`,
+  qrCode: `<svg width="100%" height="100%" viewBox="0 0 21 21" shape-rendering="crispEdges">
+    <rect width="21" height="21" fill="white"/>
+    <g fill="black">
+      <!-- Three finder squares -->
+      <rect x="0" y="0" width="7" height="1"/><rect x="0" y="6" width="7" height="1"/>
+      <rect x="0" y="0" width="1" height="7"/><rect x="6" y="0" width="1" height="7"/>
+      <rect x="2" y="2" width="3" height="3"/>
+      <rect x="14" y="0" width="7" height="1"/><rect x="14" y="6" width="7" height="1"/>
+      <rect x="14" y="0" width="1" height="7"/><rect x="20" y="0" width="1" height="7"/>
+      <rect x="16" y="2" width="3" height="3"/>
+      <rect x="0" y="14" width="7" height="1"/><rect x="0" y="20" width="7" height="1"/>
+      <rect x="0" y="14" width="1" height="7"/><rect x="6" y="14" width="1" height="7"/>
+      <rect x="2" y="16" width="3" height="3"/>
+      <!-- Timing patterns -->
+      <rect x="8" y="6" width="1" height="1"/><rect x="10" y="6" width="1" height="1"/><rect x="12" y="6" width="1" height="1"/>
+      <rect x="6" y="8" width="1" height="1"/><rect x="6" y="10" width="1" height="1"/><rect x="6" y="12" width="1" height="1"/>
+      <!-- Data noise -->
+      <rect x="8" y="8" width="1" height="1"/><rect x="9" y="9" width="1" height="1"/>
+      <rect x="10" y="8" width="1" height="1"/><rect x="11" y="10" width="1" height="1"/>
+      <rect x="12" y="9" width="1" height="1"/><rect x="13" y="11" width="1" height="1"/>
+      <rect x="9" y="11" width="1" height="1"/><rect x="11" y="12" width="1" height="1"/>
+      <rect x="13" y="8" width="1" height="1"/><rect x="14" y="11" width="1" height="1"/>
+      <rect x="15" y="9" width="1" height="1"/><rect x="16" y="11" width="1" height="1"/>
+      <rect x="17" y="12" width="1" height="1"/><rect x="18" y="13" width="1" height="1"/>
+      <rect x="8" y="14" width="1" height="1"/><rect x="10" y="14" width="1" height="1"/>
+      <rect x="12" y="14" width="1" height="1"/><rect x="14" y="14" width="1" height="1"/>
+      <rect x="9" y="15" width="1" height="1"/><rect x="11" y="15" width="1" height="1"/>
+      <rect x="13" y="16" width="1" height="1"/><rect x="15" y="16" width="1" height="1"/>
+      <rect x="8" y="17" width="1" height="1"/><rect x="11" y="17" width="1" height="1"/>
+      <rect x="13" y="18" width="1" height="1"/><rect x="15" y="18" width="1" height="1"/>
+      <rect x="17" y="8" width="1" height="1"/><rect x="18" y="9" width="1" height="1"/>
+      <rect x="19" y="11" width="1" height="1"/><rect x="20" y="12" width="1" height="1"/>
+      <rect x="8" y="19" width="1" height="1"/><rect x="9" y="20" width="1" height="1"/>
+      <rect x="11" y="19" width="1" height="1"/><rect x="14" y="19" width="1" height="1"/>
+      <rect x="16" y="20" width="1" height="1"/><rect x="17" y="19" width="1" height="1"/>
+      <rect x="18" y="17" width="1" height="1"/><rect x="20" y="14" width="1" height="1"/>
+    </g>
+  </svg>`,
+};
+
+// ============================================================
+// Sample placeholder Search-screen content (the starting page)
+// ============================================================
+const SAMPLE_RESULTS = [
+  { artist: "Polvo", album: "Today's Active Lifestyles", meta: "Touch & Go · 1993 · LP" },
+  { artist: "Juana Molina", album: "Halo", meta: "Crammed Discs · 2017 · CD" },
+  { artist: "Jessica Pratt", album: "On Your Own Love Again", meta: "Drag City · 2015 · LP" },
+  { artist: "Chuquimamani-Condori", album: "DJ E", meta: "Drag City · 2024 · LP" },
+  { artist: "Archers of Loaf", album: "Icky Mettle", meta: "Alias · 1993 · LP" },
+];
+
+// ============================================================
+// Pages
+// ============================================================
+
+function pageSearch() {
+  return `
+    <div class="nav-page" data-page="search">
+      <div class="nav-bar" style="justify-content: flex-end; padding-right: 12px;">
+        <button class="profile-btn" id="profileBtn" title="Account">B</button>
+      </div>
+      <div class="nav-bar-large"><h1>Search</h1></div>
+      <div class="home-search-row">
+        <div class="home-search-bar">
+          ${ICONS.search}
+          <span>Search the WXYC library</span>
+        </div>
+      </div>
+      <div style="overflow-y:auto; padding-bottom: 24px;">
+        <div class="placeholder-list">
+          ${SAMPLE_RESULTS.map(r => `
+            <div class="placeholder-row">
+              <div class="artist">${r.artist}</div>
+              <div class="album">${r.album}</div>
+              <div class="meta">${r.meta}</div>
+            </div>
+          `).join("")}
+        </div>
+        <p class="empty-hint">Tap the profile icon top-right to start the QR sign-in flow.</p>
+      </div>
+    </div>
+  `;
+}
+
+function pageScanner() {
+  return `
+    <div class="nav-page entering" data-page="scanner">
+      <div class="camera-bg"></div>
+      <div class="camera-grain"></div>
+      <div class="scanner-screen">
+        <div class="scanner-top">
+          <button class="nav-btn dark" id="scannerCancel">Cancel</button>
+        </div>
+        <div class="scanner-body">
+          <div class="reticle" id="reticle">
+            <div class="corner tl"></div>
+            <div class="corner tr"></div>
+            <div class="corner bl"></div>
+            <div class="corner br"></div>
+            <div class="scan-line"></div>
+            <div class="qr-preview" id="qrPreview">${ICONS.qrCode}</div>
+          </div>
+          <div class="scanner-caption" id="scannerCaption">Point at the QR on <strong>dj.wxyc.org</strong></div>
+          <div class="scanner-detail" id="scannerDetail">Camera scopes are limited to QR codes</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function pageSuccess() {
+  return `
+    <div class="nav-page entering" data-page="success">
+      <div class="nav-bar" style="justify-content: flex-end; padding-right: 12px;">
+        <button class="nav-btn" id="successDone">Done</button>
+      </div>
+      <div class="success-stage">
+        <div class="success-check">${ICONS.bigCheck}</div>
+        <div class="success-title">Browser signed in</div>
+        <div class="success-subtitle">dj.wxyc.org is now signed in as <strong>biscuit</strong> on the studio computer.</div>
+        <div class="success-meta">${ICONS.clock} Session expires in <strong>12 hours</strong></div>
+        <div class="success-subtitle" style="margin-top: 20px; font-size: 12px; color: var(--ios-label-tert);">You can sign out any time from your account menu.</div>
+      </div>
+    </div>
+  `;
+}
+
+// ============================================================
+// Sheets (action sheet + approval bottom sheet)
+// ============================================================
+
+function renderAccountSheet() {
+  const sheet = document.getElementById("actionSheet");
+  sheet.innerHTML = `
+    <div class="action-group">
+      <div class="action-header">
+        <div class="who">Signed in as</div>
+        <div style="font-size: 15px; font-weight: 600; color: var(--ios-label);">
+          biscuit <span class="role-pill">DJ</span>
+        </div>
+      </div>
+      <button class="action-item" data-action="profile">
+        <span class="icon">${ICONS.person}</span> Profile
+      </button>
+      <button class="action-item" data-action="qr">
+        <span class="icon">${ICONS.qr}</span> Scan QR to sign in browser
+      </button>
+      <button class="action-item destructive" data-action="signout">
+        <span class="icon">${ICONS.out}</span> Sign Out
+      </button>
+    </div>
+    <div class="action-group">
+      <button class="action-item cancel" data-action="cancel">Cancel</button>
+    </div>
+  `;
+  sheet.querySelectorAll(".action-item").forEach(b => {
+    b.addEventListener("click", () => {
+      const a = b.dataset.action;
+      closeOverlay();
+      if (a === "qr") {
+        schedule(() => pushScanner(), 220);
+      }
+    });
+  });
+}
+
+function renderApprovalSheet() {
+  const isMember = currentFlow === "member";
+  const sheet = document.getElementById("actionSheet");
+  let requestedSeconds = 4;
+  sheet.innerHTML = `
+    <div class="action-group" style="background: white; padding: 8px 20px 24px; border-radius: 18px;">
+      <div class="grabber"></div>
+      <div class="approval-head">
+        <div class="site-icon">${ICONS.globe}</div>
+        <div class="who">
+          <div class="site-name">dj.wxyc.org</div>
+          <div class="request-meta">Studio computer · Chrome · Requested <span id="elapsedTime">${requestedSeconds}s ago</span></div>
+        </div>
+      </div>
+      <div class="approval-body">
+        ${ isMember ? `
+          <div class="denial-card">
+            <div class="denial-icon">${ICONS.warn}</div>
+            <div class="denial-title">Sign-in requires DJ role</div>
+            <div class="denial-msg">
+              Your account is a Member. Only DJs, Music Directors, and station staff can authorize browser sign-in
+              on the control-room computer.
+            </div>
+          </div>
+          <div class="identity-row">
+            <div class="identity-avatar" style="background: var(--ios-gray);">G</div>
+            <div class="identity-info">
+              <div class="identity-label">Signed in as</div>
+              <div class="identity-name">guest42 <span class="role-badge member">MEMBER</span></div>
+            </div>
+          </div>
+          <div class="approval-actions">
+            <button class="btn-primary disabled" disabled>Approve</button>
+            <button class="btn-secondary" id="rejectBtn">Close</button>
+          </div>
+        ` : `
+          <div class="identity-row">
+            <div class="identity-avatar">B</div>
+            <div class="identity-info">
+              <div class="identity-label">Signing in as</div>
+              <div class="identity-name">biscuit <span class="role-badge">DJ</span></div>
+            </div>
+          </div>
+          <div class="scope-list">
+            <div class="scope-row"><span class="check">${ICONS.check}</span> Read library &amp; flowsheet</div>
+            <div class="scope-row"><span class="check">${ICONS.check}</span> Log plays during your show</div>
+            <div class="scope-row"><span class="check">${ICONS.check}</span> Edit your personal bin</div>
+          </div>
+          <div class="approval-actions">
+            <button class="btn-primary" id="approveBtn">Approve</button>
+            <button class="btn-secondary" id="rejectBtn">Reject</button>
+          </div>
+        ` }
+      </div>
+    </div>
+  `;
+
+  // tick the elapsed time
+  const elapsedEl = document.getElementById("elapsedTime");
+  const ticker = setInterval(() => {
+    requestedSeconds += 1;
+    if (elapsedEl) elapsedEl.textContent = `${requestedSeconds}s ago`;
+  }, 1000);
+  stepTimers.push(ticker);
+
+  // wire actions
+  const approve = document.getElementById("approveBtn");
+  if (approve) approve.addEventListener("click", onApprove);
+  const reject = document.getElementById("rejectBtn");
+  if (reject) reject.addEventListener("click", onReject);
+}
+
+function openAccountSheet() {
+  renderAccountSheet();
+  document.getElementById("sheetOverlay").classList.add("open");
+}
+function openApprovalSheet() {
+  renderApprovalSheet();
+  document.getElementById("sheetOverlay").classList.add("open");
+}
+function closeOverlay() {
+  document.getElementById("sheetOverlay").classList.remove("open");
+}
+
+// ============================================================
+// Face ID overlay
+// ============================================================
+
+function showFaceID(state) {
+  const overlay = document.getElementById("faceidOverlay");
+  const card = document.getElementById("faceidCard");
+  if (state === "scanning") {
+    card.innerHTML = `
+      <div class="faceid-icon scanning">${ICONS.faceid}</div>
+      <div class="faceid-title">Face ID</div>
+      <div class="faceid-msg">Authenticate to approve browser sign-in</div>
+    `;
+  } else if (state === "success") {
+    card.innerHTML = `
+      <div class="faceid-icon success">${ICONS.faceidSuccess}</div>
+      <div class="faceid-title" style="color: var(--ios-green);">Authenticated</div>
+      <div class="faceid-msg">Approving on dj.wxyc.org…</div>
+    `;
+  }
+  overlay.classList.add("open");
+}
+function hideFaceID() {
+  document.getElementById("faceidOverlay").classList.remove("open");
+}
+
+// ============================================================
+// Flow toast
+// ============================================================
+
+function showToast(text, kind = "ok", durationMs = 2200) {
+  const toast = document.getElementById("flowToast");
+  const dot = document.getElementById("toastDot");
+  document.getElementById("toastText").textContent = text;
+  dot.className = "dot" + (kind === "red" ? " red" : kind === "amber" ? " amber" : "");
+  toast.classList.add("open");
+  schedule(() => toast.classList.remove("open"), durationMs);
+}
+
+// ============================================================
+// Navigation
+// ============================================================
+
+const stack = () => document.getElementById("navStack");
+
+function mount() {
+  clearTimers();
+  closeOverlay();
+  hideFaceID();
+  document.getElementById("flowToast").classList.remove("open");
+  setStatusBarStyle("light");
+  stack().innerHTML = pageSearch();
+  wireSearch();
+}
+
+function setStatusBarStyle(mode) {
+  const sb = document.getElementById("statusBar");
+  sb.classList.toggle("over-camera", mode === "dark");
+}
+
+function wireSearch() {
+  document.getElementById("profileBtn").addEventListener("click", openAccountSheet);
+}
+
+function pushScanner() {
+  const search = stack().querySelector('[data-page="search"]');
+  if (search) search.classList.add("exiting");
+  stack().insertAdjacentHTML("beforeend", pageScanner());
+  setStatusBarStyle("dark");
+  const scanner = stack().querySelector('[data-page="scanner"]');
+  requestAnimationFrame(() => scanner.classList.remove("entering"));
+
+  document.getElementById("scannerCancel").addEventListener("click", popScanner);
+
+  // After 1.5s simulate the scan locking on
+  schedule(() => {
+    const reticle = document.getElementById("reticle");
+    if (!reticle) return;
+    reticle.classList.add("locking");
+    const caption = document.getElementById("scannerCaption");
+    const detail = document.getElementById("scannerDetail");
+    if (caption) caption.innerHTML = "<strong style='color:#34C759'>QR detected</strong> · contacting dj.wxyc.org…";
+    if (detail) detail.textContent = "user_code DXFP-92QR";
+  }, 1500);
+
+  // After 2.6s present approval sheet (or member-denied variant)
+  schedule(() => {
+    if (!stack().querySelector('[data-page="scanner"]')) return;
+    openApprovalSheet();
+  }, 2600);
+}
+
+function popScanner() {
+  clearTimers();
+  closeOverlay();
+  hideFaceID();
+  const scanner = stack().querySelector('[data-page="scanner"]');
+  const search = stack().querySelector('[data-page="search"]');
+  if (scanner) scanner.classList.add("entering");
+  if (search) search.classList.remove("exiting");
+  setStatusBarStyle("light");
+  schedule(() => { if (scanner) scanner.remove(); }, 320);
+}
+
+function pushSuccess() {
+  closeOverlay();
+  hideFaceID();
+  // remove scanner first (we're past it)
+  const scanner = stack().querySelector('[data-page="scanner"]');
+  if (scanner) scanner.remove();
+  setStatusBarStyle("light");
+  stack().insertAdjacentHTML("beforeend", pageSuccess());
+  const success = stack().querySelector('[data-page="success"]');
+  requestAnimationFrame(() => success.classList.remove("entering"));
+  document.getElementById("successDone").addEventListener("click", () => {
+    popSuccess();
+  });
+  // Auto-dismiss after 4s
+  schedule(() => {
+    if (stack().querySelector('[data-page="success"]')) popSuccess();
+  }, 4000);
+}
+
+function popSuccess() {
+  clearTimers();
+  const success = stack().querySelector('[data-page="success"]');
+  const search = stack().querySelector('[data-page="search"]');
+  if (success) success.classList.add("entering");
+  if (search) search.classList.remove("exiting");
+  schedule(() => { if (success) success.remove(); }, 320);
+}
+
+// ============================================================
+// Approval actions
+// ============================================================
+
+function onApprove() {
+  showFaceID("scanning");
+  schedule(() => {
+    showFaceID("success");
+    schedule(() => {
+      hideFaceID();
+      closeOverlay();
+      showToast("Approved — browser session started", "ok");
+      pushSuccess();
+    }, 700);
+  }, 1000);
+}
+
+function onReject() {
+  closeOverlay();
+  if (currentFlow === "member") {
+    showToast("Closed — browser session was not started", "amber");
+  } else {
+    showToast("Rejected — browser session was not started", "red");
+  }
+  schedule(() => popScanner(), 600);
+}
+
+// ============================================================
+// Explainer
+// ============================================================
+
+function renderExplainer() {
+  const el = document.getElementById("explainer");
+
+  let flowSpecific = "";
+  if (currentFlow === "happy") {
+    flowSpecific = `
+      <h4>This flow</h4>
+      <ol>
+        <li>Tap the <strong>B</strong> profile icon (top-right).</li>
+        <li>Choose <strong>Scan QR to sign in browser</strong>.</li>
+        <li>Camera locks onto the QR (~1.5s simulated).</li>
+        <li>Approval sheet slides up → tap <strong>Approve</strong>.</li>
+        <li>Face ID overlay → success → browser is signed in.</li>
+      </ol>
+    `;
+  } else if (currentFlow === "reject") {
+    flowSpecific = `
+      <h4>This flow</h4>
+      <ol>
+        <li>Same scan flow as Happy path.</li>
+        <li>On the approval sheet, tap <strong>Reject</strong>.</li>
+        <li>Browser polling sees <code>access_denied</code> and stays signed-out.</li>
+        <li>iOS returns to the placeholder Search screen with a red toast.</li>
+      </ol>
+      <div class="note-row">
+        Reject is a deliberate negative action. The browser shows a "Sign-in cancelled, try again" state — the DJ
+        re-scans if it was a fat-finger.
+      </div>
+    `;
+  } else {
+    flowSpecific = `
+      <h4>This flow</h4>
+      <ol>
+        <li>The currently signed-in iOS user is a <strong>Member</strong>, not a DJ.</li>
+        <li>Same scan flow — but the approval sheet renders a denial card.</li>
+        <li>Approve button is disabled; only a <strong>Close</strong> action remains.</li>
+        <li>Browser receives <code>access_denied</code> with role-not-permitted.</li>
+      </ol>
+      <div class="note-row">
+        Role gate is <code>dj</code> and above (DJ, Music Director, Station Manager, Engineer). Members can use the iOS
+        app but can't bootstrap a control-room browser session.
+      </div>
+    `;
+  }
+
+  el.innerHTML = `
+    <div class="opt-tags">
+      <span class="opt-tag">Phase 0</span>
+      <span class="opt-tag adr">ADR 0007</span>
+      <span class="opt-tag parallel">Parallel track</span>
+    </div>
+    <h3>QR sign-in for the shared control-room computer</h3>
+    <p>The control-room computer is shared across every DJ show — running 24/7 with a queue of strangers cycling through
+    every two hours. Typing a password on its shared keyboard is awkward in the dark, easy to shoulder-surf, and the
+    machine has had key-loggers in the past.</p>
+    <p>Better-auth's <code>device-authorization</code> plugin implements <strong>RFC 8628</strong>: the browser
+    requests a device code, polls for completion, and the iOS app (which the DJ already authenticated to with Face ID at
+    home) authorizes the request with a Bearer JWT. The biometric gate is the iOS-side guarantee that the human
+    standing at the studio matches the DJ whose account is being granted.</p>
+    <p>RFC 8628 was designed for TVs and CLIs but fits a shared studio computer surprisingly well. Discord, GitHub CLI,
+    and WhatsApp Web all ship variants of this pattern.</p>
+
+    ${flowSpecific}
+
+    <h4>What's on the contract</h4>
+    <pre><code>POST /auth/device/code         // browser: get device + user code
+POST /auth/device/token        // browser: poll until approved
+POST /auth/device/verify       // iOS: Bearer JWT + user_code + action</code></pre>
+
+    <h4>Notes</h4>
+    <ul>
+      <li><strong>12-hour expiry</strong> on browser sessions — covers a longest-possible double-shift; the studio
+      computer auto-signs-out before the next morning's DJ arrives.</li>
+      <li>The <code>user_code</code> is shown in the browser (e.g. <em>DXFP-92QR</em>) and embedded in the QR; the iOS
+      app does not display it — matches the Discord / WhatsApp Web pattern.</li>
+      <li>Biometric gate is <code>LAContext.evaluatePolicy(.deviceOwnerAuthentication, ...)</code> — Face ID first,
+      passcode fallback.</li>
+      <li>Role gate is <code>dj</code> and above. The denial path (Member denied) doesn't even render an Approve
+      button — server-side validation is the source of truth, but the UI matches.</li>
+    </ul>
+
+    <button class="restart-btn" id="restartBtn">▶ Replay animation</button>
+  `;
+  document.getElementById("restartBtn").addEventListener("click", playFlow);
+}
+
+// ============================================================
+// Auto-play the full animation for the current flow.
+// Used by tab switch + the explainer "Replay animation" button.
+// ============================================================
+function playFlow() {
+  // mount() clears timers and resets to the entry-point Search screen
+  mount();
+  // Stage 1: simulate tap on the profile icon -> account sheet opens
+  schedule(openAccountSheet, 500);
+  // Stage 2: simulate tap on "Scan QR" -> scanner pushes in
+  schedule(() => { closeOverlay(); pushScanner(); }, 1700);
+  // pushScanner schedules the reticle lock (+1.5s) and the approval
+  // sheet (+2.6s) internally, so approval lands at ~4300ms.
+  // Stage 3: pause to read the approval card, then auto-act based on flow.
+  const tAct = 1700 + 2600 + 2200; // ~6.5s from start
+  schedule(() => {
+    if (currentFlow === "happy") {
+      onApprove();
+    } else {
+      onReject();
+    }
+  }, tAct);
+}
+
+// ============================================================
+// Tab switching
+// ============================================================
+document.getElementById("tabBar").addEventListener("click", e => {
+  const btn = e.target.closest(".tab-btn");
+  if (!btn) return;
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  currentFlow = btn.dataset.flow;
+  renderExplainer();
+  playFlow();
+});
+
+// ============================================================
+// Boot
+// ============================================================
+mount();
+renderExplainer();
+
+// Gallery thumbnail preview — ?preview=1 jumps straight to the approval sheet
+// so the iframe doesn't sit on the entry-point Search screen.
+if (new URLSearchParams(location.search).has("preview")) {
+  pushScanner();
+  openApprovalSheet();
+}
+</script>
+</body>
+</html>

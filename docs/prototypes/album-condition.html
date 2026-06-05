@@ -1,0 +1,1220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Album Condition — Prototype</title>
+<style>
+  :root {
+    --ios-bg: #F2F2F7;
+    --ios-card: #FFFFFF;
+    --ios-sep: #C6C6C8;
+    --ios-blue: #007AFF;
+    --ios-purple: #5856D6;
+    --ios-pink: #FF2D55;
+    --ios-orange: #FF9500;
+    --ios-red: #FF3B30;
+    --ios-green: #34C759;
+    --ios-teal: #5AC8FA;
+    --ios-gray: #8E8E93;
+    --ios-gray-light: #E5E5EA;
+    --ios-gray-bg: #EFEFF4;
+    --ios-label: #000000;
+    --ios-label-sec: #3C3C43;
+    --ios-label-tert: #3C3C4399;
+    --frame-bg: #1c1c1e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    background: #d8d8df;
+    color: #111;
+    padding: 24px 16px 48px;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1 {
+    margin: 0 0 4px 0;
+    font-size: 22px;
+    font-weight: 600;
+    text-align: center;
+  }
+  .subtitle {
+    text-align: center;
+    color: #555;
+    margin-bottom: 16px;
+    font-size: 14px;
+  }
+
+  /* ----- Top-of-page mode toggles (role + current condition) ----- */
+  .controls {
+    max-width: 900px;
+    margin: 0 auto 20px;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    padding: 12px 14px;
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .control-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .control-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .pill-group {
+    display: inline-flex;
+    background: var(--ios-gray-light);
+    border-radius: 8px;
+    padding: 2px;
+    gap: 0;
+  }
+  .pill-group button {
+    border: none;
+    background: transparent;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ios-label);
+    padding: 5px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .pill-group button.active {
+    background: white;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+  }
+  .role-hint {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+  }
+
+  .stage {
+    max-width: 900px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  @media (max-width: 800px) {
+    .stage { grid-template-columns: 1fr; }
+  }
+
+  /* ----- Phone frame ----- */
+  .phone-frame {
+    width: 390px;
+    margin: 0 auto;
+    background: var(--frame-bg);
+    border-radius: 50px;
+    padding: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    position: relative;
+  }
+  .phone-screen {
+    background: var(--ios-bg);
+    border-radius: 40px;
+    height: 800px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .notch {
+    width: 120px;
+    height: 30px;
+    background: var(--frame-bg);
+    border-radius: 0 0 18px 18px;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+  }
+  .status-bar {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+    background: var(--ios-bg);
+    z-index: 10;
+    position: relative;
+  }
+
+  .nav-bar {
+    padding: 6px 16px 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 44px;
+    background: var(--ios-bg);
+  }
+  .back-btn {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 17px;
+    cursor: pointer;
+    padding: 4px 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .back-btn svg { stroke: var(--ios-blue); }
+  .nav-title {
+    flex: 1;
+    text-align: center;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ios-label);
+  }
+  .nav-spacer { width: 76px; }
+
+  .scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 24px;
+  }
+  .scroll-area::-webkit-scrollbar { width: 0; }
+
+  /* ----- Hero ----- */
+  .hero {
+    padding: 4px 16px 16px;
+    display: flex;
+    gap: 14px;
+    align-items: center;
+  }
+  .cover {
+    width: 92px;
+    height: 92px;
+    border-radius: 10px;
+    flex-shrink: 0;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    background: linear-gradient(135deg, #6B4F8B 0%, #C46F4A 50%, #2E5466 100%);
+    position: relative;
+    overflow: hidden;
+  }
+  .cover::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(circle at 30% 30%, rgba(255,255,255,0.18), transparent 40%),
+      radial-gradient(circle at 70% 70%, rgba(0,0,0,0.25), transparent 50%);
+  }
+  .cover-label {
+    position: absolute;
+    bottom: 8px;
+    left: 8px;
+    right: 8px;
+    color: white;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    line-height: 1.1;
+  }
+  .hero-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .hero-artist {
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    margin: 0 0 2px;
+    font-weight: 500;
+  }
+  .hero-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--ios-label);
+    margin: 0 0 4px;
+    letter-spacing: -0.3px;
+    line-height: 1.15;
+  }
+  .hero-meta {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+  }
+
+  /* ----- Section title ----- */
+  .section-title {
+    padding: 10px 16px 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ios-label-sec);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+
+  /* ----- Condition card ----- */
+  .condition-card {
+    background: white;
+    margin: 0 16px 12px;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .condition-row {
+    padding: 14px 14px 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 0.5px solid var(--ios-sep);
+  }
+  .condition-icon-wrap {
+    width: 44px;
+    height: 44px;
+    border-radius: 22px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+  }
+  .condition-icon-wrap.green { background: var(--ios-green); }
+  .condition-icon-wrap.orange { background: var(--ios-orange); }
+  .condition-icon-wrap.red { background: var(--ios-red); }
+  .condition-icon-wrap.blue { background: var(--ios-blue); }
+  .condition-icon-wrap svg { width: 22px; height: 22px; }
+  .condition-text { flex: 1; min-width: 0; }
+  .condition-label {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--ios-label);
+    line-height: 1.2;
+  }
+  .condition-sub {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    margin-top: 2px;
+  }
+  .change-btn {
+    width: 100%;
+    background: transparent;
+    border: none;
+    padding: 14px 14px;
+    font: inherit;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--ios-blue);
+    cursor: pointer;
+    text-align: center;
+    border-bottom: 0.5px solid var(--ios-sep);
+  }
+  .change-btn:active { background: var(--ios-gray-bg); }
+  .audit-disclosure {
+    width: 100%;
+    background: transparent;
+    border: none;
+    padding: 13px 14px;
+    font: inherit;
+    font-size: 15px;
+    color: var(--ios-label);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .audit-disclosure:active { background: var(--ios-gray-bg); }
+  .audit-chevron {
+    color: var(--ios-gray);
+    transition: transform 0.2s;
+  }
+  .audit-disclosure.open .audit-chevron { transform: rotate(90deg); }
+  .audit-list {
+    background: var(--ios-gray-bg);
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.25s ease-out;
+  }
+  .audit-list.open { max-height: 360px; overflow-y: auto; }
+  .audit-list::-webkit-scrollbar { width: 0; }
+  .audit-entry {
+    padding: 10px 14px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    font-size: 12px;
+  }
+  .audit-entry:last-child { border-bottom: none; }
+  .audit-entry-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 2px;
+  }
+  .audit-date {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    font-variant-numeric: tabular-nums;
+  }
+  .audit-arrow {
+    color: var(--ios-label-tert);
+    font-size: 11px;
+  }
+  .audit-state-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    border-radius: 9px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    color: white;
+  }
+  .audit-state-chip.green { background: var(--ios-green); }
+  .audit-state-chip.orange { background: var(--ios-orange); }
+  .audit-state-chip.red { background: var(--ios-red); }
+  .audit-state-chip.blue { background: var(--ios-blue); }
+  .audit-state-chip.gray { background: var(--ios-gray); }
+  .audit-actor {
+    font-size: 12px;
+    color: var(--ios-label);
+    font-weight: 500;
+  }
+  .audit-note {
+    font-size: 12px;
+    color: var(--ios-label-sec);
+    font-style: italic;
+    margin-left: 0;
+  }
+
+  /* ----- Tracklist ----- */
+  .tracklist {
+    background: white;
+    margin: 0 16px 12px;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .track-row {
+    padding: 10px 14px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+  }
+  .track-row:last-child { border-bottom: none; }
+  .track-num {
+    color: var(--ios-label-tert);
+    font-size: 12px;
+    width: 18px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .track-name {
+    flex: 1;
+    color: var(--ios-label);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .track-duration {
+    color: var(--ios-label-tert);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .external-row {
+    margin: 0 16px 16px;
+    background: white;
+    border-radius: 12px;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 14px;
+    color: var(--ios-blue);
+    cursor: pointer;
+  }
+  .external-row .ext-chev {
+    color: var(--ios-gray);
+  }
+
+  /* ----- Sheet (picker) ----- */
+  .sheet-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 100;
+    display: none;
+  }
+  .sheet-overlay.open { display: block; }
+  .sheet {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--ios-bg);
+    border-radius: 16px 16px 0 0;
+    max-height: 92%;
+    display: flex;
+    flex-direction: column;
+    transform: translateY(100%);
+    transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  .sheet-overlay.open .sheet { transform: translateY(0); }
+  .sheet-grabber {
+    width: 36px;
+    height: 5px;
+    background: var(--ios-gray-light);
+    border-radius: 3px;
+    margin: 6px auto 4px;
+  }
+  .sheet-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 16px 12px;
+    border-bottom: 0.5px solid var(--ios-sep);
+  }
+  .sheet-header .sheet-title {
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .sheet-header button {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 15px;
+    cursor: pointer;
+    padding: 4px 0;
+    min-width: 60px;
+    text-align: left;
+  }
+  .sheet-header button.primary {
+    font-weight: 600;
+    text-align: right;
+  }
+  .sheet-header button:disabled {
+    color: var(--ios-gray);
+    cursor: not-allowed;
+  }
+  .sheet-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px 16px 20px;
+  }
+  .sheet-section {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ios-label-sec);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin: 0 4px 8px;
+  }
+  .picker-list {
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .picker-option {
+    width: 100%;
+    background: transparent;
+    border: none;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    border-bottom: 0.5px solid var(--ios-sep);
+    transition: background 0.1s;
+  }
+  .picker-option:last-child { border-bottom: none; }
+  .picker-option:not(:disabled):active { background: var(--ios-gray-bg); }
+  .picker-option.selected { background: rgba(0,122,255,0.08); }
+  .picker-option:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    background: var(--ios-gray-bg);
+  }
+  .picker-icon-wrap {
+    width: 36px;
+    height: 36px;
+    border-radius: 18px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+  }
+  .picker-icon-wrap.green { background: var(--ios-green); }
+  .picker-icon-wrap.orange { background: var(--ios-orange); }
+  .picker-icon-wrap.red { background: var(--ios-red); }
+  .picker-icon-wrap.blue { background: var(--ios-blue); }
+  .picker-icon-wrap svg { width: 18px; height: 18px; }
+  .picker-text { flex: 1; min-width: 0; }
+  .picker-label {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ios-label);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .picker-label.disabled-text { color: var(--ios-label-sec); }
+  .lock-svg {
+    width: 12px;
+    height: 12px;
+    color: var(--ios-gray);
+  }
+  .picker-desc {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    margin-top: 2px;
+    line-height: 1.35;
+  }
+  .picker-check {
+    color: var(--ios-blue);
+    flex-shrink: 0;
+  }
+  .picker-check svg { width: 18px; height: 18px; }
+
+  .note-card {
+    background: white;
+    border-radius: 12px;
+    padding: 10px 12px;
+  }
+  .note-label {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .note-area {
+    width: 100%;
+    border: none;
+    background: transparent;
+    font: inherit;
+    font-size: 14px;
+    color: var(--ios-label);
+    resize: none;
+    outline: none;
+    min-height: 56px;
+  }
+  .note-area::placeholder { color: var(--ios-label-tert); }
+
+  .save-btn {
+    width: 100%;
+    background: var(--ios-blue);
+    color: white;
+    border: none;
+    border-radius: 12px;
+    padding: 13px;
+    font: inherit;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 16px;
+  }
+  .save-btn:disabled {
+    background: var(--ios-gray-light);
+    color: var(--ios-gray);
+    cursor: not-allowed;
+  }
+  .role-banner {
+    background: rgba(255,149,0,0.12);
+    border: 0.5px solid rgba(255,149,0,0.35);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: #7a4a00;
+    margin-bottom: 14px;
+    line-height: 1.4;
+  }
+  .role-banner.md {
+    background: rgba(0,122,255,0.10);
+    border-color: rgba(0,122,255,0.30);
+    color: #1a4d8c;
+  }
+
+  /* ----- Explainer ----- */
+  .explainer {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    align-self: start;
+    position: sticky;
+    top: 16px;
+  }
+  .explainer h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .explainer h4 {
+    margin: 14px 0 6px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+  }
+  .explainer p {
+    color: #555;
+    font-size: 13px;
+    line-height: 1.55;
+    margin: 0 0 10px 0;
+  }
+  .explainer ul {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    line-height: 1.55;
+  }
+  .explainer li { margin-bottom: 4px; }
+  .explainer code {
+    background: var(--ios-gray-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+  .opt-tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .opt-tag {
+    background: var(--ios-purple);
+    color: white;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .code-block {
+    background: var(--ios-gray-bg);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--ios-label);
+    overflow-x: auto;
+  }
+  .code-block .verb { color: var(--ios-purple); font-weight: 600; }
+  .code-block .verb-get { color: var(--ios-green); font-weight: 600; }
+  .code-block .punc { color: var(--ios-label-tert); }
+  .code-block .key { color: #c8350f; }
+  .code-block .str { color: #1e7d3d; }
+  .note-block {
+    background: var(--ios-gray-bg);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--ios-label-sec);
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+
+<h1>Album condition — state enum + audit log</h1>
+<p class="subtitle">ADR 0004, Phase 2 (pick #5). Toggle role and current condition to see the picker and audit log react.</p>
+
+<div class="controls">
+  <div class="control-group">
+    <span class="control-label">Role</span>
+    <div class="pill-group" id="roleToggle">
+      <button data-role="dj" class="active">DJ</button>
+      <button data-role="md">Music Director</button>
+    </div>
+    <span class="role-hint" id="roleHint">DJ jake</span>
+  </div>
+  <div class="control-group">
+    <span class="control-label">Current condition</span>
+    <div class="pill-group" id="conditionToggle">
+      <button data-cond="in_library" class="active">In library</button>
+      <button data-cond="missing">Missing</button>
+      <button data-cond="damaged">Damaged</button>
+      <button data-cond="in_repair">In repair</button>
+    </div>
+  </div>
+</div>
+
+<div class="stage">
+
+  <div class="phone-frame">
+    <div class="phone-screen" id="screen">
+      <div class="notch"></div>
+      <div class="status-bar">
+        <span>9:41</span>
+        <span>•••</span>
+      </div>
+      <div class="nav-bar">
+        <button class="back-btn">
+          <svg width="12" height="20" viewBox="0 0 12 20" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="10 2 2 10 10 18"/></svg>
+          Albums
+        </button>
+        <span class="nav-title">Album</span>
+        <span class="nav-spacer"></span>
+      </div>
+      <div class="scroll-area" id="scrollArea"></div>
+      <div class="sheet-overlay" id="sheetOverlay">
+        <div class="sheet" id="sheet"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="explainer">
+    <div class="opt-tags">
+      <span class="opt-tag">Phase 2</span>
+      <span class="opt-tag">ADR 0004</span>
+      <span class="opt-tag">Pick #5</span>
+    </div>
+    <h3>Album condition — state enum + audit log + MD gates</h3>
+    <p>The legacy <code>markedMissingAt</code> / <code>markedFoundAt</code> two-timestamp model conflates two distinct concerns: <em>which observer last touched the row</em>, and <em>what the album is doing right now</em>. With more than one DJ in the bin, the last write wins and earlier context is lost. ADR 0004 replaces that with a four-state enum — <code>in_library</code>, <code>missing</code>, <code>damaged</code>, <code>in_repair</code> — and an append-only transition log. Every state change writes one audit row with actor, source state, target state, timestamp, and free-text note. Multi-observer history stops being lossy.</p>
+
+    <p>Why MD gates only on the non-missing transitions: <code>missing</code> is a reversible field observation any DJ can make and undo when they find the LP behind another bin. <code>damaged</code> and <code>in_repair</code> are operational states that drive workflow — pulling the sleeve, dispatching to the repair queue, returning to rotation — and need a Music Director's signoff to keep the staffing model legible. The picker greys out states the current role can't reach; the backend re-checks the JWT role on every <code>PATCH</code>.</p>
+
+    <p>Issue-row layering — multiple concurrent observations attached to one album — is explicitly out of v1. The current model treats condition as a single mutually-exclusive enum; if "missing AND damaged" turns out to matter, that's a follow-up RFC, not a v1 reshape.</p>
+
+    <h4>Try it</h4>
+    <ul>
+      <li>Toggle <strong>Role</strong> DJ / MD at the top — the picker enables or disables the MD-gated states</li>
+      <li>Toggle the <strong>Current condition</strong> variant — the badge color, the picker's available next states, and the audit log's most recent entry all change</li>
+      <li>Tap <strong>Change condition</strong> to open the picker sheet — pick a state, optionally add a note, hit Save</li>
+      <li>Tap <strong>Audit log</strong> to expand the full transition history</li>
+    </ul>
+
+    <h4>BS contract</h4>
+    <div class="code-block">
+<span class="verb">PATCH</span> /library/<span class="punc">{</span>album_id<span class="punc">}</span>/condition
+<span class="punc">{</span>
+  <span class="key">"to_state"</span><span class="punc">:</span> <span class="str">"missing"</span><span class="punc">,</span>
+  <span class="key">"note"</span><span class="punc">:</span> <span class="str">"not in bin during show"</span>
+<span class="punc">}</span></div>
+    <p style="margin-top:8px">Replaces the old <code>/missing</code> + <code>/found</code> endpoints. Backend validates the source→target transition against the role gate; returns <code>403</code> if a DJ tries to set a non-missing state. Each accepted call inserts one row into <code>condition_transitions</code>.</p>
+    <div class="code-block">
+<span class="verb-get">GET</span> /library/<span class="punc">{</span>album_id<span class="punc">}</span>/condition-transitions?limit=N</div>
+    <p style="margin-top:8px">Paginated, newest first. Drives the audit log disclosure on this screen.</p>
+
+    <h4>Notes</h4>
+    <div class="note-block">iOS reads <code>JWTPayload.role</code> to grey out picker rows; backend enforces. Issue-row layering (concurrent observations) is out of v1 — condition is one enum at a time. The initial <code>(initial) → in_library</code> row is system-inserted at catalog import; everything after is human.</div>
+  </div>
+</div>
+
+<script>
+// ---------- State definitions ----------
+const STATES = {
+  in_library: {
+    key: "in_library",
+    label: "In library",
+    short: "in_library",
+    color: "green",
+    icon: "check",
+    desc: "Present and playable. Default state.",
+  },
+  missing: {
+    key: "missing",
+    label: "Missing",
+    short: "missing",
+    color: "orange",
+    icon: "question",
+    desc: "Not where it should be. Any DJ can mark and unmark.",
+  },
+  damaged: {
+    key: "damaged",
+    label: "Damaged",
+    short: "damaged",
+    color: "red",
+    icon: "exclaim",
+    desc: "Physical or playback damage. MD-only.",
+  },
+  in_repair: {
+    key: "in_repair",
+    label: "In repair",
+    short: "in_repair",
+    color: "blue",
+    icon: "wrench",
+    desc: "Pulled for repair. MD returns it to the library when done.",
+  },
+};
+
+// Transition matrix — (from, to) -> ["dj","md"] roles allowed
+const TRANSITIONS = {
+  in_library: {
+    missing:   ["dj", "md"],
+    damaged:   ["md"],
+  },
+  missing: {
+    in_library: ["dj", "md"],
+  },
+  damaged: {
+    in_repair: ["md"],
+    in_library: ["md"],
+  },
+  in_repair: {
+    in_library: ["md"],
+  },
+};
+
+// ---------- Per-condition audit log (newest first; index 0 is the most recent) ----------
+const AUDIT_LOGS = {
+  in_library: [
+    { date: "2026-05-30", from: "missing", to: "in_library", actor: "DJ jake", note: "found in B bin" },
+    { date: "2026-05-12", from: "in_library", to: "missing", actor: "DJ biscuit", note: "not in bin during show" },
+    { date: "2026-02-14", from: "missing", to: "in_library", actor: "DJ jake", note: "back in alphabetical spot" },
+    { date: "2026-01-22", from: "in_library", to: "missing", actor: "DJ biscuit", note: "not in bin during show" },
+    { date: "2025-11-03", from: "initial", to: "in_library", actor: "system", note: "" },
+  ],
+  missing: [
+    { date: "2026-05-12", from: "in_library", to: "missing", actor: "DJ biscuit", note: "not in bin during show" },
+    { date: "2026-02-14", from: "missing", to: "in_library", actor: "DJ jake", note: "found in B bin" },
+    { date: "2026-01-22", from: "in_library", to: "missing", actor: "DJ biscuit", note: "not in bin during show" },
+    { date: "2025-11-03", from: "initial", to: "in_library", actor: "system", note: "" },
+  ],
+  damaged: [
+    { date: "2026-04-30", from: "in_library", to: "damaged", actor: "MD Sarah", note: "cd skipping track 3–7" },
+    { date: "2026-02-14", from: "missing", to: "in_library", actor: "DJ jake", note: "found in B bin" },
+    { date: "2026-01-22", from: "in_library", to: "missing", actor: "DJ biscuit", note: "not in bin during show" },
+    { date: "2025-11-03", from: "initial", to: "in_library", actor: "system", note: "" },
+  ],
+  in_repair: [
+    { date: "2026-05-12", from: "damaged", to: "in_repair", actor: "MD Sarah", note: "sleeve splitting" },
+    { date: "2026-04-30", from: "in_library", to: "damaged", actor: "MD Sarah", note: "cd skipping track 3–7" },
+    { date: "2026-02-14", from: "missing", to: "in_library", actor: "DJ jake", note: "found in B bin" },
+    { date: "2026-01-22", from: "in_library", to: "missing", actor: "DJ biscuit", note: "not in bin during show" },
+    { date: "2025-11-03", from: "initial", to: "in_library", actor: "system", note: "" },
+  ],
+};
+
+// Per-state "last updated by ... · ..." line for the badge subtext
+function lastUpdatedText(condKey) {
+  const log = AUDIT_LOGS[condKey];
+  const recent = log[0];
+  return `Last updated by ${recent.actor} · ${humanAgo(recent.date)}`;
+}
+function humanAgo(dateStr) {
+  // Anchor "today" to 2026-06-04 to match the canonical session date.
+  const today = new Date("2026-06-04");
+  const d = new Date(dateStr);
+  const days = Math.round((today - d) / 86400000);
+  if (days < 1) return "today";
+  if (days < 7) return `${days} day${days === 1 ? "" : "s"} ago`;
+  if (days < 30) {
+    const w = Math.round(days / 7);
+    return `${w} week${w === 1 ? "" : "s"} ago`;
+  }
+  if (days < 365) {
+    const m = Math.round(days / 30);
+    return `${m} month${m === 1 ? "" : "s"} ago`;
+  }
+  const y = Math.round(days / 365);
+  return `${y} year${y === 1 ? "" : "s"} ago`;
+}
+
+// ---------- Tracklist + album metadata ----------
+const ALBUM = {
+  artist: "Polvo",
+  title: "Today's Active Lifestyles",
+  label: "Touch & Go",
+  year: 1993,
+  catalog: "TG119",
+  spotify: "Open in Spotify",
+};
+const TRACKS = [
+  { n: 1, name: "Thermal Treasure", dur: "4:32" },
+  { n: 2, name: "Lazy Comet", dur: "5:11" },
+  { n: 3, name: "My Kimono", dur: "4:08" },
+  { n: 4, name: "Time Isn't on My Side", dur: "3:55" },
+  { n: 5, name: "Tilebreaker", dur: "6:24" },
+  { n: 6, name: "Total Pigs", dur: "5:46" },
+];
+
+// ---------- Page state ----------
+let currentRole = "dj";   // "dj" | "md"
+let currentCondition = "in_library";
+let auditOpen = false;
+let sheetOpen = false;
+let pickerSelected = null;
+let pickerNote = "";
+
+// ---------- Icon SVGs ----------
+const ICONS = {
+  check: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
+  question: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12" y2="17"/></svg>`,
+  exclaim: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="6" x2="12" y2="13"/><line x1="12" y1="17.5" x2="12" y2="17.5"/></svg>`,
+  wrench: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`,
+  lock: `<svg class="lock-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`,
+  checkmark: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
+};
+
+function iconForState(key, sizeClass) {
+  const s = STATES[key];
+  return `<div class="condition-icon-wrap ${s.color} ${sizeClass || ""}">${ICONS[s.icon]}</div>`;
+}
+
+// ---------- Render: Album Detail page ----------
+function renderDetail() {
+  const s = STATES[currentCondition];
+  const log = AUDIT_LOGS[currentCondition];
+
+  document.getElementById("scrollArea").innerHTML = `
+    <div class="hero">
+      <div class="cover">
+        <span class="cover-label">${ALBUM.artist}<br>${ALBUM.title}</span>
+      </div>
+      <div class="hero-text">
+        <p class="hero-artist">${ALBUM.artist}</p>
+        <h2 class="hero-title">${ALBUM.title}</h2>
+        <p class="hero-meta">${ALBUM.label} · ${ALBUM.year} · ${ALBUM.catalog}</p>
+      </div>
+    </div>
+
+    <div class="section-title">Condition</div>
+    <div class="condition-card">
+      <div class="condition-row">
+        ${iconForState(currentCondition)}
+        <div class="condition-text">
+          <div class="condition-label">${s.label}</div>
+          <div class="condition-sub">${lastUpdatedText(currentCondition)}</div>
+        </div>
+      </div>
+      <button class="change-btn" id="changeBtn">Change condition</button>
+      <button class="audit-disclosure ${auditOpen ? "open" : ""}" id="auditBtn">
+        <span>Audit log <span style="color:var(--ios-label-tert);font-weight:400">· ${log.length} ${log.length === 1 ? "entry" : "entries"}</span></span>
+        <span class="audit-chevron">›</span>
+      </button>
+      <div class="audit-list ${auditOpen ? "open" : ""}">
+        ${log.map(entry => renderAuditEntry(entry)).join("")}
+      </div>
+    </div>
+
+    <div class="section-title">Tracklist</div>
+    <div class="tracklist">
+      ${TRACKS.map(t => `
+        <div class="track-row">
+          <span class="track-num">${t.n}</span>
+          <span class="track-name">${t.name}</span>
+          <span class="track-duration">${t.dur}</span>
+        </div>
+      `).join("")}
+    </div>
+
+    <div class="external-row">
+      <span>${ALBUM.spotify}</span>
+      <span class="ext-chev">›</span>
+    </div>
+
+    <div style="height: 24px"></div>
+  `;
+
+  document.getElementById("changeBtn").addEventListener("click", openSheet);
+  document.getElementById("auditBtn").addEventListener("click", () => {
+    auditOpen = !auditOpen;
+    renderDetail();
+  });
+}
+
+function renderAuditEntry(entry) {
+  const from = entry.from === "initial" ? null : STATES[entry.from];
+  const to = STATES[entry.to];
+  const fromChip = from
+    ? `<span class="audit-state-chip ${from.color}">${from.short}</span>`
+    : `<span class="audit-state-chip gray">initial</span>`;
+  const toChip = `<span class="audit-state-chip ${to.color}">${to.short}</span>`;
+  return `
+    <div class="audit-entry">
+      <div class="audit-entry-head">
+        <span class="audit-date">${entry.date}</span>
+        <span class="audit-arrow">·</span>
+        ${fromChip}
+        <span class="audit-arrow">→</span>
+        ${toChip}
+      </div>
+      <div style="display:flex;gap:6px;align-items:baseline;flex-wrap:wrap">
+        <span class="audit-actor">${entry.actor}</span>
+        ${entry.note ? `<span class="audit-note">"${entry.note}"</span>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+// ---------- Render: Picker sheet ----------
+function openSheet() {
+  sheetOpen = true;
+  pickerSelected = null;
+  pickerNote = "";
+  renderSheet();
+  document.getElementById("sheetOverlay").classList.add("open");
+}
+function closeSheet() {
+  sheetOpen = false;
+  document.getElementById("sheetOverlay").classList.remove("open");
+}
+
+function renderSheet() {
+  // Build the list of candidate next states. The transitions matrix tells us what's reachable from currentCondition.
+  // For each candidate: enabled if currentRole is in the allowed-roles array. We also include any other states
+  // that are NOT reachable so DJs see why — but we hide the current state itself.
+  const reachable = TRANSITIONS[currentCondition] || {};
+  const allKeys = Object.keys(STATES).filter(k => k !== currentCondition);
+  // Order: reachable-allowed first, then reachable-but-gated, then unreachable
+  const ordered = allKeys.sort((a, b) => {
+    const aRoles = reachable[a] || [];
+    const bRoles = reachable[b] || [];
+    const aAllowed = aRoles.includes(currentRole);
+    const bAllowed = bRoles.includes(currentRole);
+    const aReachable = aRoles.length > 0;
+    const bReachable = bRoles.length > 0;
+    if (aAllowed !== bAllowed) return aAllowed ? -1 : 1;
+    if (aReachable !== bReachable) return aReachable ? -1 : 1;
+    return 0;
+  });
+
+  const optionsHtml = ordered.map(toKey => {
+    const s = STATES[toKey];
+    const allowedRoles = reachable[toKey] || [];
+    const isReachable = allowedRoles.length > 0;
+    const isAllowed = allowedRoles.includes(currentRole);
+    const isSelected = pickerSelected === toKey;
+    const showLock = isReachable && !isAllowed;
+
+    let extra = "";
+    if (!isReachable) {
+      extra = `<div class="picker-desc">Not a valid transition from ${STATES[currentCondition].label}.</div>`;
+    } else if (showLock) {
+      extra = `<div class="picker-desc">Music Director required.</div>`;
+    } else {
+      extra = `<div class="picker-desc">${s.desc}</div>`;
+    }
+
+    const disabledAttr = (!isReachable || !isAllowed) ? "disabled" : "";
+    const colorClass = s.color;
+    return `
+      <button class="picker-option ${isSelected ? "selected" : ""}" data-to="${toKey}" ${disabledAttr}>
+        <div class="picker-icon-wrap ${colorClass}">${ICONS[s.icon]}</div>
+        <div class="picker-text">
+          <div class="picker-label ${disabledAttr ? "disabled-text" : ""}">
+            ${s.label}
+            ${showLock ? ICONS.lock : ""}
+          </div>
+          ${extra}
+        </div>
+        ${isSelected ? `<span class="picker-check">${ICONS.checkmark}</span>` : ""}
+      </button>
+    `;
+  }).join("");
+
+  const canSave = pickerSelected != null;
+  const banner = currentRole === "dj"
+    ? `<div class="role-banner">You're signed in as a DJ. Damaged, in-repair, and library-return transitions are reserved for Music Directors.</div>`
+    : `<div class="role-banner md">You're signed in as a Music Director. All transitions are available.</div>`;
+
+  document.getElementById("sheet").innerHTML = `
+    <div class="sheet-grabber"></div>
+    <div class="sheet-header">
+      <button id="cancelBtn">Cancel</button>
+      <span class="sheet-title">Change condition</span>
+      <button class="primary" id="saveBtnTop" ${canSave ? "" : "disabled"}>Save</button>
+    </div>
+    <div class="sheet-body">
+      ${banner}
+      <div class="sheet-section">From <strong style="color:${pickerSelected ? "var(--ios-label)" : "var(--ios-label)"}">${STATES[currentCondition].label}</strong> → to</div>
+      <div class="picker-list">${optionsHtml}</div>
+
+      <div class="sheet-section">Note (optional)</div>
+      <div class="note-card">
+        <textarea class="note-area" id="noteArea" placeholder="e.g. found in B bin, sleeve splitting at spine, returned from repair">${pickerNote}</textarea>
+      </div>
+
+      <button class="save-btn" id="saveBtn" ${canSave ? "" : "disabled"}>
+        ${canSave ? `Save · ${STATES[currentCondition].label} → ${STATES[pickerSelected].label}` : "Choose a next state"}
+      </button>
+    </div>
+  `;
+
+  document.getElementById("cancelBtn").addEventListener("click", closeSheet);
+  document.getElementById("saveBtnTop").addEventListener("click", saveTransition);
+  document.getElementById("saveBtn").addEventListener("click", saveTransition);
+  document.getElementById("noteArea").addEventListener("input", e => {
+    pickerNote = e.target.value;
+  });
+  document.querySelectorAll(".picker-option").forEach(btn => {
+    if (btn.disabled) return;
+    btn.addEventListener("click", () => {
+      pickerSelected = btn.dataset.to;
+      renderSheet();
+    });
+  });
+}
+
+function saveTransition() {
+  if (!pickerSelected) return;
+  // Prepend a synthetic audit entry to the relevant log, then switch currentCondition.
+  const today = "2026-06-04";
+  const newEntry = {
+    date: today,
+    from: currentCondition,
+    to: pickerSelected,
+    actor: currentRole === "dj" ? "DJ jake" : "MD Sarah",
+    note: pickerNote.trim(),
+  };
+  // For the prototype, push the entry onto the destination state's log (and into the source's so the history is continuous).
+  AUDIT_LOGS[pickerSelected] = [newEntry, ...AUDIT_LOGS[pickerSelected]];
+  // Move to the new condition and rerender.
+  currentCondition = pickerSelected;
+  // Reflect the new condition in the top-of-page toggle.
+  document.querySelectorAll("#conditionToggle button").forEach(b => {
+    b.classList.toggle("active", b.dataset.cond === currentCondition);
+  });
+  closeSheet();
+  renderDetail();
+}
+
+// ---------- Wire top-of-page toggles ----------
+document.getElementById("roleToggle").addEventListener("click", e => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  document.querySelectorAll("#roleToggle button").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  currentRole = btn.dataset.role;
+  document.getElementById("roleHint").textContent = currentRole === "dj" ? "DJ jake" : "MD Sarah";
+  if (sheetOpen) renderSheet();
+});
+
+document.getElementById("conditionToggle").addEventListener("click", e => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  document.querySelectorAll("#conditionToggle button").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  currentCondition = btn.dataset.cond;
+  auditOpen = false;
+  renderDetail();
+  if (sheetOpen) {
+    pickerSelected = null;
+    renderSheet();
+  }
+});
+
+// Close sheet when tapping the dimmed backdrop.
+document.getElementById("sheetOverlay").addEventListener("click", e => {
+  if (e.target.id === "sheetOverlay") closeSheet();
+});
+
+// ---------- Boot ----------
+renderDetail();
+</script>
+</body>
+</html>

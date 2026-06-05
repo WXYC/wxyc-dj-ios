@@ -1,0 +1,2367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reviews — Editor + MD Queue + Tag Vocabulary Prototype</title>
+<style>
+  :root {
+    --ios-bg: #F2F2F7;
+    --ios-card: #FFFFFF;
+    --ios-sep: #C6C6C8;
+    --ios-blue: #007AFF;
+    --ios-purple: #5856D6;
+    --ios-pink: #FF2D55;
+    --ios-orange: #FF9500;
+    --ios-yellow: #FFCC00;
+    --ios-green: #34C759;
+    --ios-teal: #5AC8FA;
+    --ios-red: #FF3B30;
+    --ios-gray: #8E8E93;
+    --ios-gray-light: #E5E5EA;
+    --ios-gray-bg: #EFEFF4;
+    --ios-label: #000000;
+    --ios-label-sec: #3C3C43;
+    --ios-label-tert: #3C3C4399;
+    --frame-bg: #1c1c1e;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    background: #d8d8df;
+    color: #111;
+    padding: 24px 16px 48px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1 {
+    margin: 0 0 4px 0;
+    font-size: 22px;
+    font-weight: 600;
+    text-align: center;
+  }
+  .subtitle {
+    text-align: center;
+    color: #555;
+    margin-bottom: 24px;
+    font-size: 14px;
+  }
+
+  /* Mode toggle */
+  .mode-bar {
+    max-width: 900px;
+    margin: 0 auto 24px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    padding: 4px;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .mode-btn {
+    padding: 10px 14px;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    color: #444;
+    text-align: left;
+    line-height: 1.3;
+  }
+  .mode-btn .mode-title {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .mode-btn .mode-desc {
+    display: block;
+    font-size: 11px;
+    color: #777;
+    font-weight: 400;
+  }
+  .mode-btn.active {
+    background: var(--ios-blue);
+    color: white;
+  }
+  .mode-btn.active .mode-desc { color: rgba(255,255,255,0.85); }
+
+  .stage {
+    max-width: 900px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  @media (max-width: 800px) {
+    .stage { grid-template-columns: 1fr; }
+  }
+
+  /* Phone frame */
+  .phone-frame {
+    width: 390px;
+    margin: 0 auto;
+    background: var(--frame-bg);
+    border-radius: 50px;
+    padding: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    position: relative;
+  }
+  .phone-screen {
+    background: var(--ios-bg);
+    border-radius: 40px;
+    height: 800px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .notch {
+    width: 120px;
+    height: 30px;
+    background: var(--frame-bg);
+    border-radius: 0 0 18px 18px;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+  }
+  .status-bar {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+    background: var(--ios-bg);
+    z-index: 10;
+    position: relative;
+  }
+
+  /* Nav bar */
+  .nav-bar {
+    padding: 6px 16px 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 44px;
+    background: var(--ios-bg);
+    flex-shrink: 0;
+  }
+  .back-btn {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 17px;
+    cursor: pointer;
+    padding: 4px 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .back-btn svg { stroke: var(--ios-blue); }
+  .nav-title {
+    flex: 1;
+    text-align: center;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ios-label);
+  }
+  .nav-action {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 17px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 4px 6px;
+  }
+  .nav-action.primary {
+    font-weight: 600;
+  }
+  .nav-action.disabled {
+    color: var(--ios-gray);
+    cursor: not-allowed;
+  }
+  .nav-bar-large {
+    padding: 0 16px 8px;
+    background: var(--ios-bg);
+    flex-shrink: 0;
+  }
+  .nav-bar-large h1 {
+    margin: 0;
+    text-align: left;
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+  }
+  .nav-bar-large .nav-subtitle {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    margin-top: 2px;
+  }
+
+  .scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-bottom: 32px;
+  }
+  .scroll-area::-webkit-scrollbar { width: 0; }
+
+  /* ----- Mode 1: Review detail ----- */
+  .hero {
+    padding: 12px 16px 16px;
+    background: white;
+    margin: 0 16px 12px;
+    border-radius: 12px;
+    display: flex;
+    gap: 12px;
+  }
+  .cover {
+    width: 88px;
+    height: 88px;
+    border-radius: 8px;
+    flex-shrink: 0;
+    background: linear-gradient(135deg, #4a3025 0%, #d4a572 60%, #2c1810 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 28px;
+    font-weight: 800;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    letter-spacing: -1px;
+  }
+  .cover.dj-e {
+    background: linear-gradient(135deg, #cc4444 0%, #ff8888 50%, #441111 100%);
+  }
+  .cover.halo {
+    background: linear-gradient(135deg, #e8d4b8 0%, #a09078 50%, #4a4030 100%);
+    color: #2a2010;
+    text-shadow: 0 1px 1px rgba(255,255,255,0.3);
+  }
+  .cover.edits {
+    background: linear-gradient(135deg, #ff5588 0%, #ffaa44 50%, #44aaff 100%);
+  }
+  .cover.allhat {
+    background: linear-gradient(135deg, #2a2a2a 0%, #6a6a6a 50%, #1a1a1a 100%);
+  }
+  .cover.bgf {
+    background: linear-gradient(135deg, #2c5530 0%, #8bcd8b 60%, #1a3a1d 100%);
+  }
+  .cover.pang {
+    background: linear-gradient(135deg, #1e3a8a 0%, #fbbf24 50%, #1e3a8a 100%);
+  }
+  .cover.indigo {
+    background: linear-gradient(135deg, #4c1d95 0%, #f472b6 50%, #1e1b4b 100%);
+  }
+  .cover.sm {
+    width: 56px;
+    height: 56px;
+    font-size: 18px;
+    border-radius: 6px;
+  }
+  .cover.tiny {
+    width: 36px;
+    height: 36px;
+    font-size: 11px;
+    border-radius: 5px;
+  }
+  .hero-meta {
+    flex: 1;
+    min-width: 0;
+  }
+  .hero-title {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    color: var(--ios-label);
+    line-height: 1.15;
+    margin-bottom: 4px;
+  }
+  .hero-artist {
+    font-size: 15px;
+    color: var(--ios-label-sec);
+    margin-bottom: 4px;
+  }
+  .hero-label-year {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+  }
+
+  /* Rating + headline */
+  .rating-block {
+    background: white;
+    margin: 0 16px 12px;
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .stars-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+  .stars {
+    display: flex;
+    gap: 1px;
+    font-size: 22px;
+    line-height: 1;
+    color: var(--ios-yellow);
+    letter-spacing: -1px;
+  }
+  .stars .star-empty {
+    color: var(--ios-gray-light);
+  }
+  .stars .star-half {
+    position: relative;
+    color: var(--ios-gray-light);
+  }
+  .stars .star-half::before {
+    content: "★";
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 50%;
+    overflow: hidden;
+    color: var(--ios-yellow);
+  }
+  .rating-num {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ios-label-sec);
+    font-variant-numeric: tabular-nums;
+  }
+  .rating-num .of {
+    color: var(--ios-label-tert);
+    font-weight: 400;
+  }
+  .headline {
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--ios-label);
+    letter-spacing: -0.1px;
+  }
+
+  /* Meta strip */
+  .meta-strip {
+    background: white;
+    margin: 0 16px 12px;
+    border-radius: 12px;
+    padding: 12px 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+  .meta-author {
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    flex: 1;
+    min-width: 0;
+  }
+  .meta-author strong {
+    color: var(--ios-label);
+    font-weight: 600;
+  }
+  .meta-author .meta-date {
+    color: var(--ios-label-tert);
+    font-weight: 400;
+  }
+  .badge {
+    border-radius: 8px;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .badge-promote {
+    background: rgba(52,199,89,0.15);
+    color: #1e7d3d;
+  }
+  .badge-maybe {
+    background: rgba(255,149,0,0.15);
+    color: #a05a00;
+  }
+  .badge-skip {
+    background: rgba(142,142,147,0.18);
+    color: #555;
+  }
+  .badge-fcc {
+    background: var(--ios-red);
+    color: white;
+    letter-spacing: 0.5px;
+  }
+
+  /* Body */
+  .body-card {
+    background: white;
+    margin: 0 16px 12px;
+    border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .body-card p {
+    margin: 0 0 12px 0;
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--ios-label);
+  }
+  .body-card p:last-child { margin-bottom: 0; }
+  .body-card em { font-style: italic; }
+  .body-card strong { font-weight: 600; }
+
+  /* Tags row */
+  .section-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ios-label-tert);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 0 16px 6px;
+    margin-top: 4px;
+  }
+  .tag-row {
+    background: white;
+    margin: 0 16px 12px;
+    border-radius: 12px;
+    padding: 12px 14px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .tag-chip {
+    background: var(--ios-gray-bg);
+    color: var(--ios-label-sec);
+    border-radius: 12px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+  }
+  .tag-chip.add {
+    background: transparent;
+    color: var(--ios-blue);
+    border: 1px dashed var(--ios-gray);
+  }
+  .tag-chip.selected {
+    background: var(--ios-blue);
+    color: white;
+  }
+  .tag-chip .x {
+    margin-left: 6px;
+    opacity: 0.7;
+  }
+
+  /* Callouts */
+  .callouts-card {
+    background: white;
+    margin: 0 16px 12px;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .callout-row {
+    padding: 11px 14px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .callout-row:last-child { border-bottom: none; }
+  .callout-polarity {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: white;
+    margin-top: 1px;
+  }
+  .callout-polarity.pos { background: var(--ios-green); }
+  .callout-polarity.neg { background: var(--ios-red); }
+  .callout-content {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  .callout-track {
+    font-weight: 600;
+    color: var(--ios-label);
+  }
+  .callout-comment {
+    color: var(--ios-label-sec);
+  }
+
+  /* Footer actions */
+  .action-row {
+    margin: 8px 16px 16px;
+    display: flex;
+    gap: 8px;
+  }
+  .action-btn {
+    flex: 1;
+    background: white;
+    border: none;
+    border-radius: 12px;
+    padding: 14px;
+    font: inherit;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--ios-blue);
+    cursor: pointer;
+  }
+  .action-btn.primary {
+    background: var(--ios-blue);
+    color: white;
+    font-weight: 600;
+  }
+  .action-btn.subtle {
+    color: var(--ios-label-sec);
+    font-weight: 400;
+    font-size: 14px;
+  }
+
+  /* ----- Mode 2: Review editor ----- */
+  .form-group {
+    background: white;
+    margin: 0 16px 12px;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .form-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ios-label-tert);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 12px 14px 4px;
+  }
+  .form-input {
+    width: 100%;
+    border: none;
+    background: transparent;
+    padding: 4px 14px 12px;
+    font: inherit;
+    font-size: 16px;
+    color: var(--ios-label);
+    outline: none;
+    resize: vertical;
+    font-family: inherit;
+  }
+  .form-textarea {
+    min-height: 140px;
+    line-height: 1.5;
+    font-size: 14px;
+  }
+  .form-hint {
+    padding: 0 14px 10px;
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    display: flex;
+    justify-content: space-between;
+  }
+  .form-hint .count {
+    font-variant-numeric: tabular-nums;
+  }
+  .form-hint .count.warn {
+    color: var(--ios-orange);
+    font-weight: 600;
+  }
+  .form-hint .count.over {
+    color: var(--ios-red);
+    font-weight: 700;
+  }
+
+  /* Segmented control */
+  .seg {
+    background: var(--ios-gray-light);
+    border-radius: 9px;
+    padding: 2px;
+    display: flex;
+    gap: 0;
+    margin: 0 14px 12px;
+  }
+  .seg button {
+    flex: 1;
+    background: transparent;
+    border: none;
+    border-radius: 7px;
+    padding: 7px 4px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ios-label);
+    cursor: pointer;
+  }
+  .seg button.active {
+    background: white;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+  .seg.promote button[data-v="yes_promote"].active { color: #1e7d3d; }
+  .seg.promote button[data-v="maybe"].active { color: #a05a00; }
+  .seg.promote button[data-v="no_skip"].active { color: #555; }
+
+  /* Toggle row (inside form group) */
+  .toggle-row {
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 15px;
+    color: var(--ios-label);
+    border-top: 0.5px solid var(--ios-sep);
+  }
+  .toggle-row:first-child { border-top: none; }
+  .toggle-sub {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    margin-top: 2px;
+  }
+  .toggle-switch {
+    width: 44px;
+    height: 26px;
+    background: var(--ios-gray-light);
+    border-radius: 13px;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .toggle-switch.on { background: var(--ios-red); }
+  .toggle-switch::after {
+    content: "";
+    width: 22px;
+    height: 22px;
+    background: white;
+    border-radius: 50%;
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transition: left 0.2s;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  }
+  .toggle-switch.on::after { left: 20px; }
+
+  /* Callout editor rows */
+  .callout-edit-row {
+    padding: 11px 14px;
+    border-top: 0.5px solid var(--ios-sep);
+    display: grid;
+    grid-template-columns: 30px 1fr auto;
+    gap: 8px;
+    align-items: center;
+  }
+  .callout-edit-row:first-of-type { border-top: none; }
+  .callout-polarity-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 14px;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 700;
+    color: white;
+    background: var(--ios-gray);
+    transition: background 0.15s;
+  }
+  .callout-polarity-btn.pos { background: var(--ios-green); }
+  .callout-polarity-btn.neg { background: var(--ios-red); }
+  .callout-fields {
+    min-width: 0;
+  }
+  .callout-track-input,
+  .callout-comment-input {
+    width: 100%;
+    border: none;
+    background: var(--ios-gray-bg);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font: inherit;
+    font-size: 13px;
+    color: var(--ios-label);
+    margin-bottom: 4px;
+    outline: none;
+  }
+  .callout-track-input { font-weight: 600; }
+  .callout-comment-input { font-size: 12px; }
+  .callout-remove {
+    background: transparent;
+    border: none;
+    color: var(--ios-red);
+    font-size: 22px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+  }
+  .add-row-btn {
+    width: calc(100% - 28px);
+    margin: 8px 14px 12px;
+    background: transparent;
+    border: 1px dashed var(--ios-gray);
+    border-radius: 10px;
+    padding: 10px;
+    font: inherit;
+    font-size: 13px;
+    color: var(--ios-blue);
+    cursor: pointer;
+  }
+
+  /* Half-star rating picker */
+  .rating-picker {
+    padding: 14px;
+    text-align: center;
+  }
+  .rating-picker-stars {
+    display: inline-flex;
+    gap: 4px;
+    cursor: pointer;
+    font-size: 32px;
+    line-height: 1;
+    user-select: none;
+  }
+  .rating-picker-stars .pstar {
+    position: relative;
+    width: 28px;
+    height: 32px;
+    display: inline-block;
+  }
+  .rating-picker-stars .pstar-bg,
+  .rating-picker-stars .pstar-fg-half,
+  .rating-picker-stars .pstar-fg-full {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 28px;
+    height: 32px;
+    line-height: 32px;
+    text-align: center;
+  }
+  .rating-picker-stars .pstar-bg { color: var(--ios-gray-light); }
+  .rating-picker-stars .pstar-fg-full { color: var(--ios-yellow); display: none; }
+  .rating-picker-stars .pstar-fg-half {
+    color: var(--ios-yellow);
+    width: 14px;
+    overflow: hidden;
+    display: none;
+  }
+  .rating-picker-stars .pstar.full .pstar-fg-full { display: block; }
+  .rating-picker-stars .pstar.half .pstar-fg-half { display: block; }
+  .rating-picker-hint {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--ios-label-tert);
+  }
+  .rating-picker-value {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ios-label-sec);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ----- Mode 3: MD review queue ----- */
+  .filter-chips {
+    padding: 4px 16px 12px;
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    flex-shrink: 0;
+    background: var(--ios-bg);
+    -webkit-overflow-scrolling: touch;
+  }
+  .filter-chips::-webkit-scrollbar { display: none; }
+  .filter-chip {
+    background: var(--ios-gray-light);
+    color: var(--ios-label);
+    border: none;
+    border-radius: 14px;
+    padding: 5px 12px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .filter-chip.active {
+    background: var(--ios-blue);
+    color: white;
+  }
+  .queue-section-title {
+    padding: 8px 16px 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ios-label-tert);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .queue-list {
+    background: white;
+    margin: 0 16px 12px;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .queue-row {
+    padding: 10px 12px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    display: grid;
+    grid-template-columns: 56px 1fr auto;
+    gap: 10px;
+    align-items: center;
+    cursor: pointer;
+    background: white;
+  }
+  .queue-row:last-child { border-bottom: none; }
+  .queue-row:active { background: var(--ios-gray-bg); }
+  .queue-row.aging {
+    background: rgba(255,149,0,0.04);
+  }
+  .queue-row.expiring {
+    background: rgba(255,59,48,0.05);
+  }
+  .queue-meta {
+    min-width: 0;
+  }
+  .queue-album {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ios-label);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .queue-artist {
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .queue-label-year {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    margin-top: 2px;
+  }
+  .queue-added {
+    font-size: 10px;
+    color: var(--ios-label-tert);
+    margin-top: 3px;
+  }
+  .queue-side {
+    text-align: right;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+  }
+  .claim-badge {
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+  }
+  .claim-badge.unclaimed {
+    background: rgba(52,199,89,0.15);
+    color: #1e7d3d;
+  }
+  .claim-badge.claimed-other {
+    background: var(--ios-gray-bg);
+    color: var(--ios-label-sec);
+  }
+  .claim-badge.claimed-you {
+    background: rgba(0,122,255,0.15);
+    color: var(--ios-blue);
+  }
+  .claim-elapsed {
+    font-size: 10px;
+    color: var(--ios-label-tert);
+    font-variant-numeric: tabular-nums;
+  }
+  .claim-elapsed.aging {
+    color: var(--ios-orange);
+    font-weight: 600;
+  }
+  .claim-elapsed.expiring {
+    color: var(--ios-red);
+    font-weight: 700;
+  }
+  .queue-cta-row {
+    margin: 12px 16px 0;
+    padding: 14px;
+    background: rgba(0,122,255,0.08);
+    border-radius: 12px;
+    font-size: 12px;
+    color: var(--ios-label-sec);
+    line-height: 1.4;
+  }
+  .queue-cta-row strong { color: var(--ios-blue); }
+
+  /* Toast */
+  .toast {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    right: 16px;
+    background: rgba(28,28,30,0.95);
+    color: white;
+    padding: 12px 14px;
+    border-radius: 12px;
+    font-size: 13px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    z-index: 200;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.2s, transform 0.2s;
+    pointer-events: none;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* ----- Mode 4: Tag vocabulary ----- */
+  .tag-search-row {
+    padding: 4px 16px 12px;
+    flex-shrink: 0;
+    background: var(--ios-bg);
+  }
+  .tag-search-bar {
+    background: var(--ios-gray-light);
+    border-radius: 10px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .tag-search-bar input {
+    border: none;
+    background: transparent;
+    flex: 1;
+    font: inherit;
+    font-size: 15px;
+    outline: none;
+    color: var(--ios-label);
+    min-width: 0;
+  }
+  .tag-search-bar svg { opacity: 0.5; flex-shrink: 0; }
+
+  .tag-list {
+    background: white;
+    margin: 0 16px 12px;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .tag-list-row {
+    padding: 11px 14px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 10px;
+    align-items: center;
+  }
+  .tag-list-row:last-child { border-bottom: none; }
+  .tag-name-block {
+    min-width: 0;
+  }
+  .tag-name {
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--ios-label);
+  }
+  .tag-uses {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    margin-top: 2px;
+  }
+  .tag-uses.popular { color: var(--ios-orange); font-weight: 600; }
+  .tag-actions {
+    display: flex;
+    gap: 4px;
+  }
+  .tag-icon-btn {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    cursor: pointer;
+    padding: 4px 8px;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 6px;
+  }
+  .tag-icon-btn.danger { color: var(--ios-red); }
+
+  /* Generic sheet */
+  .sheet-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 100;
+    display: none;
+  }
+  .sheet-overlay.open { display: block; }
+  .sheet {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--ios-bg);
+    border-radius: 16px 16px 0 0;
+    max-height: 80%;
+    display: flex;
+    flex-direction: column;
+    transform: translateY(100%);
+    transition: transform 0.25s ease-out;
+  }
+  .sheet-overlay.open .sheet { transform: translateY(0); }
+  .sheet-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--ios-sep);
+    background: var(--ios-bg);
+  }
+  .sheet-title {
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .sheet-header button {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 15px;
+    cursor: pointer;
+    padding: 4px 0;
+  }
+  .sheet-header button.primary { font-weight: 600; }
+  .sheet-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+  }
+  .sheet-body::-webkit-scrollbar { width: 0; }
+  .picker-search {
+    margin-bottom: 12px;
+  }
+  .picker-search input {
+    width: 100%;
+    background: var(--ios-gray-light);
+    border: none;
+    border-radius: 10px;
+    padding: 8px 12px;
+    font: inherit;
+    font-size: 14px;
+    outline: none;
+  }
+  .picker-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .picker-tag {
+    background: white;
+    border: 1px solid var(--ios-gray-light);
+    color: var(--ios-label);
+    border-radius: 14px;
+    padding: 6px 11px;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .picker-tag.selected {
+    background: var(--ios-blue);
+    color: white;
+    border-color: var(--ios-blue);
+  }
+  .picker-tag .checkmark {
+    margin-right: 4px;
+    opacity: 0;
+  }
+  .picker-tag.selected .checkmark { opacity: 1; }
+
+  /* Confirm dialog */
+  .dialog-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 150;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .dialog-overlay.open { display: flex; }
+  .dialog {
+    background: rgba(242,242,247,0.94);
+    backdrop-filter: blur(20px);
+    border-radius: 14px;
+    width: 100%;
+    max-width: 280px;
+    overflow: hidden;
+  }
+  .dialog-content {
+    padding: 18px 16px 12px;
+    text-align: center;
+  }
+  .dialog-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--ios-label);
+    margin-bottom: 4px;
+  }
+  .dialog-message {
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    line-height: 1.4;
+  }
+  .dialog-message strong { color: var(--ios-red); }
+  .dialog-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-top: 0.5px solid var(--ios-sep);
+  }
+  .dialog-btn {
+    background: transparent;
+    border: none;
+    padding: 12px;
+    font: inherit;
+    font-size: 16px;
+    cursor: pointer;
+    color: var(--ios-blue);
+    border-right: 0.5px solid var(--ios-sep);
+  }
+  .dialog-btn:last-child { border-right: none; }
+  .dialog-btn.destructive { color: var(--ios-red); font-weight: 600; }
+  .dialog-btn.primary { font-weight: 600; }
+
+  /* Add tag form (inside sheet) */
+  .new-tag-form {
+    padding: 16px;
+  }
+  .new-tag-form input {
+    width: 100%;
+    background: white;
+    border: 1px solid var(--ios-gray-light);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font: inherit;
+    font-size: 15px;
+    margin-bottom: 8px;
+    outline: none;
+  }
+  .new-tag-form .hint {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+  }
+
+  /* Past releases sheet */
+  .past-row {
+    background: white;
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    display: grid;
+    grid-template-columns: 40px 1fr auto;
+    gap: 10px;
+    align-items: center;
+  }
+  .past-row .cover {
+    width: 40px;
+    height: 40px;
+    font-size: 13px;
+    border-radius: 5px;
+  }
+  .past-meta {
+    min-width: 0;
+  }
+  .past-album {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ios-label);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .past-artist {
+    font-size: 12px;
+    color: var(--ios-label-sec);
+  }
+  .past-reviewed {
+    text-align: right;
+    font-size: 10px;
+    color: var(--ios-label-tert);
+  }
+  .past-reviewed strong { display: block; color: var(--ios-label-sec); margin-bottom: 2px; }
+
+  /* ----- Explainer ----- */
+  .explainer {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    align-self: start;
+    position: sticky;
+    top: 16px;
+  }
+  .explainer h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .explainer h4 {
+    margin: 14px 0 6px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+  }
+  .explainer p {
+    color: #555;
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 0 0 10px 0;
+  }
+  .explainer ul, .explainer ol {
+    margin: 0 0 8px;
+    padding-left: 18px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    line-height: 1.5;
+  }
+  .explainer li { margin-bottom: 4px; }
+  .explainer code {
+    background: var(--ios-gray-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  }
+  .explainer pre {
+    background: var(--ios-gray-bg);
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    line-height: 1.55;
+    margin: 0 0 8px;
+    overflow-x: auto;
+    color: #1d1d1f;
+  }
+  .explainer pre .verb-get { color: #1e7d3d; font-weight: 700; }
+  .explainer pre .verb-post { color: #a05a00; font-weight: 700; }
+  .explainer pre .verb-patch { color: var(--ios-purple); font-weight: 700; }
+  .explainer pre .verb-delete { color: var(--ios-red); font-weight: 700; }
+  .explainer pre .comment { color: var(--ios-gray); }
+  .opt-tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .opt-tag {
+    background: var(--ios-purple);
+    color: white;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .opt-tag.xl { background: var(--ios-pink); }
+  .opt-tag.phase { background: var(--ios-blue); }
+  .opt-tag.adr { background: var(--ios-orange); }
+</style>
+</head>
+<body>
+
+<h1>Reviews — editor, MD queue, tag vocabulary</h1>
+<p class="subtitle">Author-owned, one-per-album, internal-only (v1). Toggle through 4 surfaces.</p>
+
+<nav class="mode-bar" id="modeBar">
+  <button class="mode-btn active" data-mode="detail"><span class="mode-title">1 · Review detail</span><span class="mode-desc">Read view, badges, callouts</span></button>
+  <button class="mode-btn" data-mode="editor"><span class="mode-title">2 · Review editor</span><span class="mode-desc">Full form, tag picker</span></button>
+  <button class="mode-btn" data-mode="queue"><span class="mode-title">3 · MD queue</span><span class="mode-desc">Claim, filter, aging</span></button>
+  <button class="mode-btn" data-mode="tags"><span class="mode-title">4 · Tag vocabulary</span><span class="mode-desc">MD-only CRUD</span></button>
+</nav>
+
+<div class="stage">
+
+  <div class="phone-frame">
+    <div class="phone-screen" id="screen">
+      <div class="notch"></div>
+      <div class="status-bar">
+        <span>9:41</span>
+        <span>•••</span>
+      </div>
+      <div id="screenContent" style="flex:1; display:flex; flex-direction:column; min-height: 0;"></div>
+
+      <!-- Generic overlays (re-rendered into containers below) -->
+      <div class="sheet-overlay" id="sheetOverlay">
+        <div class="sheet" id="sheet"></div>
+      </div>
+      <div class="dialog-overlay" id="dialogOverlay">
+        <div class="dialog" id="dialog"></div>
+      </div>
+      <div class="toast" id="toast"></div>
+    </div>
+  </div>
+
+  <div class="explainer" id="explainer"></div>
+
+</div>
+
+<script>
+// =====================================================================
+// MOCK DATA
+// =====================================================================
+
+// Tag vocabulary, MD-curated. Each tag has a usage count.
+const TAG_VOCAB = [
+  { name: "indie rock",       uses: 84 },
+  { name: "post-punk",        uses: 41 },
+  { name: "ambient",          uses: 38 },
+  { name: "electronic",       uses: 56 },
+  { name: "latin electronic", uses: 22 },
+  { name: "experimental",     uses: 67 },
+  { name: "folk",             uses: 33 },
+  { name: "hip hop",          uses: 29 },
+  { name: "post-hardcore",    uses: 18 },
+  { name: "drone",            uses: 12 },
+  { name: "jazz",             uses: 24 },
+  { name: "noise",            uses: 15 },
+  { name: "shoegaze",         uses: 21 },
+  { name: "country",          uses: 9 },
+  { name: "NC scene",         uses: 47 },
+  { name: "Asheville scene",  uses: 19 },
+  { name: "Chapel Hill",      uses: 26 },
+  { name: "90s",              uses: 71 },
+  { name: "2010s",            uses: 44 },
+  { name: "2020s",            uses: 58 },
+  { name: "Dead Oceans",      uses: 14 },
+  { name: "Merge",            uses: 89 },
+  { name: "Drag City",        uses: 32 },
+  { name: "Hausu Mountain",   uses: 8  },
+  { name: "Touch & Go",       uses: 23 },
+  { name: "Three Lobed",      uses: 11 },
+  { name: "Warp",             uses: 17 },
+  { name: "Crammed Discs",    uses: 6  },
+];
+
+// The sample review (Wednesday — Rat Saw God)
+const SAMPLE_REVIEW = {
+  album: "Rat Saw God",
+  artist: "Wednesday",
+  label: "Dead Oceans",
+  year: 2023,
+  coverClass: "",
+  coverInitial: "RSG",
+  author: "DJ Kira",
+  authorRole: "Staff",
+  date: "Apr 12, 2025",
+  rating: 4.5,
+  headline: "A late-stage Bull Believer for the rest of us",
+  rotationHint: "yes_promote",
+  fccExplicit: true,
+  body: `<p>The fifth Wednesday LP is the one where Karly Hartzman's writing crystallises. Across eleven tracks, she works the seam between Asheville detail and Southern myth — the kid in the school bus, the hospital parking lot, the bath-county greenway — and finds the bigger song each time.</p>
+    <p>The band has caught up to her, too. Guitar tones range from the candy-glazed shoegaze of "TV in the Gas Pump" to the smeared lap-steel pedal-board of "Chosen to Deserve" — <em>credit MJ Lenderman</em> — and the rhythm section finally lands its punches behind the wall of detuned 12-strings.</p>
+    <p><strong>Bull Believer</strong> is the obvious centerpiece — eight minutes, three distinct halves, a long primal-scream coda. It risks parodying itself but pulls through because it sounds like the band actually feels what they're playing.</p>
+    <p>FCC note: "Bull Believer" closes with screamed expletives. Otherwise clean. Worth flagging because the album mostly reads as quiet.</p>`,
+  tags: ["indie rock", "Asheville scene", "Dead Oceans", "2020s", "shoegaze"],
+  callouts: [
+    { track: "Bull Believer",     comment: "Overlong, but earns it. Cue the 4:30 mark for full-stop dynamic shift.", polarity: "+" },
+    { track: "Bath County",       comment: "Best closer in years. Pairs with anything Lenderman solo.",              polarity: "+" },
+    { track: "TV in the Gas Pump",comment: "Single. Works as a bumper.",                                              polarity: "+" },
+    { track: "Got Shocked",       comment: "Skippable on rotation.",                                                  polarity: "-" },
+  ]
+};
+
+// MD review queue — internal-only, MD-curated guidance for "albums that deserve a take"
+const QUEUE = [
+  {
+    id: "q1",
+    album: "Edits",                       artist: "Chuquimamani-Condori",
+    label: "Hausu Mountain", year: 2024,
+    coverClass: "edits", initial: "ED",
+    addedBy: "MD Sarah",   addedDays: 7,
+    claim: { state: "unclaimed", days: 3 }
+  },
+  {
+    id: "q2",
+    album: "All Hat",                     artist: "DOGA",
+    label: "Hausu Mountain", year: 2024,
+    coverClass: "allhat", initial: "AH",
+    addedBy: "MD Sarah",   addedDays: 6,
+    claim: { state: "claimed_you", name: "you", days: 5 }
+  },
+  {
+    id: "q3",
+    album: "Rat Saw God",                 artist: "Wednesday",
+    label: "Dead Oceans",   year: 2023,
+    coverClass: "", initial: "RSG",
+    addedBy: "MD Sarah",   addedDays: 14,
+    claim: { state: "claimed_other", name: "Kira", days: 11 }
+  },
+  {
+    id: "q4",
+    album: "Bright Green Field",          artist: "Squid",
+    label: "Warp",          year: 2021,
+    coverClass: "bgf", initial: "BGF",
+    addedBy: "MD Sarah",   addedDays: 12,
+    claim: { state: "unclaimed", days: 8 }
+  },
+  {
+    id: "q5",
+    album: "DJ E Tape",                   artist: "Chuquimamani-Condori",
+    label: "no label",      year: 2023,
+    coverClass: "dj-e", initial: "DJE",
+    addedBy: "MD Sarah",   addedDays: 16,
+    claim: { state: "unclaimed", days: 16 }
+  },
+  {
+    id: "q6",
+    album: "Pang",                        artist: "Caroline Polachek",
+    label: "Perpetual Novice", year: 2019,
+    coverClass: "pang", initial: "PNG",
+    addedBy: "MD Sarah",   addedDays: 10,
+    claim: { state: "claimed_other", name: "Marco", days: 6 }
+  },
+  {
+    id: "q7",
+    album: "Halo",                        artist: "Juana Molina",
+    label: "Crammed Discs",  year: 2017,
+    coverClass: "halo", initial: "HAL",
+    addedBy: "MD Sarah",   addedDays: 1,
+    claim: { state: "unclaimed", days: 1 }
+  },
+  {
+    id: "q8",
+    album: "Any Shape You Take",          artist: "Indigo De Souza",
+    label: "Saddle Creek",   year: 2021,
+    coverClass: "indigo", initial: "ASY",
+    addedBy: "MD Sarah",   addedDays: 4,
+    claim: { state: "unclaimed", days: 4 }
+  },
+];
+
+const PAST_RELEASES = [
+  { album: "Today's Active Lifestyles", artist: "Polvo",                cover:"", init:"TAL", by:"DJ biscuit",  when:"Mar 2 "},
+  { album: "On Your Own Love Again",    artist: "Jessica Pratt",        cover:"halo",  init:"OYO", by:"DJ Stanton", when:"Feb 24"},
+  { album: "Icky Mettle",               artist: "Archers of Loaf",      cover:"allhat",init:"IM",  by:"DJ RMC",     when:"Feb 18"},
+  { album: "Slanted and Enchanted",     artist: "Pavement",             cover:"bgf",   init:"S&E", by:"DJ Kelly",   when:"Feb 6"},
+  { album: "I See You",                 artist: "The xx",               cover:"pang",  init:"ISY", by:"DJ Marco",   when:"Jan 28"},
+];
+
+// =====================================================================
+// STATE
+// =====================================================================
+let currentMode = "detail";
+
+// editor state (clone of the sample so user can mutate)
+let editor = JSON.parse(JSON.stringify(SAMPLE_REVIEW));
+editor.headline = SAMPLE_REVIEW.headline;
+
+// queue state (mutable — for claim)
+let queueState = QUEUE.map(q => ({ ...q, claim: { ...q.claim } }));
+let queueFilter = "all"; // all | unclaimed | mine | aging
+
+// tag vocab state (mutable for CRUD)
+let tagVocabState = TAG_VOCAB.map(t => ({ ...t }));
+let tagSearch = "";
+
+// tag picker sheet state
+let pickerSearch = "";
+
+// =====================================================================
+// HELPERS
+// =====================================================================
+function htmlEsc(s) {
+  return (s || "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c]));
+}
+
+// Render stars for a numeric rating value (e.g. 4.5)
+function renderStars(rating, totalStars = 5) {
+  let html = "";
+  for (let i = 0; i < totalStars; i++) {
+    const slot = i + 1;
+    if (slot <= Math.floor(rating)) {
+      html += `<span>★</span>`;
+    } else if (slot - 0.5 <= rating) {
+      html += `<span class="star-half">★</span>`;
+    } else {
+      html += `<span class="star-empty">★</span>`;
+    }
+  }
+  return `<div class="stars">${html}</div>`;
+}
+
+const ROTATION_LABEL = {
+  yes_promote: { label: "Promote to Heavy",  cls: "badge-promote" },
+  maybe:       { label: "Maybe — Light",     cls: "badge-maybe"   },
+  no_skip:     { label: "Skip",              cls: "badge-skip"    },
+};
+
+function ageClass(days) {
+  if (days >= 14) return "expiring";
+  if (days >= 10) return "aging";
+  return "";
+}
+
+function ageLabel(days) {
+  if (days === 1) return "1d";
+  return `${days}d`;
+}
+
+function showToast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => t.classList.remove("show"), 2400);
+}
+
+function closeSheet() { document.getElementById("sheetOverlay").classList.remove("open"); }
+function openSheetHTML(html) {
+  document.getElementById("sheet").innerHTML = html;
+  document.getElementById("sheetOverlay").classList.add("open");
+}
+function closeDialog() { document.getElementById("dialogOverlay").classList.remove("open"); }
+function openDialog(html) {
+  document.getElementById("dialog").innerHTML = html;
+  document.getElementById("dialogOverlay").classList.add("open");
+}
+
+// =====================================================================
+// MODE 1 — REVIEW DETAIL (READ)
+// =====================================================================
+function renderDetail() {
+  const r = SAMPLE_REVIEW;
+  const rotation = ROTATION_LABEL[r.rotationHint];
+
+  return `
+    <div class="nav-bar">
+      <button class="back-btn">
+        <svg width="12" height="20" viewBox="0 0 12 20" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="10 2 2 10 10 18"/></svg>
+        Bin
+      </button>
+      <span class="nav-title">Review</span>
+      <span style="width: 64px"></span>
+    </div>
+    <div class="scroll-area">
+      <div class="hero">
+        <div class="cover ${r.coverClass}">${r.coverInitial}</div>
+        <div class="hero-meta">
+          <div class="hero-title">${htmlEsc(r.album)}</div>
+          <div class="hero-artist">${htmlEsc(r.artist)}</div>
+          <div class="hero-label-year">${htmlEsc(r.label)} · ${r.year}</div>
+        </div>
+      </div>
+      <div class="rating-block">
+        <div class="stars-row">
+          ${renderStars(r.rating)}
+          <span class="rating-num">${r.rating.toFixed(1)} <span class="of">/ 5.0</span></span>
+        </div>
+        <div class="headline">"${htmlEsc(r.headline)}"</div>
+      </div>
+      <div class="meta-strip">
+        <div class="meta-author">
+          <strong>${htmlEsc(r.author)}</strong> · <span class="meta-date">${r.date}</span>
+        </div>
+        <span class="badge ${rotation.cls}">${rotation.label}</span>
+        ${r.fccExplicit ? `<span class="badge badge-fcc">FCC EXPLICIT</span>` : ""}
+      </div>
+      <div class="body-card">
+        ${r.body}
+      </div>
+      <div class="section-label">Tags</div>
+      <div class="tag-row">
+        ${r.tags.map(t => `<span class="tag-chip">${htmlEsc(t)}</span>`).join("")}
+      </div>
+      <div class="section-label">Track callouts</div>
+      <div class="callouts-card">
+        ${r.callouts.map(c => `
+          <div class="callout-row">
+            <div class="callout-polarity ${c.polarity === "+" ? "pos" : "neg"}">${c.polarity}</div>
+            <div class="callout-content">
+              <div><span class="callout-track">"${htmlEsc(c.track)}"</span></div>
+              <div class="callout-comment">${htmlEsc(c.comment)}</div>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+      <div class="action-row">
+        <button class="action-btn primary" id="goEdit">Edit review</button>
+      </div>
+      <div class="action-row">
+        <button class="action-btn subtle">Request authorship transfer</button>
+      </div>
+      <div style="height: 16px"></div>
+    </div>
+  `;
+}
+
+function wireDetail() {
+  document.getElementById("goEdit").addEventListener("click", () => switchMode("editor"));
+}
+
+// =====================================================================
+// MODE 2 — REVIEW EDITOR
+// =====================================================================
+function renderEditor() {
+  const r = editor;
+  const count = r.headline.length;
+  const countCls = count > 140 ? "over" : (count > 120 ? "warn" : "");
+
+  return `
+    <div class="nav-bar">
+      <button class="nav-action" id="cancelEdit">Cancel</button>
+      <span class="nav-title">Edit Review</span>
+      <button class="nav-action primary" id="saveEdit">Save</button>
+    </div>
+    <div class="scroll-area">
+      <div class="hero" style="margin-bottom: 16px">
+        <div class="cover ${r.coverClass}">${r.coverInitial}</div>
+        <div class="hero-meta">
+          <div class="hero-title">${htmlEsc(r.album)}</div>
+          <div class="hero-artist">${htmlEsc(r.artist)}</div>
+          <div class="hero-label-year">${htmlEsc(r.label)} · ${r.year}</div>
+        </div>
+      </div>
+
+      <div class="form-label">Headline</div>
+      <div class="form-group" style="margin-top: -2px">
+        <input class="form-input" id="headlineInput" type="text" maxlength="160" value="${htmlEsc(r.headline)}" placeholder="A one-line take — what's this album doing?"/>
+        <div class="form-hint">
+          <span>Max 140 chars</span>
+          <span class="count ${countCls}" id="headlineCount">${count}/140</span>
+        </div>
+      </div>
+
+      <div class="form-label">Body (Markdown supported)</div>
+      <div class="form-group" style="margin-top: -2px">
+        <textarea class="form-input form-textarea" id="bodyInput" placeholder="Write the full take. Markdown supported."># Why this one matters
+
+The fifth Wednesday LP is the one where Karly Hartzman's writing crystallises.
+
+- "Bull Believer" — eight minutes, three halves
+- "Bath County" — best closer in years
+- "Got Shocked" — skippable
+
+**FCC note:** screamed expletives at the end of "Bull Believer". Otherwise clean.</textarea>
+      </div>
+
+      <div class="form-label">Rotation hint</div>
+      <div class="form-group">
+        <div class="seg promote" id="rotationSeg" style="margin: 12px 14px">
+          <button data-v="yes_promote" class="${r.rotationHint==="yes_promote"?"active":""}">Promote</button>
+          <button data-v="maybe"       class="${r.rotationHint==="maybe"?"active":""}">Maybe</button>
+          <button data-v="no_skip"     class="${r.rotationHint==="no_skip"?"active":""}">Skip</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div class="toggle-row">
+          <div>
+            <div>FCC explicit</div>
+            <div class="toggle-sub">Flag spoken / sung explicit content for safe-harbor handling</div>
+          </div>
+          <div class="toggle-switch ${r.fccExplicit?"on":""}" id="fccToggle"></div>
+        </div>
+      </div>
+
+      <div class="form-label">Tags</div>
+      <div class="tag-row" id="editorTags">
+        ${r.tags.map(t => `<button class="tag-chip selected" data-tag="${htmlEsc(t)}">${htmlEsc(t)}<span class="x">×</span></button>`).join("")}
+        <button class="tag-chip add" id="addTagBtn">+ Add tag</button>
+      </div>
+
+      <div class="form-label">Track callouts</div>
+      <div class="form-group" id="calloutEdit">
+        ${r.callouts.map((c, i) => `
+          <div class="callout-edit-row" data-i="${i}">
+            <button class="callout-polarity-btn ${c.polarity === "+" ? "pos" : "neg"}" data-pol="${i}">${c.polarity}</button>
+            <div class="callout-fields">
+              <input class="callout-track-input" type="text" value="${htmlEsc(c.track)}" data-trk="${i}" placeholder="Track title"/>
+              <input class="callout-comment-input" type="text" value="${htmlEsc(c.comment)}" data-cmt="${i}" placeholder="One-line comment"/>
+            </div>
+            <button class="callout-remove" data-rm="${i}">⊖</button>
+          </div>
+        `).join("")}
+        <button class="add-row-btn" id="addCalloutBtn">+ Add callout</button>
+      </div>
+
+      <div class="form-label">Rating</div>
+      <div class="form-group">
+        <div class="rating-picker">
+          <div class="rating-picker-stars" id="ratingPicker">
+            ${[1,2,3,4,5].map(s => {
+              const cls = r.rating >= s ? "full" : (r.rating >= s - 0.5 ? "half" : "");
+              return `
+                <div class="pstar ${cls}" data-star="${s}">
+                  <span class="pstar-bg">★</span>
+                  <span class="pstar-fg-half">★</span>
+                  <span class="pstar-fg-full">★</span>
+                </div>
+              `;
+            }).join("")}
+          </div>
+          <div class="rating-picker-hint">
+            Tap left half of a star for ½, right half for full.
+            <span class="rating-picker-value" id="ratingValue">${r.rating.toFixed(1)} / 5.0</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="height: 24px"></div>
+    </div>
+  `;
+}
+
+function wireEditor() {
+  // Cancel / Save
+  document.getElementById("cancelEdit").addEventListener("click", () => switchMode("detail"));
+  document.getElementById("saveEdit").addEventListener("click", () => {
+    showToast("Review saved — visible to signed-in DJs");
+    setTimeout(() => switchMode("detail"), 600);
+  });
+
+  // Headline counter
+  const headlineInput = document.getElementById("headlineInput");
+  const counter = document.getElementById("headlineCount");
+  headlineInput.addEventListener("input", () => {
+    editor.headline = headlineInput.value;
+    const c = editor.headline.length;
+    counter.textContent = `${c}/140`;
+    counter.classList.remove("warn", "over");
+    if (c > 140) counter.classList.add("over");
+    else if (c > 120) counter.classList.add("warn");
+  });
+
+  // Rotation segmented
+  document.querySelectorAll("#rotationSeg button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      editor.rotationHint = btn.dataset.v;
+      document.querySelectorAll("#rotationSeg button").forEach(b => b.classList.toggle("active", b.dataset.v === editor.rotationHint));
+    });
+  });
+
+  // FCC toggle
+  document.getElementById("fccToggle").addEventListener("click", e => {
+    editor.fccExplicit = !editor.fccExplicit;
+    e.currentTarget.classList.toggle("on", editor.fccExplicit);
+  });
+
+  // Tag chips — remove on click
+  document.querySelectorAll("#editorTags .tag-chip.selected").forEach(chip => {
+    chip.addEventListener("click", () => {
+      editor.tags = editor.tags.filter(t => t !== chip.dataset.tag);
+      renderInto(renderEditor());
+      wireEditor();
+    });
+  });
+  document.getElementById("addTagBtn").addEventListener("click", openTagPicker);
+
+  // Callout polarity + edits
+  document.querySelectorAll("[data-pol]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const i = parseInt(btn.dataset.pol);
+      editor.callouts[i].polarity = editor.callouts[i].polarity === "+" ? "-" : "+";
+      btn.classList.toggle("pos", editor.callouts[i].polarity === "+");
+      btn.classList.toggle("neg", editor.callouts[i].polarity === "-");
+      btn.textContent = editor.callouts[i].polarity;
+    });
+  });
+  document.querySelectorAll("[data-trk]").forEach(inp => {
+    inp.addEventListener("input", () => { editor.callouts[parseInt(inp.dataset.trk)].track = inp.value; });
+  });
+  document.querySelectorAll("[data-cmt]").forEach(inp => {
+    inp.addEventListener("input", () => { editor.callouts[parseInt(inp.dataset.cmt)].comment = inp.value; });
+  });
+  document.querySelectorAll("[data-rm]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const i = parseInt(btn.dataset.rm);
+      editor.callouts.splice(i, 1);
+      renderInto(renderEditor());
+      wireEditor();
+    });
+  });
+  document.getElementById("addCalloutBtn").addEventListener("click", () => {
+    editor.callouts.push({ track: "", comment: "", polarity: "+" });
+    renderInto(renderEditor());
+    wireEditor();
+  });
+
+  // Rating picker — half / full per click target
+  const pickerEl = document.getElementById("ratingPicker");
+  pickerEl.addEventListener("click", e => {
+    const star = e.target.closest(".pstar");
+    if (!star) return;
+    const slot = parseInt(star.dataset.star);
+    const rect = star.getBoundingClientRect();
+    const isLeftHalf = (e.clientX - rect.left) < rect.width / 2;
+    editor.rating = isLeftHalf ? slot - 0.5 : slot;
+    renderInto(renderEditor());
+    wireEditor();
+  });
+}
+
+// Tag picker sheet
+function openTagPicker() {
+  pickerSearch = "";
+  const filtered = tagVocabState.filter(t => t.name.toLowerCase().includes(pickerSearch));
+  openSheetHTML(`
+    <div class="sheet-header">
+      <button id="pickCancel">Cancel</button>
+      <span class="sheet-title">Add tags</span>
+      <button class="primary" id="pickDone">Done</button>
+    </div>
+    <div class="sheet-body">
+      <div class="picker-search">
+        <input id="pickSearch" type="text" placeholder="Search MD-curated tags…"/>
+      </div>
+      <div class="picker-tags" id="pickerTags">
+        ${renderPickerTags(filtered)}
+      </div>
+      <p style="margin-top:14px;font-size:12px;color:var(--ios-label-tert);line-height:1.5">
+        Don't see what you need? Tags are MD-curated — ask a Music Director to add one. This prevents the freeform tag-mess we had on dj-site.
+      </p>
+    </div>
+  `);
+  wirePicker();
+}
+
+function renderPickerTags(list) {
+  return list.map(t => {
+    const selected = editor.tags.includes(t.name);
+    return `<button class="picker-tag ${selected?"selected":""}" data-tag="${htmlEsc(t.name)}">
+      <span class="checkmark">✓</span>${htmlEsc(t.name)}
+    </button>`;
+  }).join("");
+}
+
+function wirePicker() {
+  document.getElementById("pickCancel").addEventListener("click", closeSheet);
+  document.getElementById("pickDone").addEventListener("click", () => {
+    closeSheet();
+    renderInto(renderEditor());
+    wireEditor();
+  });
+  const searchEl = document.getElementById("pickSearch");
+  searchEl.addEventListener("input", () => {
+    pickerSearch = searchEl.value.toLowerCase();
+    const filtered = tagVocabState.filter(t => t.name.toLowerCase().includes(pickerSearch));
+    document.getElementById("pickerTags").innerHTML = renderPickerTags(filtered);
+    bindPickerChips();
+  });
+  bindPickerChips();
+}
+
+function bindPickerChips() {
+  document.querySelectorAll(".picker-tag").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const t = btn.dataset.tag;
+      if (editor.tags.includes(t)) {
+        editor.tags = editor.tags.filter(x => x !== t);
+        btn.classList.remove("selected");
+      } else {
+        editor.tags.push(t);
+        btn.classList.add("selected");
+      }
+    });
+  });
+}
+
+// =====================================================================
+// MODE 3 — MD REVIEW QUEUE
+// =====================================================================
+function filteredQueue() {
+  return queueState.filter(q => {
+    if (queueFilter === "unclaimed") return q.claim.state === "unclaimed";
+    if (queueFilter === "mine")      return q.claim.state === "claimed_you";
+    if (queueFilter === "aging")     return q.claim.state.startsWith("claimed") && q.claim.days >= 10;
+    return true;
+  });
+}
+
+function renderQueue() {
+  const list = filteredQueue();
+  const total = queueState.filter(q => q.claim.state === "unclaimed").length
+              + queueState.filter(q => q.claim.state !== "unclaimed").length;
+
+  return `
+    <div class="nav-bar-large">
+      <h1>Review Queue</h1>
+      <div class="nav-subtitle">MD-curated — albums that need a take. <strong style="color:var(--ios-blue)">Music Director · Sarah</strong></div>
+    </div>
+    <div class="nav-bar" style="padding-top:0; padding-bottom: 8px">
+      <button class="nav-action" id="pastBtn">Past releases</button>
+      <span style="flex:1"></span>
+      <button class="nav-action primary" id="addQueueBtn">+ Add album</button>
+    </div>
+    <div class="filter-chips" id="queueFilters">
+      ${["all","unclaimed","mine","aging"].map(f => `
+        <button class="filter-chip ${queueFilter===f?"active":""}" data-f="${f}">
+          ${ {all:"All",unclaimed:"Unclaimed",mine:"Mine",aging:"Aging out (≥10d)"}[f] }
+        </button>`).join("")}
+    </div>
+    <div class="scroll-area">
+      <div class="queue-section-title">To be reviewed · ${total}</div>
+      <div class="queue-list">
+        ${list.map(renderQueueRow).join("") || `<div style="padding:24px;text-align:center;font-size:13px;color:var(--ios-label-tert)">No matches in this filter.</div>`}
+      </div>
+      <div class="queue-cta-row">
+        <strong>Soft-lock rule</strong> — claims auto-release after 14d if no review is published. Items shown in red are within ~24h of auto-release.
+      </div>
+      <div style="height: 24px"></div>
+    </div>
+  `;
+}
+
+function renderQueueRow(q) {
+  let badgeHtml = "";
+  let elapsedHtml = "";
+  let rowCls = "";
+
+  if (q.claim.state === "unclaimed") {
+    badgeHtml = `<span class="claim-badge unclaimed">Unclaimed</span>`;
+    const aging = ageClass(q.claim.days);
+    elapsedHtml = `<span class="claim-elapsed ${aging}">in queue ${ageLabel(q.claim.days)}</span>`;
+    if (aging === "expiring") rowCls = "expiring";
+    else if (aging === "aging") rowCls = "aging";
+  } else if (q.claim.state === "claimed_you") {
+    badgeHtml = `<span class="claim-badge claimed-you">Claimed by you</span>`;
+    elapsedHtml = `<span class="claim-elapsed">${ageLabel(q.claim.days)} ago</span>`;
+  } else if (q.claim.state === "claimed_other") {
+    badgeHtml = `<span class="claim-badge claimed-other">Claimed by ${htmlEsc(q.claim.name)}</span>`;
+    const aging = ageClass(q.claim.days);
+    elapsedHtml = `<span class="claim-elapsed ${aging}">${ageLabel(q.claim.days)} ago</span>`;
+    if (aging === "aging") rowCls = "aging";
+  }
+
+  return `
+    <div class="queue-row ${rowCls}" data-id="${q.id}">
+      <div class="cover sm ${q.coverClass}">${q.initial}</div>
+      <div class="queue-meta">
+        <div class="queue-album">${htmlEsc(q.album)}</div>
+        <div class="queue-artist">${htmlEsc(q.artist)}</div>
+        <div class="queue-label-year">${htmlEsc(q.label)} · ${q.year}</div>
+        <div class="queue-added">added by ${htmlEsc(q.addedBy)} · ${ageLabel(q.addedDays)} ago</div>
+      </div>
+      <div class="queue-side">
+        ${badgeHtml}
+        ${elapsedHtml}
+      </div>
+    </div>
+  `;
+}
+
+function wireQueue() {
+  document.querySelectorAll("#queueFilters .filter-chip").forEach(btn => {
+    btn.addEventListener("click", () => {
+      queueFilter = btn.dataset.f;
+      renderInto(renderQueue());
+      wireQueue();
+    });
+  });
+
+  document.querySelectorAll(".queue-row").forEach(row => {
+    row.addEventListener("click", () => {
+      const id = row.dataset.id;
+      const q = queueState.find(x => x.id === id);
+      if (!q) return;
+
+      if (q.claim.state === "unclaimed") {
+        q.claim = { state: "claimed_you", name: "you", days: 0 };
+        showToast(`Claimed "${q.album}" — write your take.`);
+        renderInto(renderQueue());
+        wireQueue();
+      } else if (q.claim.state === "claimed_you") {
+        // Open the editor (pretend) — reuses sample
+        showToast(`Opening your draft for "${q.album}"…`);
+      } else {
+        showToast(`Already claimed by ${q.claim.name}. Tap "Request authorship transfer" on the review.`);
+      }
+    });
+  });
+
+  document.getElementById("addQueueBtn").addEventListener("click", () => {
+    openSheetHTML(`
+      <div class="sheet-header">
+        <button id="addQueueCancel">Cancel</button>
+        <span class="sheet-title">Add to queue</span>
+        <button class="primary disabled" id="addQueueSave">Add</button>
+      </div>
+      <div class="sheet-body">
+        <div class="new-tag-form">
+          <input id="qSearch" type="text" placeholder="Search the catalog for an album…" />
+          <p class="hint">Looks up against the WXYC library. MD-only — DJs see the queue but don't add to it.</p>
+        </div>
+      </div>
+    `);
+    document.getElementById("addQueueCancel").addEventListener("click", closeSheet);
+  });
+
+  document.getElementById("pastBtn").addEventListener("click", () => {
+    openSheetHTML(`
+      <div class="sheet-header">
+        <button id="pastClose">Close</button>
+        <span class="sheet-title">Past releases · history</span>
+        <span style="width: 56px"></span>
+      </div>
+      <div class="sheet-body" style="background: var(--ios-bg)">
+        ${PAST_RELEASES.map(p => `
+          <div class="past-row">
+            <div class="cover ${p.cover}">${p.init}</div>
+            <div class="past-meta">
+              <div class="past-album">${htmlEsc(p.album)}</div>
+              <div class="past-artist">${htmlEsc(p.artist)}</div>
+            </div>
+            <div class="past-reviewed">
+              <strong>reviewed</strong>
+              by ${htmlEsc(p.by)}<br/>
+              ${p.when}
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    `);
+    document.getElementById("pastClose").addEventListener("click", closeSheet);
+  });
+}
+
+// =====================================================================
+// MODE 4 — TAG VOCABULARY (MD-only CRUD)
+// =====================================================================
+function renderTags() {
+  const filtered = tagVocabState
+    .filter(t => t.name.toLowerCase().includes(tagSearch.toLowerCase()))
+    .sort((a,b) => b.uses - a.uses);
+
+  return `
+    <div class="nav-bar-large">
+      <h1>Tag Vocabulary</h1>
+      <div class="nav-subtitle">MD-curated controlled list · ${tagVocabState.length} tags total</div>
+    </div>
+    <div class="nav-bar" style="padding-top:0; padding-bottom: 8px">
+      <span style="flex:1"></span>
+      <button class="nav-action primary" id="addTagVocabBtn">+ Add tag</button>
+    </div>
+    <div class="tag-search-row">
+      <div class="tag-search-bar">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="tagSearch" type="text" placeholder="Search tags" value="${htmlEsc(tagSearch)}"/>
+      </div>
+    </div>
+    <div class="scroll-area">
+      <div class="tag-list">
+        ${filtered.map(t => `
+          <div class="tag-list-row" data-name="${htmlEsc(t.name)}">
+            <div class="tag-name-block">
+              <div class="tag-name">${htmlEsc(t.name)}</div>
+              <div class="tag-uses ${t.uses >= 50 ? "popular" : ""}">used on ${t.uses} review${t.uses === 1 ? "" : "s"}</div>
+            </div>
+            <button class="tag-icon-btn" data-rename="${htmlEsc(t.name)}">Edit</button>
+            <button class="tag-icon-btn danger" data-delete="${htmlEsc(t.name)}">Delete</button>
+          </div>
+        `).join("") || `<div style="padding:24px;text-align:center;font-size:13px;color:var(--ios-label-tert)">No tags match "${htmlEsc(tagSearch)}".</div>`}
+      </div>
+      <div class="queue-cta-row" style="background: rgba(88,86,214,0.08); color: var(--ios-label-sec)">
+        <strong style="color: var(--ios-purple)">Why curated?</strong> Free-form tags on dj-site led to <em>indie-rock</em>, <em>indie rock</em>, and <em>Indie Rock</em> all coexisting. v1 keeps the vocabulary tight so search and faceting work.
+      </div>
+      <div style="height: 24px"></div>
+    </div>
+  `;
+}
+
+function wireTags() {
+  document.getElementById("tagSearch").addEventListener("input", e => {
+    tagSearch = e.target.value;
+    // Re-render only the list area for speed (kept simple here)
+    renderInto(renderTags());
+    wireTags();
+    // restore focus + caret
+    const inp = document.getElementById("tagSearch");
+    if (inp) {
+      inp.focus();
+      inp.setSelectionRange(inp.value.length, inp.value.length);
+    }
+  });
+
+  document.querySelectorAll("[data-rename]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const name = btn.dataset.rename;
+      openRenameTag(name);
+    });
+  });
+
+  document.querySelectorAll("[data-delete]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const name = btn.dataset.delete;
+      const tag = tagVocabState.find(t => t.name === name);
+      if (!tag) return;
+      openDeleteTag(tag);
+    });
+  });
+
+  document.getElementById("addTagVocabBtn").addEventListener("click", openAddTag);
+}
+
+function openAddTag() {
+  openSheetHTML(`
+    <div class="sheet-header">
+      <button id="addTagCancel">Cancel</button>
+      <span class="sheet-title">New tag</span>
+      <button class="primary" id="addTagSave">Add</button>
+    </div>
+    <div class="sheet-body">
+      <div class="new-tag-form">
+        <input id="newTagName" type="text" placeholder="e.g. avant pop, NC scene"/>
+        <p class="hint">Tags are visible to all DJs in the review editor. Keep them concise and consistent — prefer lowercase, no plurals.</p>
+      </div>
+    </div>
+  `);
+  document.getElementById("addTagCancel").addEventListener("click", closeSheet);
+  document.getElementById("addTagSave").addEventListener("click", () => {
+    const v = document.getElementById("newTagName").value.trim();
+    if (!v) return closeSheet();
+    if (!tagVocabState.find(t => t.name.toLowerCase() === v.toLowerCase())) {
+      tagVocabState.push({ name: v, uses: 0 });
+      showToast(`Added "${v}" to vocabulary.`);
+    } else {
+      showToast(`"${v}" is already in the vocabulary.`);
+    }
+    closeSheet();
+    renderInto(renderTags());
+    wireTags();
+  });
+  setTimeout(() => document.getElementById("newTagName")?.focus(), 50);
+}
+
+function openRenameTag(name) {
+  openSheetHTML(`
+    <div class="sheet-header">
+      <button id="renameCancel">Cancel</button>
+      <span class="sheet-title">Rename tag</span>
+      <button class="primary" id="renameSave">Save</button>
+    </div>
+    <div class="sheet-body">
+      <div class="new-tag-form">
+        <input id="renameInput" type="text" value="${htmlEsc(name)}"/>
+        <p class="hint">Renaming updates every review that uses this tag — no orphans.</p>
+      </div>
+    </div>
+  `);
+  document.getElementById("renameCancel").addEventListener("click", closeSheet);
+  document.getElementById("renameSave").addEventListener("click", () => {
+    const v = document.getElementById("renameInput").value.trim();
+    if (!v) return closeSheet();
+    const tag = tagVocabState.find(t => t.name === name);
+    if (tag) tag.name = v;
+    showToast(`Renamed "${name}" → "${v}". All reviews updated.`);
+    closeSheet();
+    renderInto(renderTags());
+    wireTags();
+  });
+  setTimeout(() => document.getElementById("renameInput")?.focus(), 50);
+}
+
+function openDeleteTag(tag) {
+  if (tag.uses > 0) {
+    // Soft-warn: tag is in use
+    openDialog(`
+      <div class="dialog-content">
+        <div class="dialog-title">Delete "${htmlEsc(tag.name)}"?</div>
+        <div class="dialog-message">
+          This tag is currently used on <strong>${tag.uses} review${tag.uses === 1 ? "" : "s"}</strong>. Deleting will remove it from all of them. There's no undo.
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button class="dialog-btn" id="delCancel">Cancel</button>
+        <button class="dialog-btn destructive" id="delConfirm">Delete anyway</button>
+      </div>
+    `);
+  } else {
+    openDialog(`
+      <div class="dialog-content">
+        <div class="dialog-title">Delete "${htmlEsc(tag.name)}"?</div>
+        <div class="dialog-message">This tag is unused — safe to remove.</div>
+      </div>
+      <div class="dialog-actions">
+        <button class="dialog-btn" id="delCancel">Cancel</button>
+        <button class="dialog-btn destructive primary" id="delConfirm">Delete</button>
+      </div>
+    `);
+  }
+  document.getElementById("delCancel").addEventListener("click", closeDialog);
+  document.getElementById("delConfirm").addEventListener("click", () => {
+    tagVocabState = tagVocabState.filter(t => t.name !== tag.name);
+    showToast(`Deleted "${tag.name}".`);
+    closeDialog();
+    renderInto(renderTags());
+    wireTags();
+  });
+}
+
+// =====================================================================
+// MODE SWITCHER
+// =====================================================================
+function renderInto(html) {
+  document.getElementById("screenContent").innerHTML = html;
+}
+
+function switchMode(mode) {
+  currentMode = mode;
+  document.querySelectorAll(".mode-btn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+  closeSheet();
+  closeDialog();
+
+  if (mode === "detail") {
+    renderInto(renderDetail());
+    wireDetail();
+  } else if (mode === "editor") {
+    renderInto(renderEditor());
+    wireEditor();
+  } else if (mode === "queue") {
+    renderInto(renderQueue());
+    wireQueue();
+  } else if (mode === "tags") {
+    renderInto(renderTags());
+    wireTags();
+  }
+  renderExplainer();
+}
+
+document.getElementById("modeBar").addEventListener("click", e => {
+  const btn = e.target.closest(".mode-btn");
+  if (!btn) return;
+  switchMode(btn.dataset.mode);
+});
+
+// =====================================================================
+// EXPLAINER PANEL
+// =====================================================================
+function renderExplainer() {
+  const el = document.getElementById("explainer");
+
+  const baseHeader = `
+    <div class="opt-tags">
+      <span class="opt-tag phase">Phase 4</span>
+      <span class="opt-tag">Pick #13</span>
+      <span class="opt-tag adr">ADR 0005</span>
+      <span class="opt-tag xl">XL</span>
+    </div>
+    <h3>Reviews — full editorial fields, author-owned, MD-curated queue</h3>
+    <p>v1 ships a <strong>one-per-album</strong>, author-owned review surface that's <strong>internal-only</strong> (signed-in DJs only). The MD curates a "needs a take" queue but it's <em>guidance, not a gate</em> — any DJ can review any album in the catalog.</p>
+    <p>Authorship transfers happen on request; the MD can override. Tags come from a controlled vocabulary maintained by the MD — this prevents the freeform mess we had on dj-site where <code>indie-rock</code>, <code>indie rock</code>, and <code>Indie Rock</code> all coexisted.</p>
+    <p>v2 will flip <code>published_publicly</code> on reviews paired with the C4 public-handle work, and we'll add reaction counts. v1 keeps the surface tight and avoids touching the live-show or rotation systems.</p>
+  `;
+
+  const tryIt = {
+    detail: `
+      <h4>Try it (this mode)</h4>
+      <ul>
+        <li>Tap <strong>Edit review</strong> to jump to the editor</li>
+        <li>Track callouts use ±polarity (green = recommend, red = warn)</li>
+        <li>FCC EXPLICIT badge only appears if flagged — for safe-harbor handling</li>
+        <li>Rotation hint badge tells programmers / scheduling at-a-glance</li>
+      </ul>
+    `,
+    editor: `
+      <h4>Try it (this mode)</h4>
+      <ul>
+        <li>Type past 120 chars in <strong>Headline</strong> to see the counter turn orange, past 140 to see red</li>
+        <li>Tap a tag chip to remove; tap <strong>+ Add tag</strong> to open the MD-curated picker sheet</li>
+        <li>Tap a callout's ± circle to flip polarity</li>
+        <li>Tap the <strong>left half</strong> of a star for ½, <strong>right half</strong> for full</li>
+        <li>Cycle through the rotation segmented (Promote → Maybe → Skip)</li>
+        <li><strong>Save</strong> toasts and returns to detail</li>
+      </ul>
+    `,
+    queue: `
+      <h4>Try it (this mode)</h4>
+      <ul>
+        <li>Tap an <strong>Unclaimed</strong> row (Halo, Bright Green Field) to claim it — toast confirms</li>
+        <li>Switch filter chips — <strong>Aging out</strong> shows claims ≥10d old</li>
+        <li>"DJ E Tape" is shown in red (≥14d unclaimed — will auto-release)</li>
+        <li>"Rat Saw God" is shown in orange (claimed 11d, aging)</li>
+        <li>Tap <strong>+ Add album</strong> to see the MD-only add sheet</li>
+        <li>Tap <strong>Past releases</strong> for the history of cleared queue items</li>
+      </ul>
+    `,
+    tags: `
+      <h4>Try it (this mode)</h4>
+      <ul>
+        <li>Search across the vocabulary — try "scene" or "Hausu"</li>
+        <li>Click <strong>Delete</strong> on a popular tag (e.g. <em>indie rock</em>, used on 84 reviews) — soft-warn dialog appears</li>
+        <li>Click <strong>Delete</strong> on a low-use tag — short confirm</li>
+        <li>Click <strong>Edit</strong> on any tag to rename — propagates to all reviews</li>
+        <li>Tap <strong>+ Add tag</strong> to create a new one</li>
+      </ul>
+    `,
+  };
+
+  const contract = `
+    <h4>BS contract — new endpoints</h4>
+    <pre><span class="comment"># Author-owned, one-per-album reviews</span>
+<span class="verb-get">GET</span>    /reviews?album_id=…
+<span class="verb-get">GET</span>    /reviews/{id}
+<span class="verb-post">POST</span>   /reviews              <span class="comment"># 409 if album already has one</span>
+<span class="verb-patch">PATCH</span>  /reviews/{id}         <span class="comment"># author or MD</span>
+<span class="verb-delete">DELETE</span> /reviews/{id}         <span class="comment"># MD-only</span>
+
+<span class="comment"># MD-curated review queue</span>
+<span class="verb-get">GET</span>    /review-queue?filter=…
+<span class="verb-post">POST</span>   /review-queue         <span class="comment"># MD-only</span>
+<span class="verb-delete">DELETE</span> /review-queue/{id}    <span class="comment"># MD-only</span>
+<span class="verb-post">POST</span>   /review-queue/{id}/claim
+<span class="verb-post">POST</span>   /review-queue/{id}/release
+
+<span class="comment"># Controlled tag vocabulary (MD-only writes)</span>
+<span class="verb-get">GET</span>    /tag-vocabulary
+<span class="verb-post">POST</span>   /tag-vocabulary       <span class="comment"># MD-only</span>
+<span class="verb-patch">PATCH</span>  /tag-vocabulary/{id}  <span class="comment"># rename, cascades</span>
+<span class="verb-delete">DELETE</span> /tag-vocabulary/{id}  <span class="comment"># cascades; warn if uses &gt; 0</span></pre>
+  `;
+
+  const notes = `
+    <h4>Notes</h4>
+    <ul>
+      <li><strong>One-per-album invariant</strong> enforced by a unique index on <code>reviews.album_id</code>. Authorship transfer is an in-place update of <code>author_dj_id</code>, no row swap.</li>
+      <li><code>rotation_hint</code> becomes <strong>required</strong> when the album is in the MD queue at claim time — falls back to optional otherwise.</li>
+      <li><code>published_publicly</code> is the v2 migration toggle to listener-facing — paired with the C4 public handle/PII work, not in v1.</li>
+      <li>Schema <strong>extends</strong> the existing <code>reviews</code> table; does not replace. Existing rotation review rows from the old system back-fill with <code>rotation_hint = 'maybe'</code>.</li>
+      <li>Claim soft-lock: 14d TTL on the <code>review_queue_claims</code> row; CRON sweeps and releases.</li>
+    </ul>
+  `;
+
+  el.innerHTML = baseHeader + (tryIt[currentMode] || "") + contract + notes;
+}
+
+// =====================================================================
+// BOOT
+// =====================================================================
+switchMode("detail");
+</script>
+</body>
+</html>

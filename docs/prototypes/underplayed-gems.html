@@ -1,0 +1,1068 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Underplayed Gems — Prototype</title>
+<style>
+  :root {
+    --ios-bg: #F2F2F7;
+    --ios-card: #FFFFFF;
+    --ios-sep: #C6C6C8;
+    --ios-blue: #007AFF;
+    --ios-purple: #5856D6;
+    --ios-pink: #FF2D55;
+    --ios-orange: #FF9500;
+    --ios-green: #34C759;
+    --ios-teal: #5AC8FA;
+    --ios-gray: #8E8E93;
+    --ios-gray-light: #E5E5EA;
+    --ios-gray-bg: #EFEFF4;
+    --ios-label: #000000;
+    --ios-label-sec: #3C3C43;
+    --ios-label-tert: #3C3C4399;
+    --frame-bg: #1c1c1e;
+
+    /* signal accents */
+    --signal-b: #FF9500;  /* orange — catalog rarity */
+    --signal-c: #5856D6;  /* purple — your drift */
+    --signal-d: #5AC8FA;  /* teal — rotation tenure */
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    background: #d8d8df;
+    color: #111;
+    padding: 24px 16px 48px;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1 {
+    margin: 0 0 4px 0;
+    font-size: 22px;
+    font-weight: 600;
+    text-align: center;
+  }
+  .subtitle {
+    text-align: center;
+    color: #555;
+    margin-bottom: 24px;
+    font-size: 14px;
+  }
+  .stage {
+    max-width: 900px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  @media (max-width: 800px) {
+    .stage { grid-template-columns: 1fr; }
+  }
+
+  /* ----- Phone frame ----- */
+  .phone-frame {
+    width: 390px;
+    margin: 0 auto;
+    background: var(--frame-bg);
+    border-radius: 50px;
+    padding: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    position: relative;
+  }
+  .phone-screen {
+    background: var(--ios-bg);
+    border-radius: 40px;
+    height: 800px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .notch {
+    width: 120px;
+    height: 30px;
+    background: var(--frame-bg);
+    border-radius: 0 0 18px 18px;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+  }
+  .status-bar {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+    background: var(--ios-bg);
+    z-index: 10;
+    position: relative;
+  }
+  .nav-bar-large {
+    padding: 0 16px 4px;
+    flex-shrink: 0;
+  }
+  .nav-bar-large h2 {
+    margin: 0;
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+  }
+  .nav-subtitle {
+    padding: 0 16px 12px;
+    font-size: 13px;
+    color: var(--ios-label-tert);
+    flex-shrink: 0;
+  }
+
+  /* ----- Preset / controls strip ----- */
+  .controls {
+    padding: 0 16px 12px;
+    flex-shrink: 0;
+  }
+  .control-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .control-label {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    font-weight: 600;
+  }
+  .refresh-btn {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 2px 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .refresh-btn:active { opacity: 0.6; }
+  .refresh-btn svg { transition: transform 0.5s ease-in-out; }
+  .refresh-btn.spinning svg { transform: rotate(360deg); }
+
+  .preset-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+  }
+  .preset-btn {
+    background: white;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    padding: 8px 4px;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ios-label-sec);
+    cursor: pointer;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    line-height: 1.2;
+  }
+  .preset-btn .preset-name {
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--ios-label);
+  }
+  .preset-btn .preset-weights {
+    font-size: 9px;
+    color: var(--ios-label-tert);
+    letter-spacing: 0.2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .preset-btn.active {
+    border-color: var(--ios-blue);
+    background: #E6F0FF;
+  }
+  .preset-btn.active .preset-name { color: var(--ios-blue); }
+  .preset-btn.active .preset-weights { color: var(--ios-blue); opacity: 0.85; }
+
+  /* ----- Weight readout ----- */
+  .weight-readout {
+    margin: 0 16px 12px;
+    background: white;
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .weight-stack {
+    flex: 1;
+    height: 6px;
+    border-radius: 3px;
+    overflow: hidden;
+    display: flex;
+    background: var(--ios-gray-bg);
+  }
+  .weight-stack > div {
+    height: 100%;
+    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .weight-stack .wB { background: var(--signal-b); }
+  .weight-stack .wC { background: var(--signal-c); }
+  .weight-stack .wD { background: var(--signal-d); }
+  .weight-legend {
+    display: flex;
+    gap: 10px;
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    font-variant-numeric: tabular-nums;
+  }
+  .weight-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .weight-legend i {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    display: inline-block;
+  }
+  .weight-legend .wB { background: var(--signal-b); }
+  .weight-legend .wC { background: var(--signal-c); }
+  .weight-legend .wD { background: var(--signal-d); }
+
+  /* ----- Scroll area & card list ----- */
+  .scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 24px;
+  }
+  .scroll-area::-webkit-scrollbar { width: 0; }
+
+  .gem-list {
+    margin: 0 16px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .gem-card {
+    background: white;
+    border-radius: 12px;
+    padding: 12px;
+    transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow 0.2s,
+                background 0.15s;
+    will-change: transform;
+  }
+  .gem-card.flipping {
+    transition: none;
+    z-index: 5;
+  }
+  .gem-card:active {
+    background: var(--ios-gray-bg);
+  }
+  .gem-head {
+    display: grid;
+    grid-template-columns: 56px 1fr auto;
+    gap: 10px;
+    align-items: center;
+  }
+  .gem-cover {
+    width: 56px;
+    height: 56px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #aaa, #555);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 18px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: -0.5px;
+    flex-shrink: 0;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+  }
+  .gem-meta {
+    min-width: 0;
+  }
+  .gem-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ios-label);
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-bottom: 1px;
+  }
+  .gem-artist {
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .gem-sub {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    margin-top: 1px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .gem-rank {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--ios-label-tert);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.3px;
+  }
+
+  .gem-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .gem-btn {
+    background: var(--ios-blue);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .gem-btn:active { opacity: 0.7; }
+  .gem-btn.bin.binned {
+    background: var(--ios-green);
+  }
+  .gem-btn.secondary {
+    background: var(--ios-gray-light);
+    color: var(--ios-label-sec);
+  }
+  .gem-btn.secondary[disabled] {
+    color: var(--ios-gray);
+    cursor: not-allowed;
+    background: var(--ios-gray-bg);
+  }
+
+  /* ----- Chip strip ----- */
+  .chip-strip {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    align-items: center;
+  }
+  .signal-chip {
+    border-radius: 10px;
+    padding: 3px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.4;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    letter-spacing: 0.15px;
+    transition: opacity 0.2s, transform 0.2s;
+  }
+  .signal-chip i {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .signal-chip.B {
+    background: rgba(255, 149, 0, 0.12);
+    color: #B25700;
+  }
+  .signal-chip.B i { background: var(--signal-b); }
+  .signal-chip.C {
+    background: rgba(88, 86, 214, 0.12);
+    color: #3A38A0;
+  }
+  .signal-chip.C i { background: var(--signal-c); }
+  .signal-chip.D {
+    background: rgba(90, 200, 250, 0.18);
+    color: #1F7AA0;
+  }
+  .signal-chip.D i { background: var(--signal-d); }
+  .signal-chip.dominant {
+    box-shadow: 0 0 0 1.5px currentColor inset;
+  }
+  .expand-btn {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 2px 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .expand-btn .ex-glyph {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--ios-blue);
+    color: white;
+    font-size: 11px;
+    line-height: 14px;
+    text-align: center;
+    font-weight: 700;
+    transition: transform 0.2s ease-in-out;
+  }
+  .gem-card.expanded .expand-btn .ex-glyph {
+    transform: rotate(45deg);
+  }
+
+  /* ----- Expansion ----- */
+  .gem-context {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out, margin-top 0.3s;
+    margin-top: 0;
+  }
+  .gem-card.expanded .gem-context {
+    max-height: 260px;
+    margin-top: 10px;
+  }
+  .context-inner {
+    border-top: 0.5px solid var(--ios-sep);
+    padding-top: 10px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--ios-label-sec);
+  }
+  .context-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    margin-bottom: 6px;
+  }
+  .context-row:last-child { margin-bottom: 0; }
+  .context-row strong {
+    color: var(--ios-label);
+    font-weight: 600;
+  }
+  .context-row .swatch {
+    flex-shrink: 0;
+    width: 4px;
+    align-self: stretch;
+    border-radius: 2px;
+    min-height: 16px;
+  }
+  .context-row.B .swatch { background: var(--signal-b); }
+  .context-row.C .swatch { background: var(--signal-c); }
+  .context-row.D .swatch { background: var(--signal-d); }
+  .context-row .body { flex: 1; }
+  .context-compare {
+    margin-top: 10px;
+    padding: 8px 10px;
+    background: var(--ios-gray-bg);
+    border-radius: 8px;
+    font-size: 11.5px;
+    color: var(--ios-label-sec);
+    line-height: 1.45;
+  }
+  .context-compare strong { color: var(--ios-label); }
+
+  /* ----- Toast ----- */
+  .toast {
+    position: absolute;
+    bottom: 24px;
+    left: 50%;
+    transform: translate(-50%, 80px);
+    background: rgba(28, 28, 30, 0.94);
+    color: white;
+    padding: 10px 18px;
+    border-radius: 22px;
+    font-size: 13px;
+    font-weight: 500;
+    z-index: 100;
+    opacity: 0;
+    transition: transform 0.3s cubic-bezier(0.2, 0.9, 0.3, 1), opacity 0.3s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    pointer-events: none;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.25);
+  }
+  .toast.show {
+    transform: translate(-50%, 0);
+    opacity: 1;
+  }
+  .toast .check {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--ios-green);
+    color: white;
+    font-size: 11px;
+    text-align: center;
+    line-height: 16px;
+    font-weight: 700;
+  }
+
+  /* ----- Explainer ----- */
+  .explainer {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    align-self: start;
+    position: sticky;
+    top: 16px;
+  }
+  .explainer h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .explainer h4 {
+    margin: 14px 0 6px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+  }
+  .explainer p {
+    color: #555;
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 0 0 8px 0;
+  }
+  .explainer ul {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    line-height: 1.5;
+  }
+  .explainer li { margin-bottom: 4px; }
+  .explainer code {
+    background: var(--ios-gray-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+  .explainer pre {
+    background: var(--ios-gray-bg);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 11px;
+    line-height: 1.55;
+    overflow-x: auto;
+    margin: 0 0 6px 0;
+  }
+  .opt-tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .opt-tag {
+    background: var(--ios-purple);
+    color: white;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .signal-key {
+    display: grid;
+    grid-template-columns: 18px 1fr;
+    gap: 6px 8px;
+    align-items: start;
+    font-size: 12px;
+    color: var(--ios-label-sec);
+    margin: 8px 0 4px;
+  }
+  .signal-key .dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    margin-top: 3px;
+  }
+  .signal-key .dot.B { background: var(--signal-b); }
+  .signal-key .dot.C { background: var(--signal-c); }
+  .signal-key .dot.D { background: var(--signal-d); }
+  .signal-key strong { color: var(--ios-label); font-weight: 600; }
+  .footnote {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    margin-top: 10px;
+    line-height: 1.45;
+  }
+</style>
+</head>
+<body>
+
+<h1>Underplayed Gems — B + C + D blend</h1>
+<p class="subtitle">Tap a preset to reweight the three signals — the list visibly reshuffles. Tap "+" on a card to see why it surfaced. Tap "+ Bin" to bookmark.</p>
+
+<div class="stage">
+
+  <div class="phone-frame">
+    <div class="phone-screen">
+      <div class="notch"></div>
+      <div class="status-bar">
+        <span>9:41</span>
+        <span>•••</span>
+      </div>
+      <div class="nav-bar-large"><h2>Underplayed Gems</h2></div>
+      <div class="nav-subtitle">Personalized — refreshed daily · on-air status: <strong>off-air</strong></div>
+
+      <div class="controls">
+        <div class="control-row">
+          <span class="control-label">Weighting</span>
+          <button class="refresh-btn" id="refreshBtn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+            Refresh
+          </button>
+        </div>
+        <div class="preset-row" id="presetRow"></div>
+      </div>
+
+      <div class="weight-readout">
+        <div class="weight-stack" id="weightStack">
+          <div class="wB"></div>
+          <div class="wC"></div>
+          <div class="wD"></div>
+        </div>
+        <div class="weight-legend" id="weightLegend"></div>
+      </div>
+
+      <div class="scroll-area">
+        <div class="gem-list" id="gemList"></div>
+        <div style="height: 24px"></div>
+      </div>
+
+      <div class="toast" id="toast">
+        <span class="check">✓</span>
+        <span id="toastMsg">Added to bin</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="explainer">
+    <div class="opt-tags">
+      <span class="opt-tag">Phase 3</span>
+      <span class="opt-tag">Pick #7</span>
+      <span class="opt-tag">ADR 0006-gated</span>
+    </div>
+    <h3>Underplayed Gems — rate-based B+C+D blend</h3>
+    <p>A personalized feed of albums worth pulling off the shelf, computed from three independent <em>rate-based</em> signals so the math doesn't tilt toward whatever the station played most this month. Adaptive weights let you steer toward catalog-discovery, your-own-drift, or churn from current rotation.</p>
+
+    <div class="signal-key">
+      <span class="dot B"></span>
+      <span><strong>B · Catalog rarity</strong> — albums the <em>whole station</em> plays infrequently. Long-tail catalog the LP shelves are hiding.</span>
+      <span class="dot C"></span>
+      <span><strong>C · Your drift</strong> — albums <em>you</em> haven't aired in a while, relative to your own history. Personal cold spots.</span>
+      <span class="dot D"></span>
+      <span><strong>D · Rotation tenure</strong> — rotation albums that have been on the shelf a long time and are aging out. Last call.</span>
+    </div>
+
+    <p>Each preset shifts how much each signal contributes to the rank. The chips that drove the rank stay visible per card — DJs need to know <em>why</em> a recommendation surfaced, not just <em>that</em> it did.</p>
+
+    <h4>Try it</h4>
+    <ul>
+      <li>Switch preset (<strong>Long tail</strong> / <strong>My drift</strong> / <strong>Rotation churn</strong> / <strong>Balanced</strong>) — watch the list reshuffle</li>
+      <li>Tap the <strong>+</strong> on any card to expand supporting context</li>
+      <li>Tap <strong>+ Bin</strong> to bookmark — toast confirms</li>
+      <li><strong>Send to Queue</strong> is disabled off-air; the surface is still informational</li>
+    </ul>
+
+    <h4>BS contract (ADR 0006-gated)</h4>
+    <pre>GET /djs/{id}/plays?since=...&amp;limit=...
+  // your history — feeds signal C
+
+GET /djs/{id}/play-stats?window=...
+  // your top-played, for compare context
+
+GET /library/query?sort=plays_per_year_asc
+              &amp;include_rotation=true
+  // long-tail candidates — feeds B + D</pre>
+
+    <h4>Notes</h4>
+    <ul>
+      <li>Phase <strong>B + D</strong> ship as soon as ADR 0006 lands (catalog-side only).</li>
+      <li>Phase <strong>C</strong> requires the per-DJ play feed.</li>
+      <li>Rotation plays included by default at weight <strong>0.75</strong> per Q8 grilling — rotation rotation-plays don't fully discount a record's rarity score, but they pull it down some.</li>
+      <li>Explanation chips are part of the surface, not an afterthought.</li>
+    </ul>
+
+    <p class="footnote">Per-album rotation tenure (signal D) is only defined for albums currently on rotation; "n/a" gems are catalog-only candidates and rank purely on B+C.</p>
+  </div>
+</div>
+
+<script>
+// ---------- Mock data ----------
+// B = catalog plays-per-year (LOWER = rarer = stronger signal)
+// C = months since YOU last aired (HIGHER = longer drift = stronger signal)
+// D = weeks on rotation, null if not on rotation (HIGHER = aging out = stronger)
+const GEMS = [
+  { id:"g1",  title:"Cor-Crane Secret",          artist:"Polvo",                  label:"Merge",       year:1992, B:8,  C:14, D:null, color:"#7A6F4A", initials:"PV" },
+  { id:"g2",  title:"Quiet Signs",                artist:"Jessica Pratt",          label:"Mexican Summer", year:2019, B:11, C:6,  D:9,    color:"#C9AC85", initials:"JP" },
+  { id:"g3",  title:"Wed 21",                     artist:"Juana Molina",           label:"Crammed",     year:2013, B:4,  C:11, D:null, color:"#3F6B5A", initials:"JM" },
+  { id:"g4",  title:"Edits",                      artist:"Chuquimamani-Condori",   label:"Surf Gang",   year:2018, B:14, C:2,  D:22,   color:"#C44A4A", initials:"CC" },
+  { id:"g5",  title:"Painted Desert",             artist:"Polvo",                  label:"Touch & Go",  year:1995, B:3,  C:19, D:null, color:"#A55B33", initials:"PV" },
+  { id:"g6",  title:"All Hat",                    artist:"DOGA",                   label:"Three Lobed", year:2024, B:9,  C:5,  D:7,    color:"#2C4D6E", initials:"DG" },
+  { id:"g7",  title:"Pang",                       artist:"Caroline Polachek",      label:"Perpetual Novice", year:2019, B:6,  C:9,  D:18, color:"#D4577A", initials:"CP" },
+  { id:"g8",  title:"Bright Green Field",         artist:"Squid",                  label:"Warp",        year:2021, B:5,  C:7,  D:12,   color:"#3E8C5A", initials:"SQ" },
+  { id:"g9",  title:"Icky Mettle",                artist:"Archers of Loaf",        label:"Alias",       year:1993, B:7,  C:24, D:null, color:"#6D4A8F", initials:"AL" },
+  { id:"g10", title:"Painful",                    artist:"Yo La Tengo",            label:"Matador",     year:1993, B:4,  C:16, D:null, color:"#406278", initials:"YL" },
+];
+
+// Per-album "compare" supporting context (your top played artist context)
+const COMPARE = {
+  g1: { mostPlayed:"Juana Molina", count:14, window:"90d", related:"Same Chapel Hill scene as Archers of Loaf (your #5)" },
+  g2: { mostPlayed:"Jessica Pratt", count:9, window:"90d", related:"You usually pair her with quiet-room slots — last aired Q1 2026" },
+  g3: { mostPlayed:"Juana Molina", count:14, window:"90d", related:"Two other Juana albums in your last 90d — Wed 21 is the gap" },
+  g4: { mostPlayed:"Chuquimamani-Condori", count:6, window:"90d", related:"You've been on the Edits track recently — full LP underplayed" },
+  g5: { mostPlayed:"Polvo",        count:12, window:"90d", related:"Heavy on Today's Active Lifestyles — Painted Desert is a sister LP" },
+  g6: { mostPlayed:"DOGA",         count:4, window:"90d", related:"Three Lobed catalog you've been pulling from this season" },
+  g7: { mostPlayed:"Caroline Polachek", count:5, window:"90d", related:"Aging out of M-rotation — 4 weeks left at current rate" },
+  g8: { mostPlayed:"Squid",        count:7, window:"90d", related:"Two Warp catalog spins in your last 30d — same label cluster" },
+  g9: { mostPlayed:"Polvo",        count:12, window:"90d", related:"You play the Chapel Hill scene weekly — this is the largest gap" },
+  g10:{ mostPlayed:"Yo La Tengo", count:8, window:"90d", related:"Last YLT aired was Fakebook (Apr 2025) — Painful is your longest cold streak" },
+};
+
+// ---------- Presets ----------
+// weights are normalized to sum to 1.0 in the readout
+const PRESETS = [
+  { id:"balanced", name:"Balanced",        weights:{B:0.34, C:0.33, D:0.33} },
+  { id:"longtail", name:"Long tail",       weights:{B:0.60, C:0.20, D:0.20} },
+  { id:"drift",    name:"My drift",        weights:{B:0.20, C:0.60, D:0.20} },
+  { id:"churn",    name:"Rotation churn",  weights:{B:0.20, C:0.20, D:0.60} },
+];
+
+let currentPreset = "balanced";
+let binned = new Set();
+let expanded = new Set();
+
+// ---------- Scoring ----------
+// Normalize each signal to 0..1 across the candidate pool.
+// B: lower plays-per-year is better → invert
+// C: more months since play is better
+// D: more weeks on rotation is better; null → 0 (not penalized, just absent)
+function normalize() {
+  const Bvals = GEMS.map(g => g.B);
+  const Cvals = GEMS.map(g => g.C);
+  const Dvals = GEMS.map(g => g.D ?? 0);
+  const Bmin = Math.min(...Bvals), Bmax = Math.max(...Bvals);
+  const Cmin = Math.min(...Cvals), Cmax = Math.max(...Cvals);
+  const Dmin = 0, Dmax = Math.max(...Dvals);
+  return GEMS.map(g => ({
+    ...g,
+    nB: 1 - ((g.B - Bmin) / (Bmax - Bmin || 1)),
+    nC: (g.C - Cmin) / (Cmax - Cmin || 1),
+    nD: g.D == null ? 0 : (g.D - Dmin) / (Dmax - Dmin || 1),
+  }));
+}
+
+function scoreFor(g, weights) {
+  // If D is null and weights[D] dominates, the gem still scores via B+C but won't be top.
+  // Rebalance: drop D weight to 0 for null-D items and re-normalize over B+C only.
+  if (g.D == null) {
+    const sum = weights.B + weights.C;
+    const wB = weights.B / sum;
+    const wC = weights.C / sum;
+    return g.nB * wB + g.nC * wC;
+  }
+  return g.nB * weights.B + g.nC * weights.C + g.nD * weights.D;
+}
+
+function rankedGems() {
+  const normed = normalize();
+  const w = PRESETS.find(p => p.id === currentPreset).weights;
+  return normed
+    .map(g => ({ ...g, score: scoreFor(g, w) }))
+    .sort((a, b) => b.score - a.score);
+}
+
+// ---------- Helpers ----------
+function dominantSignal(g) {
+  const w = PRESETS.find(p => p.id === currentPreset).weights;
+  const contribs = {
+    B: g.nB * w.B,
+    C: g.nC * w.C,
+    D: g.D == null ? -1 : g.nD * w.D,
+  };
+  let best = "B", bestV = -Infinity;
+  for (const k of ["B","C","D"]) {
+    if (contribs[k] > bestV) { bestV = contribs[k]; best = k; }
+  }
+  return best;
+}
+
+function chipText(g, signal) {
+  if (signal === "B") return `Long tail · ${g.B} plays/yr`;
+  if (signal === "C") {
+    const m = g.C;
+    if (m < 12) return `You: last aired ${m} mo ago`;
+    const y = (m / 12).toFixed(m % 12 === 0 ? 0 : 1);
+    return `You: last aired ${y} yr ago`;
+  }
+  if (signal === "D") {
+    if (g.D == null) return null;
+    const tier = g.D <= 10 ? "Light" : g.D <= 18 ? "Medium" : "Heavy";
+    return `${tier} rotation · ${g.D} wk`;
+  }
+}
+
+// ---------- Renderers ----------
+function renderPresets() {
+  const host = document.getElementById("presetRow");
+  host.innerHTML = PRESETS.map(p => {
+    const wStr = `${Math.round(p.weights.B*100)}/${Math.round(p.weights.C*100)}/${Math.round(p.weights.D*100)}`;
+    return `
+      <button class="preset-btn ${p.id===currentPreset?"active":""}" data-preset="${p.id}">
+        <span class="preset-name">${p.name}</span>
+        <span class="preset-weights">${wStr}</span>
+      </button>
+    `;
+  }).join("");
+  host.querySelectorAll(".preset-btn").forEach(b => {
+    b.addEventListener("click", () => {
+      if (currentPreset === b.dataset.preset) return;
+      currentPreset = b.dataset.preset;
+      renderPresets();
+      renderWeightReadout();
+      reshuffleGems();
+    });
+  });
+}
+
+function renderWeightReadout() {
+  const w = PRESETS.find(p => p.id === currentPreset).weights;
+  const stack = document.getElementById("weightStack");
+  stack.querySelector(".wB").style.width = (w.B * 100) + "%";
+  stack.querySelector(".wC").style.width = (w.C * 100) + "%";
+  stack.querySelector(".wD").style.width = (w.D * 100) + "%";
+  document.getElementById("weightLegend").innerHTML = `
+    <span><i class="wB"></i>B ${Math.round(w.B*100)}</span>
+    <span><i class="wC"></i>C ${Math.round(w.C*100)}</span>
+    <span><i class="wD"></i>D ${Math.round(w.D*100)}</span>
+  `;
+}
+
+function gemCardHTML(g, rank) {
+  const dom = dominantSignal(g);
+  const chips = [
+    { sig:"B", text: chipText(g, "B") },
+    { sig:"C", text: chipText(g, "C") },
+    { sig:"D", text: chipText(g, "D") },
+  ].filter(c => c.text);
+
+  const compare = COMPARE[g.id] || {};
+  const contextHTML = `
+    <div class="gem-context">
+      <div class="context-inner">
+        <div class="context-row B">
+          <div class="swatch"></div>
+          <div class="body"><strong>Catalog rarity (B):</strong> Station has aired this ${g.B}× this year. Rarity percentile sits in the long-tail bucket.</div>
+        </div>
+        <div class="context-row C">
+          <div class="swatch"></div>
+          <div class="body"><strong>Your drift (C):</strong> You haven't aired it in <strong>${g.C}</strong> months. Your median gap for this artist is ${Math.max(1, Math.round(g.C / 2.2))} months — well above your norm.</div>
+        </div>
+        ${g.D != null ? `
+        <div class="context-row D">
+          <div class="swatch"></div>
+          <div class="body"><strong>Rotation tenure (D):</strong> On ${g.D <= 10 ? "Light" : g.D <= 18 ? "Medium" : "Heavy"} rotation for <strong>${g.D} weeks</strong>. Typical tenure exits at 24 wk.</div>
+        </div>
+        ` : `
+        <div class="context-row D">
+          <div class="swatch"></div>
+          <div class="body"><strong>Rotation tenure (D):</strong> Not on rotation — pure catalog candidate.</div>
+        </div>
+        `}
+        <div class="context-compare">
+          Compare with your top played: <strong>${compare.mostPlayed || "—"}</strong> (${compare.count || 0} plays in your last ${compare.window || "90d"}). ${compare.related || ""}
+        </div>
+      </div>
+    </div>
+  `;
+
+  return `
+    <div class="gem-card ${expanded.has(g.id)?"expanded":""}" data-id="${g.id}">
+      <div class="gem-rank">#${rank}</div>
+      <div class="gem-head">
+        <div class="gem-cover" style="background:linear-gradient(135deg, ${g.color}, ${shade(g.color, -30)})">${g.initials}</div>
+        <div class="gem-meta">
+          <div class="gem-title">${g.title}</div>
+          <div class="gem-artist">${g.artist}</div>
+          <div class="gem-sub">${g.label} · ${g.year}</div>
+        </div>
+        <div class="gem-actions">
+          <button class="gem-btn bin ${binned.has(g.id)?"binned":""}" data-bin="${g.id}">${binned.has(g.id) ? "✓ Binned" : "+ Bin"}</button>
+          <button class="gem-btn secondary" disabled title="Off-air — enable when on-air">Queue</button>
+        </div>
+      </div>
+      <div class="chip-strip">
+        ${chips.map(c => `<span class="signal-chip ${c.sig} ${c.sig===dom?"dominant":""}"><i></i>${c.text}</span>`).join("")}
+        <button class="expand-btn" data-expand="${g.id}">
+          <span class="ex-glyph">+</span>
+          <span>${expanded.has(g.id) ? "Hide" : "Why"}</span>
+        </button>
+      </div>
+      ${contextHTML}
+    </div>
+  `;
+}
+
+function renderGems(initial = false) {
+  const list = document.getElementById("gemList");
+  const ranked = rankedGems();
+  list.innerHTML = ranked.map((g, i) => gemCardHTML(g, i + 1)).join("");
+  attachCardWiring();
+}
+
+// ---------- FLIP reshuffle ----------
+function captureRects() {
+  const out = new Map();
+  document.querySelectorAll(".gem-card").forEach(el => {
+    out.set(el.dataset.id, el.getBoundingClientRect());
+  });
+  return out;
+}
+
+function reshuffleGems() {
+  const before = captureRects();
+  const ranked = rankedGems();
+  const list = document.getElementById("gemList");
+  list.innerHTML = ranked.map((g, i) => gemCardHTML(g, i + 1)).join("");
+  attachCardWiring();
+
+  // Animate from old positions → new positions
+  const after = captureRects();
+  document.querySelectorAll(".gem-card").forEach(el => {
+    const id = el.dataset.id;
+    const oldR = before.get(id);
+    const newR = after.get(id);
+    if (!oldR || !newR) return;
+    const dx = oldR.left - newR.left;
+    const dy = oldR.top - newR.top;
+    if (dx === 0 && dy === 0) return;
+    el.classList.add("flipping");
+    el.style.transform = `translate(${dx}px, ${dy}px)`;
+    el.style.boxShadow = "0 6px 16px rgba(0,0,0,0.10)";
+    requestAnimationFrame(() => {
+      el.classList.remove("flipping");
+      el.style.transform = "";
+      requestAnimationFrame(() => {
+        // clear shadow after the slide finishes
+        setTimeout(() => { el.style.boxShadow = ""; }, 460);
+      });
+    });
+  });
+}
+
+// ---------- Wiring ----------
+function attachCardWiring() {
+  document.querySelectorAll("[data-bin]").forEach(btn => {
+    btn.addEventListener("click", e => {
+      e.stopPropagation();
+      const id = btn.dataset.bin;
+      const g = GEMS.find(x => x.id === id);
+      if (binned.has(id)) {
+        binned.delete(id);
+        btn.classList.remove("binned");
+        btn.textContent = "+ Bin";
+        showToast(`Removed from bin · ${g.title}`);
+      } else {
+        binned.add(id);
+        btn.classList.add("binned");
+        btn.textContent = "✓ Binned";
+        showToast(`Added to bin · ${g.title}`);
+      }
+    });
+  });
+  document.querySelectorAll("[data-expand]").forEach(btn => {
+    btn.addEventListener("click", e => {
+      e.stopPropagation();
+      const id = btn.dataset.expand;
+      const card = btn.closest(".gem-card");
+      if (expanded.has(id)) {
+        expanded.delete(id);
+        card.classList.remove("expanded");
+        btn.querySelector("span:last-child").textContent = "Why";
+      } else {
+        expanded.add(id);
+        card.classList.add("expanded");
+        btn.querySelector("span:last-child").textContent = "Hide";
+      }
+    });
+  });
+}
+
+// ---------- Toast ----------
+let toastTimer = null;
+function showToast(msg) {
+  const t = document.getElementById("toast");
+  document.getElementById("toastMsg").textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 1800);
+}
+
+// ---------- Refresh ----------
+document.getElementById("refreshBtn").addEventListener("click", () => {
+  const btn = document.getElementById("refreshBtn");
+  btn.classList.add("spinning");
+  setTimeout(() => btn.classList.remove("spinning"), 600);
+  // Simulate fresh pick by perturbing C values slightly and re-render
+  GEMS.forEach(g => { g.C = Math.max(1, g.C + Math.round((Math.random() - 0.5) * 2)); });
+  reshuffleGems();
+  showToast("Refreshed your gems");
+});
+
+// ---------- Color util ----------
+function shade(hex, pct) {
+  const num = parseInt(hex.slice(1), 16);
+  let r = (num >> 16) + pct;
+  let g = ((num >> 8) & 0xff) + pct;
+  let b = (num & 0xff) + pct;
+  r = Math.max(0, Math.min(255, r));
+  g = Math.max(0, Math.min(255, g));
+  b = Math.max(0, Math.min(255, b));
+  return "#" + ((r << 16) | (g << 8) | b).toString(16).padStart(6, "0");
+}
+
+// ---------- Boot ----------
+renderPresets();
+renderWeightReadout();
+renderGems(true);
+</script>
+</body>
+</html>

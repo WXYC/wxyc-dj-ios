@@ -1,0 +1,1385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DJ Profile — Tier 1 native, Tier 2 deep-link — Prototype</title>
+<style>
+  :root {
+    --ios-bg: #F2F2F7;
+    --ios-card: #FFFFFF;
+    --ios-sep: #C6C6C8;
+    --ios-blue: #007AFF;
+    --ios-purple: #5856D6;
+    --ios-pink: #FF2D55;
+    --ios-orange: #FF9500;
+    --ios-green: #34C759;
+    --ios-teal: #5AC8FA;
+    --ios-red: #FF3B30;
+    --ios-gray: #8E8E93;
+    --ios-gray-light: #E5E5EA;
+    --ios-gray-bg: #EFEFF4;
+    --ios-label: #000000;
+    --ios-label-sec: #3C3C43;
+    --ios-label-tert: #3C3C4399;
+    --frame-bg: #1c1c1e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    background: #d8d8df;
+    color: #111;
+    padding: 24px 16px 48px;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1 {
+    margin: 0 0 4px 0;
+    font-size: 22px;
+    font-weight: 600;
+    text-align: center;
+  }
+  .subtitle {
+    text-align: center;
+    color: #555;
+    margin-bottom: 24px;
+    font-size: 14px;
+  }
+
+  /* ----- Mode tab bar ----- */
+  .tab-bar {
+    max-width: 900px;
+    margin: 0 auto 24px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    padding: 4px;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .tab-btn {
+    padding: 10px 12px;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    color: #444;
+    text-align: left;
+    line-height: 1.3;
+  }
+  .tab-btn .tab-title {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .tab-btn .tab-desc {
+    display: block;
+    font-size: 11px;
+    color: #777;
+    font-weight: 400;
+  }
+  .tab-btn.active {
+    background: var(--ios-blue);
+    color: white;
+  }
+  .tab-btn.active .tab-desc { color: rgba(255,255,255,0.85); }
+
+  .stage {
+    max-width: 900px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  @media (max-width: 800px) {
+    .stage { grid-template-columns: 1fr; }
+  }
+
+  /* ----- Phone frame ----- */
+  .phone-frame {
+    width: 390px;
+    margin: 0 auto;
+    background: var(--frame-bg);
+    border-radius: 50px;
+    padding: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    position: relative;
+  }
+  .phone-screen {
+    background: var(--ios-bg);
+    border-radius: 40px;
+    height: 800px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .notch {
+    width: 120px;
+    height: 30px;
+    background: var(--frame-bg);
+    border-radius: 0 0 18px 18px;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+  }
+  .status-bar {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+    background: var(--ios-bg);
+    z-index: 10;
+    position: relative;
+  }
+
+  /* ----- Nav bar (large title) ----- */
+  .nav-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 16px 8px;
+    min-height: 44px;
+  }
+  .nav-bar-side {
+    min-width: 60px;
+    display: flex;
+    align-items: center;
+  }
+  .nav-bar-side.right { justify-content: flex-end; }
+  .nav-bar-side .nav-btn {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 17px;
+    cursor: pointer;
+    padding: 4px 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .nav-bar-side .nav-btn.bold { font-weight: 600; }
+  .nav-bar-side svg { stroke: var(--ios-blue); }
+  .nav-title-small {
+    flex: 1;
+    text-align: center;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ios-label);
+  }
+  .nav-bar-large {
+    padding: 0 16px 8px;
+  }
+  .nav-bar-large h2 {
+    margin: 0;
+    text-align: left;
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+  }
+
+  .scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 24px;
+  }
+  .scroll-area::-webkit-scrollbar { width: 0; }
+
+  /* ----- Header card ----- */
+  .header-card {
+    background: white;
+    margin: 0 16px 16px;
+    border-radius: 12px;
+    padding: 20px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .avatar {
+    width: 88px;
+    height: 88px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--ios-pink), var(--ios-purple));
+    color: white;
+    font-size: 34px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    letter-spacing: -1px;
+    box-shadow: 0 4px 12px rgba(88, 86, 214, 0.25);
+  }
+  .avatar.md {
+    background: linear-gradient(135deg, var(--ios-orange), var(--ios-pink));
+    box-shadow: 0 4px 12px rgba(255, 149, 0, 0.25);
+  }
+  .avatar.alum {
+    background: linear-gradient(135deg, var(--ios-gray), #6e6e74);
+    box-shadow: 0 4px 12px rgba(142, 142, 147, 0.25);
+  }
+  .display-name {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--ios-label);
+    margin-top: 4px;
+  }
+  .real-name {
+    font-size: 14px;
+    color: var(--ios-label-tert);
+  }
+  .badge-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .role-badge {
+    background: var(--ios-blue);
+    color: white;
+    border-radius: 10px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+  }
+  .role-badge.md { background: var(--ios-orange); }
+  .role-badge.alum { background: var(--ios-gray); }
+  .status-pill {
+    background: var(--ios-gray-light);
+    color: var(--ios-label-sec);
+    border-radius: 10px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  /* ----- Stat tiles ----- */
+  .stat-row {
+    margin: 0 16px 16px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+  .stat-card {
+    background: white;
+    border-radius: 12px;
+    padding: 12px 8px;
+    text-align: center;
+  }
+  .stat-num {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--ios-label);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.4px;
+    line-height: 1.1;
+  }
+  .stat-num.small { font-size: 16px; }
+  .stat-label {
+    font-size: 10px;
+    color: var(--ios-label-tert);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  /* ----- Section title ----- */
+  .section-title {
+    padding: 0 16px 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ios-label-sec);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-top: 4px;
+  }
+
+  /* ----- List card (rows) ----- */
+  .list-card {
+    background: white;
+    margin: 0 16px 16px;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .list-row {
+    padding: 11px 14px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2px 12px;
+    align-items: center;
+  }
+  .list-row:last-child { border-bottom: none; }
+  .list-row .row-label {
+    font-size: 13px;
+    color: var(--ios-label-tert);
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .list-row .row-value {
+    font-size: 15px;
+    color: var(--ios-label);
+    grid-column: 1;
+    grid-row: 2;
+    font-weight: 500;
+  }
+  .list-row.tappable {
+    cursor: pointer;
+  }
+  .list-row.tappable:active { background: var(--ios-gray-bg); }
+  .list-row .chevron {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    color: var(--ios-gray);
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+  }
+
+  /* ----- Tier 2 row ----- */
+  .list-row.tier2 {
+    grid-template-rows: auto auto auto;
+  }
+  .list-row.tier2 .row-deeplink {
+    grid-column: 1;
+    grid-row: 3;
+    font-size: 11px;
+    color: var(--ios-blue);
+    margin-top: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .list-row.tier2 .row-deeplink svg { display: inline-block; }
+  .list-row.tier2 .row-value {
+    color: var(--ios-label-sec);
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 1.35;
+  }
+  .list-row.tier2 .row-value.placeholder {
+    color: var(--ios-label-tert);
+    font-style: italic;
+  }
+  .bio-preview {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .social-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .social-chip {
+    background: var(--ios-gray-bg);
+    color: var(--ios-label-sec);
+    border-radius: 10px;
+    padding: 3px 9px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .avatar-mini {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--ios-pink), var(--ios-purple));
+    color: white;
+    font-size: 11px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+
+  /* ----- Sign-out footer ----- */
+  .footer-action {
+    margin: 16px 16px 0;
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .footer-action button {
+    width: 100%;
+    background: white;
+    border: none;
+    padding: 14px;
+    font: inherit;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--ios-red);
+    cursor: pointer;
+    text-align: center;
+  }
+  .footer-action button.action-blue { color: var(--ios-blue); }
+  .footer-action button:active { background: var(--ios-gray-bg); }
+
+  /* ----- Recently played strip ----- */
+  .recent-play {
+    margin: 0 16px 16px;
+    background: white;
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+  .recent-play .recent-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  .recent-play .recent-label {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    font-weight: 600;
+  }
+  .recent-play .recent-date {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    font-variant-numeric: tabular-nums;
+  }
+  .recent-play .recent-artist {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ios-label);
+  }
+  .recent-play .recent-song {
+    font-size: 13px;
+    color: var(--ios-label-sec);
+  }
+
+  /* ----- Alumni muted state ----- */
+  .muted .header-card,
+  .muted .stat-card,
+  .muted .list-card,
+  .muted .recent-play {
+    filter: saturate(0.7);
+  }
+
+  /* ----- Edit sheet ----- */
+  .sheet-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 100;
+    display: none;
+  }
+  .sheet-overlay.open { display: block; }
+  .sheet {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--ios-bg);
+    border-radius: 16px 16px 0 0;
+    max-height: 92%;
+    display: flex;
+    flex-direction: column;
+    transform: translateY(100%);
+    transition: transform 0.28s ease-out;
+  }
+  .sheet-overlay.open .sheet { transform: translateY(0); }
+  .sheet-grabber {
+    width: 36px;
+    height: 5px;
+    background: var(--ios-gray-light);
+    border-radius: 3px;
+    margin: 6px auto 0;
+  }
+  .sheet-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 16px 12px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    background: var(--ios-bg);
+  }
+  .sheet-header .sheet-title {
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .sheet-header button {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 15px;
+    cursor: pointer;
+    padding: 4px 0;
+    min-width: 56px;
+    text-align: left;
+  }
+  .sheet-header button.primary { font-weight: 600; text-align: right; }
+  .sheet-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 0 24px;
+  }
+  .sheet-body::-webkit-scrollbar { width: 0; }
+
+  /* Edit form */
+  .form-section {
+    margin-bottom: 16px;
+  }
+  .form-section-title {
+    padding: 0 16px 6px;
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    font-weight: 600;
+  }
+  .form-card {
+    background: white;
+    margin: 0 16px;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .form-row {
+    padding: 9px 14px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .form-row:last-child { border-bottom: none; }
+  .form-row .form-label {
+    font-size: 14px;
+    color: var(--ios-label);
+    width: 96px;
+    flex-shrink: 0;
+  }
+  .form-row .form-input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    font: inherit;
+    font-size: 15px;
+    color: var(--ios-label);
+    outline: none;
+    text-align: right;
+    min-width: 0;
+  }
+  .form-row .form-input::placeholder { color: var(--ios-gray); }
+  .form-row .form-value-ro {
+    flex: 1;
+    text-align: right;
+    font-size: 15px;
+    color: var(--ios-label-tert);
+  }
+  .form-row .field-error {
+    color: var(--ios-red);
+    font-size: 11px;
+    margin-top: 2px;
+  }
+  .form-help {
+    padding: 6px 18px 0;
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    line-height: 1.4;
+  }
+  .form-help code {
+    background: var(--ios-gray-light);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 10px;
+  }
+  .form-row.has-chips {
+    flex-wrap: wrap;
+  }
+  .chip-row-inline {
+    flex-basis: 100%;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding-top: 8px;
+  }
+  .pronoun-chip {
+    background: var(--ios-gray-bg);
+    border: none;
+    color: var(--ios-label-sec);
+    border-radius: 14px;
+    padding: 5px 11px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .pronoun-chip.active {
+    background: var(--ios-blue);
+    color: white;
+  }
+
+  /* Day picker */
+  .day-picker {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+    flex: 1;
+  }
+  .day-cell {
+    background: var(--ios-gray-bg);
+    border: none;
+    border-radius: 6px;
+    padding: 6px 0;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ios-label-sec);
+    cursor: pointer;
+  }
+  .day-cell.active {
+    background: var(--ios-blue);
+    color: white;
+  }
+
+  /* Time wheels (mock) */
+  .time-wheels {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 4px 0;
+  }
+  .time-wheel {
+    background: var(--ios-gray-bg);
+    border-radius: 8px;
+    padding: 6px 10px;
+    text-align: center;
+    min-width: 60px;
+    position: relative;
+  }
+  .time-wheel-label {
+    font-size: 10px;
+    color: var(--ios-label-tert);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .time-wheel-value {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ios-label);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.15;
+  }
+  .time-wheel-arrows {
+    position: absolute;
+    top: 2px;
+    right: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    font-size: 8px;
+    color: var(--ios-gray);
+    line-height: 1;
+  }
+  .time-sep {
+    color: var(--ios-label-tert);
+    font-weight: 500;
+    font-size: 14px;
+  }
+
+  /* ----- Toast ----- */
+  .toast {
+    position: absolute;
+    left: 50%;
+    bottom: 32px;
+    transform: translateX(-50%) translateY(20px);
+    background: rgba(28, 28, 30, 0.95);
+    color: white;
+    padding: 10px 16px;
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: 500;
+    z-index: 200;
+    opacity: 0;
+    transition: opacity 0.22s, transform 0.22s;
+    pointer-events: none;
+    max-width: 340px;
+    text-align: center;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* ----- Explainer panel ----- */
+  .explainer {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    align-self: start;
+    position: sticky;
+    top: 16px;
+  }
+  .explainer h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .explainer h4 {
+    margin: 14px 0 6px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+  }
+  .explainer p {
+    color: #555;
+    font-size: 13px;
+    line-height: 1.55;
+    margin: 0 0 8px 0;
+  }
+  .explainer ul {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    line-height: 1.5;
+  }
+  .explainer li { margin-bottom: 4px; }
+  .explainer code {
+    background: var(--ios-gray-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+  .opt-tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .opt-tag {
+    background: var(--ios-purple);
+    color: white;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .opt-tag.phase { background: var(--ios-blue); }
+  .opt-tag.tier { background: var(--ios-orange); }
+  .contract-block {
+    background: var(--ios-bg);
+    border-radius: 8px;
+    padding: 12px;
+    font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--ios-label-sec);
+    overflow-x: auto;
+  }
+  .contract-block .verb {
+    color: var(--ios-purple);
+    font-weight: 600;
+  }
+  .contract-block .verb.patch { color: var(--ios-orange); }
+  .contract-block .comment {
+    color: var(--ios-label-tert);
+    font-style: italic;
+  }
+  .pill-row {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin: 4px 0 8px;
+  }
+  .tier-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .tier-pill.t1 {
+    background: rgba(52, 199, 89, 0.15);
+    color: #1f8a3d;
+  }
+  .tier-pill.t2 {
+    background: rgba(255, 149, 0, 0.18);
+    color: #b86a00;
+  }
+</style>
+</head>
+<body>
+
+<h1>DJ Profile — Tier 1 native, Tier 2 deep-link</h1>
+<p class="subtitle">Phase 3, Pick #12 — internal-only profile for signed-in DJs. Toggle role states; tap Tier 2 rows to see deep-link toast.</p>
+
+<nav class="tab-bar" id="tabBar">
+  <button class="tab-btn active" data-mode="view"><span class="tab-title">My Profile (view)</span><span class="tab-desc">Default — own profile</span></button>
+  <button class="tab-btn" data-mode="edit"><span class="tab-title">My Profile (edit)</span><span class="tab-desc">Sheet open, Tier 1 form</span></button>
+  <button class="tab-btn" data-mode="md"><span class="tab-title">Another DJ (MD)</span><span class="tab-desc">Sarah, music director</span></button>
+  <button class="tab-btn" data-mode="alum"><span class="tab-title">Alumni profile</span><span class="tab-desc">Last on-air 2022</span></button>
+</nav>
+
+<div class="stage">
+
+  <div class="phone-frame">
+    <div class="phone-screen" id="screen">
+      <div class="notch"></div>
+      <div class="status-bar">
+        <span>9:41</span>
+        <span>•••</span>
+      </div>
+      <div id="profileRoot" style="flex:1;display:flex;flex-direction:column;overflow:hidden"></div>
+      <div class="sheet-overlay" id="sheetOverlay">
+        <div class="sheet" id="sheet"></div>
+      </div>
+      <div class="toast" id="toast"></div>
+    </div>
+  </div>
+
+  <div class="explainer">
+    <div class="opt-tags">
+      <span class="opt-tag phase">Phase 3</span>
+      <span class="opt-tag">Pick #12</span>
+      <span class="opt-tag">Internal-only</span>
+    </div>
+    <h3>DJ Profile — Tier 1 native, Tier 2 deep-link</h3>
+    <p>The v1 profile is <strong>internal-only</strong>: signed-in DJs see each other's pages, alumni stay on the roster forever (radio history is the point). Public publication is held until C4 ships handle reservation and the deep-link story matures.</p>
+
+    <div class="pill-row">
+      <span class="tier-pill t1">● Tier 1 · native edit</span>
+      <span class="tier-pill t2">● Tier 2 · deep-link</span>
+    </div>
+    <p><strong>Tier 1</strong> is the small-on-the-go field set: handle, show name, show day/time, pronouns. These map directly to the existing <code>auth_user</code> schema and are safe to edit from an iPhone form. <strong>Tier 2</strong> is long-form content — bio, social links, custom avatars — that wants real composition affordances. It deep-links to <em>dj.wxyc.org</em> until v2 brings it in-app alongside C4.</p>
+
+    <p>Alumni get a muted treatment and a "last on-air" pill but are never archived or removed — same record, same handle, <code>is_alum=true</code>.</p>
+
+    <h4>Try it</h4>
+    <ul>
+      <li>Tap <strong>Edit</strong> (top-right) to open the Tier 1 sheet</li>
+      <li>Switch tabs above to preview MD / Alumni / teammate states</li>
+      <li>Tap any <strong>Tier 2 row</strong> (bio / social / avatar) → toast confirms it would deep-link out</li>
+      <li>In edit mode, the pronoun chips populate the field; the day picker is a tappable single-select</li>
+    </ul>
+
+    <h4>BS contract</h4>
+    <div class="contract-block"><span class="comment"># Read</span>
+<span class="verb">GET</span> /me/profile          <span class="comment"># own — full record</span>
+<span class="verb">GET</span> /djs/{id}/profile      <span class="comment"># teammate or alum</span>
+
+<span class="comment"># Tier 1 write (whitelist)</span>
+<span class="verb patch">PATCH</span> /me/profile
+{
+  handle?, show_name?,
+  show_day?, show_time?,
+  pronouns?
+}
+
+<span class="comment"># Tier 2 fields exist on auth_user</span>
+<span class="comment"># but are NOT in the PATCH whitelist —</span>
+<span class="comment"># edited via dj.wxyc.org until C4 lands.</span></div>
+
+    <h4>Notes</h4>
+    <ul>
+      <li>Alumni filter: <code>is_alum=true</code> (added to schema; never removes the row)</li>
+      <li>Public publication (C4) gates Tier 2 native editing — when handles are public, in-app composition can ship safely</li>
+      <li>Memo / direct-message rail (the "Send Memo to Sarah" button) is a separate Pick — wired here as a no-op deep-link</li>
+      <li>Handle constraint matches the auth service: <code>3–32 chars, [a-zA-Z0-9_]</code></li>
+    </ul>
+  </div>
+</div>
+
+<script>
+// ---------- Profile data ----------
+const PROFILES = {
+  self: {
+    id: "self",
+    role: "dj",
+    initials: "BS",
+    displayName: "biscuit",
+    realName: "Sara Chen",
+    roleBadge: "DJ",
+    showName: "Off the Hook",
+    showDay: "Mon",
+    showTime: "8:00 – 10:00 PM",
+    pronouns: "she/her",
+    joined: "Sept 2024",
+    tenure: "1y 4mo at WXYC",
+    shows: "127 shows",
+    plays: "1,438 plays",
+    bio: "Slowcore, perforated guitar, and whatever Chuquimamani-Condori is doing. Lifelong North Carolinian. The mic is hot but I'm not afraid of dead air.",
+    socials: ["ig: @biscuitchen", "bandcamp", "ra"],
+    customAvatar: "Initials letterform",
+    isSelf: true,
+    isAlum: false,
+    recent: { artist: "Polvo", song: "Time Isn't on My Side", date: "Last Mon" }
+  },
+  md: {
+    id: "sarah",
+    role: "md",
+    initials: "SR",
+    displayName: "sarah",
+    realName: "Sarah Reyes",
+    roleBadge: "MD",
+    showName: "Static Bloom",
+    showDay: "Wed",
+    showTime: "10:00 PM – 12:00 AM",
+    pronouns: "she/they",
+    joined: "Aug 2023",
+    tenure: "2y 9mo at WXYC",
+    shows: "248 shows",
+    plays: "3,012 plays",
+    bio: "Music director. Catalog spelunker. Pushed for the new-arrivals shelf rewrite. Will trade you a Wednesday split for a Three Lobed promo.",
+    socials: ["ig: @s.r.reyes", "tumblr"],
+    customAvatar: "Custom photo",
+    isSelf: false,
+    isAlum: false,
+    recent: { artist: "Wednesday", song: "Bull Believer", date: "Yesterday" }
+  },
+  alum: {
+    id: "rmc",
+    role: "alum",
+    initials: "RM",
+    displayName: "rmc",
+    realName: "Ravi M. Choudhury",
+    roleBadge: "Alumni",
+    showName: "Dub Static",
+    showDay: "Thu",
+    showTime: "12:00 – 2:00 AM",
+    pronouns: "he/him",
+    joined: "Sept 2019",
+    tenure: "3y on-air",
+    shows: "84 shows",
+    plays: "912 plays",
+    bio: "WXYC '19–'22. Currently in Brooklyn, still pushing dub and microhouse to anyone who'll listen. Reach out for tape trades.",
+    socials: ["ig: @rmc.dub", "bandcamp"],
+    customAvatar: "Custom photo",
+    isSelf: false,
+    isAlum: true,
+    lastOnAir: "Last on-air 2022",
+    recent: { artist: "Juana Molina", song: "Eras", date: "Mar 2022" }
+  }
+};
+
+// ---------- State ----------
+let currentMode = "view"; // view | edit | md | alum
+let editState = {
+  handle: "biscuit",
+  showName: "Off the Hook",
+  showDay: "Mon",
+  startHour: 8, startMin: 0, startMer: "PM",
+  endHour: 10,  endMin: 0, endMer: "PM",
+  pronouns: "she/her",
+  email: "sarac@unc.edu"
+};
+const PRONOUN_OPTIONS = ["she/her", "he/him", "they/them", "she/they", "he/they"];
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// ---------- Profile rendering ----------
+function profileForMode() {
+  if (currentMode === "md") return PROFILES.md;
+  if (currentMode === "alum") return PROFILES.alum;
+  return PROFILES.self;
+}
+
+function renderProfile() {
+  const p = profileForMode();
+  const root = document.getElementById("profileRoot");
+  const showEditBtn = p.isSelf && !p.isAlum;
+  const footerLabel = p.isSelf
+    ? `Sign Out`
+    : (p.isAlum ? `Email ${p.realName.split(" ")[0]}` : `Send Memo to ${p.realName.split(" ")[0]}`);
+  const footerClass = p.isSelf ? "" : "action-blue";
+
+  const mutedClass = p.isAlum ? "muted" : "";
+  const avatarClass = p.role === "md" ? "md" : (p.role === "alum" ? "alum" : "");
+  const badgeClass = p.role === "md" ? "md" : (p.role === "alum" ? "alum" : "");
+
+  const showSched = `${p.showDay === "Mon" ? "Mondays" :
+                       p.showDay === "Tue" ? "Tuesdays" :
+                       p.showDay === "Wed" ? "Wednesdays" :
+                       p.showDay === "Thu" ? "Thursdays" :
+                       p.showDay === "Fri" ? "Fridays" :
+                       p.showDay === "Sat" ? "Saturdays" : "Sundays"} ${p.showTime}`;
+
+  root.innerHTML = `
+    <div class="nav-bar">
+      <div class="nav-bar-side"></div>
+      <div class="nav-title-small">Profile</div>
+      <div class="nav-bar-side right">
+        ${showEditBtn ? `<button class="nav-btn bold" id="editBtn">Edit</button>` : ""}
+      </div>
+    </div>
+    <div class="scroll-area ${mutedClass}">
+      <div class="header-card">
+        <div class="avatar ${avatarClass}">${p.initials}</div>
+        <div class="display-name">${p.displayName}</div>
+        <div class="real-name">${p.realName}</div>
+        <div class="badge-row">
+          <span class="role-badge ${badgeClass}">${p.roleBadge}</span>
+          ${p.isAlum ? `<span class="status-pill">${p.lastOnAir}</span>` : ""}
+        </div>
+      </div>
+
+      <div class="stat-row">
+        <div class="stat-card">
+          <div class="stat-num small">${p.tenure.replace(" at WXYC","")}</div>
+          <div class="stat-label">${p.isAlum ? "On-air" : "At WXYC"}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-num">${p.shows.split(" ")[0]}</div>
+          <div class="stat-label">Shows</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-num">${p.plays.split(" ")[0]}</div>
+          <div class="stat-label">Plays</div>
+        </div>
+      </div>
+
+      <div class="section-title">Basics</div>
+      <div class="list-card">
+        <div class="list-row">
+          <div class="row-label">DJ handle</div>
+          <div class="row-value">${p.displayName}</div>
+        </div>
+        <div class="list-row">
+          <div class="row-label">Show name</div>
+          <div class="row-value">${p.showName}</div>
+        </div>
+        <div class="list-row">
+          <div class="row-label">Show day &amp; time</div>
+          <div class="row-value">${showSched}</div>
+        </div>
+        <div class="list-row">
+          <div class="row-label">Pronouns</div>
+          <div class="row-value">${p.pronouns}</div>
+        </div>
+        <div class="list-row">
+          <div class="row-label">${p.isAlum ? "Last on-air" : "Joined"}</div>
+          <div class="row-value">${p.isAlum ? p.lastOnAir.replace("Last on-air ", "") : p.joined}</div>
+        </div>
+      </div>
+
+      <div class="section-title">Bio &amp; links</div>
+      <div class="list-card">
+        <div class="list-row tier2 tappable" data-tier2="bio">
+          <div class="row-label">Bio</div>
+          <div class="row-value bio-preview">${p.bio}</div>
+          <div class="chevron">›</div>
+          <div class="row-deeplink">
+            ${extLinkIcon()} Edit on dj.wxyc.org
+          </div>
+        </div>
+        <div class="list-row tier2 tappable" data-tier2="social">
+          <div class="row-label">Social links</div>
+          <div class="row-value">
+            <div class="social-chips">
+              ${p.socials.map(s => `<span class="social-chip">${s}</span>`).join("")}
+            </div>
+          </div>
+          <div class="chevron">›</div>
+          <div class="row-deeplink">
+            ${extLinkIcon()} Edit on dj.wxyc.org
+          </div>
+        </div>
+        <div class="list-row tier2 tappable" data-tier2="avatar">
+          <div class="row-label">Custom avatar</div>
+          <div class="row-value">
+            <span class="avatar-mini ${avatarClass}">${p.initials}</span>
+            <span style="vertical-align:middle">${p.customAvatar}</span>
+          </div>
+          <div class="chevron">›</div>
+          <div class="row-deeplink">
+            ${extLinkIcon()} Edit on dj.wxyc.org
+          </div>
+        </div>
+      </div>
+
+      <div class="section-title">Recently played</div>
+      <div class="recent-play">
+        <div class="recent-header">
+          <span class="recent-label">${p.isSelf ? "Your last set" : (p.isAlum ? "Final play" : "Their last set")}</span>
+          <span class="recent-date">${p.recent.date}</span>
+        </div>
+        <div class="recent-artist">${p.recent.artist}</div>
+        <div class="recent-song">${p.recent.song}</div>
+      </div>
+
+      <div class="footer-action">
+        <button id="footerBtn" class="${footerClass}">${footerLabel}</button>
+      </div>
+
+      <div style="height: 24px"></div>
+    </div>
+  `;
+
+  // Wire interactions
+  if (showEditBtn) {
+    document.getElementById("editBtn").addEventListener("click", openEditSheet);
+  }
+  document.querySelectorAll("[data-tier2]").forEach(el => {
+    el.addEventListener("click", () => {
+      const which = el.dataset.tier2;
+      const labels = {
+        bio: "long-form bio editor",
+        social: "social-link manager",
+        avatar: "custom avatar upload"
+      };
+      showToast(`Would deep-link to dj.wxyc.org → ${labels[which]}`);
+    });
+  });
+  const footerBtn = document.getElementById("footerBtn");
+  if (footerBtn) {
+    footerBtn.addEventListener("click", () => {
+      if (p.isSelf) {
+        showToast("Sign-out: clears Keychain JWT, returns to sign-in screen");
+      } else if (p.isAlum) {
+        showToast(`Would compose mail to ${p.realName} (alumni contact)`);
+      } else {
+        showToast(`Would open Memo composer with ${p.realName} pre-addressed`);
+      }
+    });
+  }
+}
+
+function extLinkIcon() {
+  return `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
+}
+
+// ---------- Edit sheet ----------
+function openEditSheet() {
+  renderEditSheet();
+  document.getElementById("sheetOverlay").classList.add("open");
+}
+function closeEditSheet(save) {
+  document.getElementById("sheetOverlay").classList.remove("open");
+  if (save) {
+    // commit edit state into self profile
+    const p = PROFILES.self;
+    p.displayName = editState.handle;
+    p.showName = editState.showName;
+    p.showDay = editState.showDay;
+    p.showTime = formatTimeRange();
+    p.pronouns = editState.pronouns;
+    renderProfile();
+    showToast("Profile saved · PATCH /me/profile (mock)");
+  }
+}
+
+function formatTimeRange() {
+  const fmt = (h, m, mer) => `${h}:${String(m).padStart(2,"0")} ${mer}`;
+  return `${fmt(editState.startHour, editState.startMin, editState.startMer)} – ${fmt(editState.endHour, editState.endMin, editState.endMer)}`;
+}
+
+function renderEditSheet() {
+  const handleValid = /^[a-zA-Z0-9_]{3,32}$/.test(editState.handle);
+  const showInputError = !handleValid && editState.handle.length > 0;
+  document.getElementById("sheet").innerHTML = `
+    <div class="sheet-grabber"></div>
+    <div class="sheet-header">
+      <button id="cancelBtn">Cancel</button>
+      <span class="sheet-title">Edit Profile</span>
+      <button class="primary" id="saveBtn">Save</button>
+    </div>
+    <div class="sheet-body">
+      <div class="form-section">
+        <div class="form-section-title">Identity</div>
+        <div class="form-card">
+          <div class="form-row">
+            <label class="form-label">DJ handle</label>
+            <input class="form-input" id="handleInput" value="${editState.handle}" placeholder="biscuit"/>
+          </div>
+        </div>
+        <div class="form-help">${showInputError ? `<span style="color:var(--ios-red)">Invalid handle.</span> ` : ""}3–32 chars, letters/numbers/underscore only · <code>${editState.handle || "—"}</code></div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Show</div>
+        <div class="form-card">
+          <div class="form-row">
+            <label class="form-label">Show name</label>
+            <input class="form-input" id="showNameInput" value="${editState.showName}" placeholder="Off the Hook"/>
+          </div>
+          <div class="form-row" style="flex-wrap:wrap">
+            <label class="form-label" style="width:auto;align-self:flex-start;padding-top:6px">Day</label>
+            <div class="day-picker" id="dayPicker">
+              ${DAYS.map(d => `<button class="day-cell ${d===editState.showDay?"active":""}" data-day="${d}">${d}</button>`).join("")}
+            </div>
+          </div>
+          <div class="form-row">
+            <label class="form-label">Start time</label>
+            <div class="time-wheels">
+              <div class="time-wheel">
+                <div class="time-wheel-label">Hr</div>
+                <div class="time-wheel-value" id="startHour">${editState.startHour}</div>
+                <div class="time-wheel-arrows">▲▼</div>
+              </div>
+              <span class="time-sep">:</span>
+              <div class="time-wheel">
+                <div class="time-wheel-label">Min</div>
+                <div class="time-wheel-value" id="startMin">${String(editState.startMin).padStart(2,"0")}</div>
+                <div class="time-wheel-arrows">▲▼</div>
+              </div>
+              <div class="time-wheel" id="startMerWheel" data-which="startMer" style="cursor:pointer">
+                <div class="time-wheel-label">AM/PM</div>
+                <div class="time-wheel-value">${editState.startMer}</div>
+              </div>
+            </div>
+          </div>
+          <div class="form-row">
+            <label class="form-label">End time</label>
+            <div class="time-wheels">
+              <div class="time-wheel">
+                <div class="time-wheel-label">Hr</div>
+                <div class="time-wheel-value" id="endHour">${editState.endHour}</div>
+                <div class="time-wheel-arrows">▲▼</div>
+              </div>
+              <span class="time-sep">:</span>
+              <div class="time-wheel">
+                <div class="time-wheel-label">Min</div>
+                <div class="time-wheel-value" id="endMin">${String(editState.endMin).padStart(2,"0")}</div>
+                <div class="time-wheel-arrows">▲▼</div>
+              </div>
+              <div class="time-wheel" id="endMerWheel" data-which="endMer" style="cursor:pointer">
+                <div class="time-wheel-label">AM/PM</div>
+                <div class="time-wheel-value">${editState.endMer}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="form-help">Tap AM/PM to toggle. Hour/min wheels mock the iOS time picker.</div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">About</div>
+        <div class="form-card">
+          <div class="form-row has-chips">
+            <label class="form-label">Pronouns</label>
+            <input class="form-input" id="pronounsInput" value="${editState.pronouns}" placeholder="they/them"/>
+            <div class="chip-row-inline">
+              ${PRONOUN_OPTIONS.map(p => `<button class="pronoun-chip ${p===editState.pronouns?"active":""}" data-pronoun="${p}">${p}</button>`).join("")}
+              <button class="pronoun-chip" data-pronoun="">Custom</button>
+            </div>
+          </div>
+          <div class="form-row">
+            <label class="form-label">Email</label>
+            <div class="form-value-ro">${editState.email}</div>
+          </div>
+        </div>
+        <div class="form-help">Email is managed through UNC SSO and is read-only here.</div>
+      </div>
+
+      <div style="height: 32px"></div>
+    </div>
+  `;
+
+  document.getElementById("cancelBtn").addEventListener("click", () => closeEditSheet(false));
+  document.getElementById("saveBtn").addEventListener("click", () => {
+    if (!handleValid) {
+      showToast("Fix handle before saving");
+      return;
+    }
+    closeEditSheet(true);
+  });
+  document.getElementById("handleInput").addEventListener("input", e => {
+    editState.handle = e.target.value;
+    renderEditSheet();
+  });
+  document.getElementById("showNameInput").addEventListener("input", e => {
+    editState.showName = e.target.value;
+  });
+  document.querySelectorAll("[data-day]").forEach(el => {
+    el.addEventListener("click", () => {
+      editState.showDay = el.dataset.day;
+      renderEditSheet();
+    });
+  });
+  document.querySelectorAll("[data-pronoun]").forEach(el => {
+    el.addEventListener("click", () => {
+      const v = el.dataset.pronoun;
+      editState.pronouns = v;
+      renderEditSheet();
+    });
+  });
+  document.getElementById("pronounsInput").addEventListener("input", e => {
+    editState.pronouns = e.target.value;
+  });
+  // Time wheel mock interactions
+  bindWheel("startHour", "startHour", 1, 12);
+  bindWheel("startMin",  "startMin",  0, 55, 5);
+  bindWheel("endHour",   "endHour",   1, 12);
+  bindWheel("endMin",    "endMin",    0, 55, 5);
+  document.getElementById("startMerWheel").addEventListener("click", () => {
+    editState.startMer = editState.startMer === "AM" ? "PM" : "AM";
+    renderEditSheet();
+  });
+  document.getElementById("endMerWheel").addEventListener("click", () => {
+    editState.endMer = editState.endMer === "AM" ? "PM" : "AM";
+    renderEditSheet();
+  });
+}
+
+function bindWheel(elId, key, min, max, step = 1) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.style.cursor = "pointer";
+  el.parentElement.style.cursor = "pointer";
+  el.parentElement.addEventListener("click", () => {
+    let v = editState[key] + step;
+    if (v > max) v = min;
+    editState[key] = v;
+    renderEditSheet();
+  });
+}
+
+// ---------- Toast ----------
+let toastTimer = null;
+function showToast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2400);
+}
+
+// ---------- Tab switching ----------
+document.getElementById("tabBar").addEventListener("click", e => {
+  const btn = e.target.closest(".tab-btn");
+  if (!btn) return;
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  const mode = btn.dataset.mode;
+  currentMode = mode;
+  // Always close sheet when switching mode, then open if needed.
+  document.getElementById("sheetOverlay").classList.remove("open");
+  renderProfile();
+  if (mode === "edit") {
+    // open the edit sheet over the self profile
+    openEditSheet();
+  }
+});
+
+// ---------- Boot ----------
+renderProfile();
+</script>
+</body>
+</html>

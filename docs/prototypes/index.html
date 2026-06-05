@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WXYC DJ Tool — v2 Prototype Gallery</title>
+<style>
+  :root {
+    --ios-bg: #F2F2F7;
+    --ios-card: #FFFFFF;
+    --ios-sep: #C6C6C8;
+    --ios-blue: #007AFF;
+    --ios-purple: #5856D6;
+    --ios-pink: #FF2D55;
+    --ios-orange: #FF9500;
+    --ios-green: #34C759;
+    --ios-teal: #5AC8FA;
+    --ios-red: #FF3B30;
+    --ios-indigo: #5856D6;
+    --ios-gray: #8E8E93;
+    --ios-gray-light: #E5E5EA;
+    --ios-gray-bg: #EFEFF4;
+    --ios-label: #000000;
+    --ios-label-sec: #3C3C43;
+    --ios-label-tert: #3C3C4399;
+    --page-bg: #d8d8df;
+
+    /* Phase accent colors */
+    --phase-0: #8E44AD;   /* QR sign-in / parallel — purple */
+    --phase-1: #007AFF;   /* Foundations — blue */
+    --phase-2: #FF9500;   /* In-show + discovery — orange */
+    --phase-3: #34C759;   /* Personal stats — green */
+    --phase-4: #FF3B30;   /* Reviews — red */
+    --phase-5: #5AC8FA;   /* Search Plays — teal */
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    background: var(--page-bg);
+    color: var(--ios-label);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+    padding: 32px 24px 64px;
+  }
+
+  /* ------ Header ------ */
+  .page-header {
+    max-width: 1280px;
+    margin: 0 auto 32px;
+    text-align: center;
+  }
+  .page-header h1 {
+    margin: 0 0 8px;
+    font-size: 36px;
+    font-weight: 700;
+    letter-spacing: -0.6px;
+  }
+  .page-header .tag-line {
+    color: #555;
+    margin: 0 0 20px;
+    font-size: 16px;
+  }
+  .page-meta {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+  }
+  .page-meta a {
+    color: var(--ios-blue);
+    text-decoration: none;
+  }
+  .page-meta a:hover { text-decoration: underline; }
+  .page-meta-dot {
+    color: var(--ios-label-tert);
+  }
+
+  /* ------ Phase filter ------ */
+  .filter-bar {
+    max-width: 1280px;
+    margin: 0 auto 36px;
+    padding: 4px;
+    background: var(--ios-gray-light);
+    border-radius: 12px;
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+  }
+  .filter-btn {
+    flex: 1;
+    min-width: 90px;
+    padding: 10px 12px;
+    border: none;
+    border-radius: 9px;
+    background: transparent;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ios-label);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s, box-shadow 0.15s;
+  }
+  .filter-btn .filter-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .filter-btn.active {
+    background: white;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+  .filter-btn:hover:not(.active) {
+    background: rgba(255,255,255,0.4);
+  }
+
+  /* ------ Phase sections ------ */
+  .phases { max-width: 1280px; margin: 0 auto; }
+  .phase-section {
+    margin-bottom: 48px;
+  }
+  .phase-section.hidden { display: none; }
+
+  .phase-header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 6px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(0,0,0,0.08);
+  }
+  .phase-marker {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    align-self: center;
+  }
+  .phase-header h2 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+  }
+  .phase-header .phase-subtitle {
+    color: var(--ios-label-tert);
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .phase-blurb {
+    color: var(--ios-label-sec);
+    font-size: 14px;
+    margin: 0 0 20px;
+    max-width: 800px;
+  }
+  .phase-blurb code {
+    background: rgba(0,0,0,0.06);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 12px;
+  }
+
+  /* ------ Cards grid ------ */
+  .cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 20px;
+  }
+  .card {
+    background: white;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.02);
+    text-decoration: none;
+    color: inherit;
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s;
+    cursor: pointer;
+    position: relative;
+  }
+  .card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.02);
+  }
+  .card:active {
+    transform: translateY(-1px);
+    transition-duration: 0.05s;
+  }
+  .card-accent {
+    height: 4px;
+    width: 100%;
+    flex-shrink: 0;
+  }
+  .card-preview {
+    width: 100%;
+    aspect-ratio: 4 / 5;
+    overflow: hidden;
+    background: var(--ios-bg);
+    position: relative;
+    border-bottom: 1px solid var(--ios-gray-light);
+  }
+  .card-preview iframe {
+    border: 0;
+    width: 1280px;
+    height: 1600px;
+    transform: scale(0.22);
+    transform-origin: 0 0;
+    pointer-events: none;
+    background: white;
+  }
+  .card-preview-overlay {
+    position: absolute;
+    inset: 0;
+    background: transparent;
+  }
+  .card-preview-loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ios-label-tert);
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .card-body {
+    padding: 16px 18px 18px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .card-title {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ios-label);
+    margin: 0;
+    letter-spacing: -0.2px;
+  }
+  .card-desc {
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    margin: 0;
+    line-height: 1.45;
+    flex: 1;
+  }
+  .card-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+  }
+  .pill {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    color: white;
+    text-transform: uppercase;
+  }
+  .pill-secondary {
+    background: var(--ios-gray-light);
+    color: var(--ios-label-sec);
+  }
+  .pill-phase-0 { background: var(--phase-0); }
+  .pill-phase-1 { background: var(--phase-1); }
+  .pill-phase-2 { background: var(--phase-2); }
+  .pill-phase-3 { background: var(--phase-3); }
+  .pill-phase-4 { background: var(--phase-4); }
+  .pill-phase-5 { background: var(--phase-5); }
+  .pill-adr { background: var(--ios-indigo); }
+  .pill-pick { background: var(--ios-gray); }
+  .pill-status { background: #888; opacity: 0.85; }
+
+  .card-cta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--ios-gray-light);
+    font-size: 12px;
+    color: var(--ios-blue);
+    font-weight: 500;
+  }
+  .card-cta .chev { font-size: 14px; }
+
+  /* ------ Out-of-scope (placeholders for future prototypes) ------ */
+  .card.future {
+    background: rgba(255,255,255,0.55);
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
+    cursor: default;
+  }
+  .card.future:hover { transform: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08); }
+  .card.future .card-preview {
+    background: repeating-linear-gradient(45deg, var(--ios-bg), var(--ios-bg) 12px, #e8e8ee 12px, #e8e8ee 24px);
+  }
+  .card.future .card-preview-overlay {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ios-label-tert);
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .card.future .card-cta {
+    color: var(--ios-gray);
+  }
+
+  /* ------ Footer ------ */
+  footer {
+    max-width: 1280px;
+    margin: 64px auto 0;
+    padding: 32px 0 0;
+    border-top: 1px solid rgba(0,0,0,0.08);
+    color: var(--ios-label-sec);
+    font-size: 13px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 24px;
+  }
+  footer h4 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--ios-label);
+  }
+  footer ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  footer li { margin-bottom: 4px; }
+  footer a { color: var(--ios-blue); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+  footer code {
+    background: rgba(0,0,0,0.06);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 12px;
+  }
+
+  /* ------ Mobile tweaks ------ */
+  @media (max-width: 640px) {
+    body { padding: 20px 12px 48px; }
+    .page-header h1 { font-size: 26px; }
+    .cards-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+    .filter-btn { font-size: 12px; padding: 8px; }
+  }
+  @media (max-width: 420px) {
+    .cards-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header class="page-header">
+  <h1>WXYC DJ Tool — v2 Prototype Gallery</h1>
+  <p class="tag-line">Thirteen interactive iOS mockups spanning the v2 design — every feature outlined in <a href="../README.md">docs/README.md</a>, one prototype each.</p>
+  <div class="page-meta">
+    <a href="../README.md">Project overview</a>
+    <span class="page-meta-dot">·</span>
+    <a href="../sequencing.md">Phases &amp; sequencing</a>
+    <span class="page-meta-dot">·</span>
+    <a href="../cross-repo-adrs.md">Cross-repo ADRs</a>
+    <span class="page-meta-dot">·</span>
+    <a href="../adr/">Local ADRs</a>
+    <span class="page-meta-dot">·</span>
+    <a href="../../CONTEXT.md">Glossary</a>
+  </div>
+</header>
+
+<div class="filter-bar" role="tablist" id="filterBar">
+  <button class="filter-btn active" data-phase="all">All <span style="color: var(--ios-label-tert); font-weight: 400;">· 13</span></button>
+  <button class="filter-btn" data-phase="0"><span class="filter-dot" style="background: var(--phase-0)"></span>Phase 0</button>
+  <button class="filter-btn" data-phase="1"><span class="filter-dot" style="background: var(--phase-1)"></span>Phase 1</button>
+  <button class="filter-btn" data-phase="2"><span class="filter-dot" style="background: var(--phase-2)"></span>Phase 2</button>
+  <button class="filter-btn" data-phase="3"><span class="filter-dot" style="background: var(--phase-3)"></span>Phase 3</button>
+  <button class="filter-btn" data-phase="4"><span class="filter-dot" style="background: var(--phase-4)"></span>Phase 4</button>
+  <button class="filter-btn" data-phase="5"><span class="filter-dot" style="background: var(--phase-5)"></span>Phase 5</button>
+</div>
+
+<div class="phases">
+
+  <!-- ============ PHASE 0 ============ -->
+  <section class="phase-section" data-phase="0">
+    <div class="phase-header">
+      <div class="phase-marker" style="background: var(--phase-0)"></div>
+      <h2>Phase 0 — QR sign-in</h2>
+      <span class="phase-subtitle">Parallel track · ADR 0007 · self-contained</span>
+    </div>
+    <p class="phase-blurb">iOS becomes a QR scanner that authorizes browser sign-in to <code>dj.wxyc.org</code> from the shared control-room computer. Biometric-gated; 12-hour browser session. Runs in parallel with every other phase from day one.</p>
+    <div class="cards-grid">
+
+      <a class="card" href="qr-signin.html?preview=1" target="_blank" data-phase="0">
+        <div class="card-accent" style="background: var(--phase-0)"></div>
+        <div class="card-preview">
+          <div class="card-preview-loading">Loading preview…</div>
+          <iframe data-src="qr-signin.html?preview=1" title="QR sign-in preview"></iframe>
+          <div class="card-preview-overlay"></div>
+        </div>
+        <div class="card-body">
+          <h3 class="card-title">QR sign-in</h3>
+          <p class="card-desc">Scan a QR on the booth browser, biometric-approve, the browser receives a 12h session. Three flows: happy path, rejection, member denied.</p>
+          <div class="card-pills">
+            <span class="pill pill-phase-0">Phase 0</span>
+            <span class="pill pill-adr">ADR 0007</span>
+          </div>
+          <div class="card-cta">Open prototype <span class="chev">↗</span></div>
+        </div>
+      </a>
+
+    </div>
+  </section>
+
+  <!-- ============ PHASE 1 ============ -->
+  <section class="phase-section" data-phase="1">
+    <div class="phase-header">
+      <div class="phase-marker" style="background: var(--phase-1)"></div>
+      <h2>Phase 1 — Foundations</h2>
+      <span class="phase-subtitle">Substrate · cross-cutting primitives + the cheapest picks</span>
+    </div>
+    <p class="phase-blurb">Two cross-cutting iOS primitives that every later phase composes — the unified <strong>Catalog explorer</strong> (lens-based) and the <strong>in-show companion</strong> mode (Queue read + targeted writes per <a href="../cross-repo-adrs.md#adr-0003--ios-is-an-in-show-companion-to-dj-site-queue-read--targeted-writes">ADR 0003</a>). Lands picks #1 (Mail Bin → Queue handoff), #2 (track preview), #3 (new arrivals), #4 (rotation browser), #9 (browse-by lenses) atop those primitives.</p>
+    <div class="cards-grid">
+
+      <a class="card" href="in-show-queue.html" target="_blank" data-phase="1">
+        <div class="card-accent" style="background: var(--phase-1)"></div>
+        <div class="card-preview">
+          <div class="card-preview-loading">Loading preview…</div>
+          <iframe data-src="in-show-queue.html" title="In-show queue preview"></iframe>
+          <div class="card-preview-overlay"></div>
+        </div>
+        <div class="card-body">
+          <h3 class="card-title">In-show companion · Queue</h3>
+          <p class="card-desc">Read the live Queue, send from Mail Bin and Search, reorder, swipe-delete. On-air gate via <code>/flowsheet/on-air</code>.</p>
+          <div class="card-pills">
+            <span class="pill pill-phase-1">Phase 1</span>
+            <span class="pill pill-adr">ADR 0003</span>
+            <span class="pill pill-pick">Pick #1</span>
+          </div>
+          <div class="card-cta">Open prototype <span class="chev">↗</span></div>
+        </div>
+      </a>
+
+      <a class="card" href="catalog-explorer.html" target="_blank" data-phase="1">
+        <div class="card-accent" style="background: var(--phase-1)"></div>
+        <div class="card-preview">
+          <div class="card-preview-loading">Loading preview…</div>
+          <iframe data-src="catalog-explorer.html" title="Catalog explorer preview"></iframe>
+          <div class="card-preview-overlay"></div>
+        </div>
+        <div class="card-body">
+          <h3 class="card-title">Catalog explorer · lenses</h3>
+          <p class="card-desc">One surface, five lenses (All / New Arrivals / Rotation tiers / By Label / By Genre). List/grid toggle. Drill-in to Album Detail with streaming-URL buttons.</p>
+          <div class="card-pills">
+            <span class="pill pill-phase-1">Phase 1</span>
+            <span class="pill pill-pick">Pick #2</span>
+            <span class="pill pill-pick">#3</span>
+            <span class="pill pill-pick">#4</span>
+            <span class="pill pill-pick">#9</span>
+          </div>
+          <div class="card-cta">Open prototype <span class="chev">↗</span></div>
+        </div>
+      </a>
+
+    </div>
+  </section>
+
+  <!-- ============ PHASE 2 ============ -->
+  <section class="phase-section" data-phase="2">
+    <div class="phase-header">
+      <div class="phase-marker" style="background: var(--phase-2)"></div>
+      <h2>Phase 2 — In-show + discovery</h2>
+      <span class="phase-subtitle">Backend track lights up · ADRs 0002 / 0004 / C1 gating</span>
+    </div>
+    <p class="phase-blurb">Artist Deep Dive (composed via BS <code>/graph/*</code> proxy per <a href="../cross-repo-adrs.md#adr-0002--backend-service-proxies-semantic-index-ios-never-calls-semantic-index-directly">ADR 0002</a>), album condition reports (state enum + audit log per <a href="../cross-repo-adrs.md#adr-0004--album-condition-is-a-state-enum-with-an-audit-log-md-gated-for-non-missing-transitions">ADR 0004</a>), and private per-DJ memos (text + ≤15s voice).</p>
+    <div class="cards-grid">
+
+      <a class="card" href="artist-deep-dive.html" target="_blank" data-phase="2">
+        <div class="card-accent" style="background: var(--phase-2)"></div>
+        <div class="card-preview">
+          <div class="card-preview-loading">Loading preview…</div>
+          <iframe data-src="artist-deep-dive.html" title="Artist Deep Dive preview"></iframe>
+          <div class="card-preview-overlay"></div>
+        </div>
+        <div class="card-body">
+          <h3 class="card-title">Artist Deep Dive</h3>
+          <p class="card-desc">Bio + Discogs photo + catalog + station/your plays + similar artists + reviews. Five backends composed into one round trip via <code>/graph/artists/{id}/deep-dive</code>.</p>
+          <div class="card-pills">
+            <span class="pill pill-phase-2">Phase 2</span>
+            <span class="pill pill-adr">ADR 0002</span>
+            <span class="pill pill-pick">Pick #8</span>
+          </div>
+          <div class="card-cta">Open prototype <span class="chev">↗</span></div>
+        </div>
+      </a>
+
+      <a class="card" href="album-condition.html" target="_blank" data-phase="2">
+        <div class="card-accent" style="background: var(--phase-2)"></div>
+        <div class="card-preview">
+          <div class="card-preview-loading">Loading preview…</div>
+          <iframe data-src="album-condition.html" title="Album condition preview"></iframe>
+          <div class="card-preview-overlay"></div>
+        </div>
+        <div class="card-body">
+          <h3 class="card-title">Album condition reports</h3>
+          <p class="card-desc">Replaces the two-timestamp model with a 4-state enum (<code>in_library</code>, <code>missing</code>, <code>damaged</code>, <code>in_repair</code>) + audit log + MD-gated transitions. Role toggle in the prototype.</p>
+          <div class="card-pills">
+            <span class="pill pill-phase-2">Phase 2</span>
+            <span class="pill pill-adr">ADR 0004</span>
+            <span class="pill pill-pick">Pick #5</span>
+          </div>
+          <div class="card-cta">Open prototype <span class="chev">↗</span></div>
+        </div>
+      </a>
+
+      <a class="card" href="memos.html" target="_blank" data-phase="2">
+        <div class="card-accent" style="background: var(--phase-2)"></div>
+        <div class="card-preview">
+          <div class="card-preview-loading">Loading preview…</div>
+          <iframe data-src="memos.html" title="Memos preview"></iframe>
+          <div class="card-preview-overlay"></div>
+        </div>
+        <div class="card-body">
+          <h3 class="card-title">Memos · text + voice</h3>
+          <p class="card-desc">Private per-DJ scratch notes on albums, with optional ≤15s voice clip backed by object storage. Per-album scope, multiple memos per album.</p>
+          <div class="card-pills">
+            <span class="pill pill-phase-2">Phase 2</span>
+            <span class="pill pill-pick">Pick #6</span>
+          </div>
+          <div class="card-cta">Open prototype <span class="chev">↗</span></div>
+        </div>
+      </a>
+
+    </div>
+  </section>
+
+  <!-- ============ PHASE 3 ============ -->
+  <section class="phase-section" data-phase="3">
+    <div class="phase-header">
+      <div class="phase-marker" style="background: var(--phase-3)"></div>
+      <h2>Phase 3 — Personal stats + profiles</h2>
+      <span class="phase-subtitle">Per-DJ plays endpoint lights up · ADRs 0006 / 0008 gating</span>
+    </div>
+    <p class="phase-blurb">Five picks consume the play-data substrate (<a href="../cross-repo-adrs.md#adr-0006--per-dj-play-history-is-a-first-class-api-surface-not-a-search-workaround">ADR 0006</a> per-DJ + <a href="../cross-repo-adrs.md#adr-0008--per-album-play-history-is-a-first-class-api-surface-parallel-to-per-dj-plays">ADR 0008</a> per-album): Underplayed Gems, Diversity Readout, Bin Maturity, DJ Profile, per-album histogram. Shipping the play-data picks together amortizes the API integration cost.</p>
+    <div class="cards-grid">
+
+      <a class="card" href="diversity-readout.html" target="_blank" data-phase="3">
+        <div class="card-accent" style="background: var(--phase-3)"></div>
+        <div class="card-preview">
+          <div class="card-preview-loading">Loading preview…</div>
+          <iframe data-src="diversity-readout.html" title="Diversity Readout preview"></iframe>
+          <div class="card-preview-overlay"></div>
+        </div>
+        <div class="card-body">
+          <h3 class="card-title">Diversity Readout</h3>
+          <p class="card-desc">Six coequal axes (artist · album · label · genre · era · new-vs-catalog) over four windows (30D / 90D / 1Y / All). Each card drills into a Top-Played list.</p>
+          <div class="card-pills">
+            <span class="pill pill-phase-3">Phase 3</span>
+            <span class="pill pill-adr">ADR 0006</span>
+            <span class="pill pill-pick">Pick #10</span>
+          </div>
+          <div class="card-cta">Open prototype <span class="chev">↗</span></div>
+        </div>
+      </a>
+
+      <a class="card" href="underplayed-gems.html" target="_blank" data-phase="3">
+        <div class="card-accent" style="background: var(--phase-3)"></div>
+        <div class="card-preview">
+          <div class="card-preview-loading">Loading preview…</div>
+          <iframe data-src="underplayed-gems.html" title="Underplayed Gems preview"></iframe>
+          <div class="card-preview-overlay"></div>
+        </div>
+        <div class="card-body">
+          <h3 class="card-title">Underplayed Gems</h3>
+          <p class="card-desc">Rate-based B+C+D blend (catalog-relative rarity · your drift · rotation-time-decayed) with four weight presets that reshuffle the feed live.</p>
+          <div class="card-pills">
+            <span class="pill pill-phase-3">Phase 3</span>
+            <span class="pill pill-adr">ADR 0006</span>
+            <span class="pill pill-pick">Pick #7</span>
+          </div>
+          <div class="card-cta">Open prototype <span class="chev">↗</span></div>
+        </div>
+      </a>
+
+      <a class="card" href="bin-maturity.html" target="_blank" data-phase="3">
+        <div class="card-accent" style="background: var(--phase-3)"></div>
+        <div class="card-preview">
+          <div class="card-preview-loading">Loading preview…</div>
+          <iframe data-src="bin-maturity.html" title="Bin Maturity preview"></iframe>
+          <div class="card-preview-overlay"></div>
+        </div>
+        <div class="card-body">
+          <h3 class="card-title">Bin Maturity</h3>
+          <p class="card-desc">Per-entry badges (your plays + station plays + Stale pill) + view-level summary on the Mail Bin. Filter by Untouched / Aired / Stale.</p>
+          <div class="card-pills">
+            <span class="pill pill-phase-3">Phase 3</span>
+            <span class="pill pill-adr">ADR 0006</span>
+            <span class="pill pill-pick">Pick #11</span>
+          </div>
+          <div class="card-cta">Open prototype <span class="chev">↗</span></div>
+        </div>
+      </a>
+
+      <a class="card" href="album-histogram.html" target="_blank" data-phase="3">
+        <div class="card-accent" style="background: var(--phase-3)"></div>
+        <div class="card-preview">
+          <div class="card-preview-loading">Loading preview…</div>
+          <iframe data-src="album-histogram.html" title="Album histogram preview"></iframe>
+          <div class="card-preview-overlay"></div>
+        </div>
+        <div class="card-body">
+          <h3 class="card-title">Per-album play histogram</h3>
+          <p class="card-desc">Apple Health-style horizontally-scrollable Swift Charts on Album Detail. Year/Month toggle with span-based default, dashed RuleMark on release year when surprising.</p>
+          <div class="card-pills">
+            <span class="pill pill-phase-3">Phase 3</span>
+            <span class="pill pill-adr">ADR 0008</span>
+            <span class="pill pill-pick">Pick #15</span>
+          </div>
+          <div class="card-cta">Open prototype <span class="chev">↗</span></div>
+        </div>
+      </a>
+
+      <a class="card" href="dj-profile.html" target="_blank" data-phase="3">
+        <div class="card-accent" style="background: var(--phase-3)"></div>
+        <div class="card-preview">
+          <div class="card-preview-loading">Loading preview…</div>
+          <iframe data-src="dj-profile.html" title="DJ Profile preview"></iframe>
+          <div class="card-preview-overlay"></div>
+        </div>
+        <div class="card-body">
+          <h3 class="card-title">DJ Profile</h3>
+          <p class="card-desc">Tier 1 native edits (handle / show name / show time / pronouns) over reused <code>auth_user</code>; Tier 2 (long-form bio / social / avatar) deep-links to dj-site. Alumni stay forever.</p>
+          <div class="card-pills">
+            <span class="pill pill-phase-3">Phase 3</span>
+            <span class="pill pill-pick">Pick #12</span>
+            <span class="pill pill-status">Internal-only</span>
+          </div>
+          <div class="card-cta">Open prototype <span class="chev">↗</span></div>
+        </div>
+      </a>
+
+    </div>
+  </section>
+
+  <!-- ============ PHASE 4 ============ -->
+  <section class="phase-section" data-phase="4">
+    <div class="phase-header">
+      <div class="phase-marker" style="background: var(--phase-4)"></div>
+      <h2>Phase 4 — Review workflow</h2>
+      <span class="phase-subtitle">Largest single feature · ADR 0005 · most schema, most endpoints</span>
+    </div>
+    <p class="phase-blurb">Full editorial fields, MD-curated queue, author-owned with MD takeover. Schema extensions to <code>reviews</code>, three new tables (<code>review_queue</code>, <code>review_callouts</code>, <code>tag_vocabulary</code>), eight new endpoints. Internal-only for v1.</p>
+    <div class="cards-grid">
+
+      <a class="card" href="reviews.html" target="_blank" data-phase="4">
+        <div class="card-accent" style="background: var(--phase-4)"></div>
+        <div class="card-preview">
+          <div class="card-preview-loading">Loading preview…</div>
+          <iframe data-src="reviews.html" title="Reviews preview"></iframe>
+          <div class="card-preview-overlay"></div>
+        </div>
+        <div class="card-body">
+          <h3 class="card-title">Reviews · editor + MD queue + tag vocab</h3>
+          <p class="card-desc">Review detail with stars + tags + callouts + rotation hint; review editor with half-star picker + curated tag picker; MD queue with claim/release + soft-lock; MD-only tag-vocabulary CRUD.</p>
+          <div class="card-pills">
+            <span class="pill pill-phase-4">Phase 4</span>
+            <span class="pill pill-adr">ADR 0005</span>
+            <span class="pill pill-pick">Pick #13</span>
+            <span class="pill pill-status">XL</span>
+          </div>
+          <div class="card-cta">Open prototype <span class="chev">↗</span></div>
+        </div>
+      </a>
+
+    </div>
+  </section>
+
+  <!-- ============ PHASE 5 ============ -->
+  <section class="phase-section" data-phase="5">
+    <div class="phase-header">
+      <div class="phase-marker" style="background: var(--phase-5)"></div>
+      <h2>Phase 5 — Flowsheet-archive search</h2>
+      <span class="phase-subtitle">Largest net-new iOS surface besides Reviews · ADR 0009</span>
+    </div>
+    <p class="phase-blurb">A coequal second search mode (alongside catalog search) over the flowsheet archive back to Nov 2004, plus a reusable <code>FilterBuilder&lt;FieldConfig&gt;</code> primitive. Always-included plays-per-year histogram on the response, mirroring <a href="http://www.wxyc.info/playlists/searchPlaylists">wxyc.info</a>.</p>
+    <div class="cards-grid">
+
+      <a class="card" href="search-ux-options.html" target="_blank" data-phase="5">
+        <div class="card-accent" style="background: var(--phase-5)"></div>
+        <div class="card-preview">
+          <div class="card-preview-loading">Loading preview…</div>
+          <iframe data-src="search-ux-options.html" title="Search Plays preview"></iframe>
+          <div class="card-preview-overlay"></div>
+        </div>
+        <div class="card-body">
+          <h3 class="card-title">Search Plays · UX options</h3>
+          <p class="card-desc">Three UX options compared (text-syntax / chips / builder-sheet) that informed the structured filter builder selection. The selected option models dj-site's <code>PlaylistAdvancedSearch.tsx</code> shape.</p>
+          <div class="card-pills">
+            <span class="pill pill-phase-5">Phase 5</span>
+            <span class="pill pill-adr">ADR 0009</span>
+            <span class="pill pill-pick">Pick #16</span>
+            <span class="pill pill-status">XL</span>
+          </div>
+          <div class="card-cta">Open prototype <span class="chev">↗</span></div>
+        </div>
+      </a>
+
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div>
+    <h4>What's NOT in v1</h4>
+    <ul>
+      <li>Pick #14 — Show coverage map</li>
+      <li>Standalone Freeform Map surface</li>
+      <li>Public-facing reviews + DJ profiles (C4)</li>
+      <li>Locale axis on Diversity Readout (C2)</li>
+      <li>Per-album histogram drill-in to raw rows</li>
+      <li>Tier 2 DJ profile edits in-app</li>
+    </ul>
+  </div>
+  <div>
+    <h4>Design docs</h4>
+    <ul>
+      <li><a href="../README.md">README — project overview</a></li>
+      <li><a href="../sequencing.md">Sequencing &amp; phases</a></li>
+      <li><a href="../cross-repo-adrs.md">Cross-repo ADRs</a></li>
+      <li><a href="../bs-work-inventory.md">Backend-Service work inventory</a></li>
+      <li><a href="../../CONTEXT.md">Domain glossary</a></li>
+      <li><a href="../../CLAUDE.md">Project conventions</a></li>
+    </ul>
+  </div>
+  <div>
+    <h4>Repos</h4>
+    <ul>
+      <li><a href="https://github.com/WXYC/wxyc-dj-tool-ios">wxyc-dj-tool-ios</a> — this repo</li>
+      <li><a href="https://github.com/WXYC/Backend-Service">Backend-Service</a></li>
+      <li><a href="https://github.com/WXYC/wxyc-shared">wxyc-shared</a> (api.yaml)</li>
+      <li><a href="https://github.com/WXYC/library-metadata-lookup">library-metadata-lookup</a> (LML)</li>
+      <li><a href="https://github.com/WXYC/semantic-index">semantic-index</a></li>
+      <li><a href="https://github.com/WXYC/dj-site">dj-site</a></li>
+    </ul>
+  </div>
+  <div>
+    <h4>About these prototypes</h4>
+    <ul>
+      <li>iOS phone frame: 390×800 (iOS 18.4+)</li>
+      <li>Style tokens borrowed from SwiftUI defaults</li>
+      <li>WXYC-representative artists in all sample data</li>
+      <li>Self-contained: no external dependencies</li>
+      <li>Live previews above use lazy-loaded iframes</li>
+    </ul>
+  </div>
+</footer>
+
+<script>
+// ----- Lazy-load iframes as cards scroll into view -----
+const iframes = document.querySelectorAll('iframe[data-src]');
+if ('IntersectionObserver' in window) {
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const ifr = entry.target;
+        ifr.src = ifr.dataset.src;
+        ifr.removeAttribute('data-src');
+        ifr.addEventListener('load', () => {
+          const loader = ifr.parentElement.querySelector('.card-preview-loading');
+          if (loader) loader.style.display = 'none';
+        });
+        io.unobserve(ifr);
+      }
+    });
+  }, { rootMargin: '300px' });
+  iframes.forEach(ifr => io.observe(ifr));
+} else {
+  // Fallback: just load all immediately
+  iframes.forEach(ifr => {
+    ifr.src = ifr.dataset.src;
+    ifr.removeAttribute('data-src');
+    ifr.addEventListener('load', () => {
+      const loader = ifr.parentElement.querySelector('.card-preview-loading');
+      if (loader) loader.style.display = 'none';
+    });
+  });
+}
+
+// ----- Phase filter -----
+const filterBar = document.getElementById('filterBar');
+const sections = document.querySelectorAll('.phase-section');
+filterBar.addEventListener('click', (e) => {
+  const btn = e.target.closest('.filter-btn');
+  if (!btn) return;
+  const phase = btn.dataset.phase;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b === btn));
+  sections.forEach(section => {
+    const show = phase === 'all' || section.dataset.phase === phase;
+    section.classList.toggle('hidden', !show);
+  });
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+</script>
+
+</body>
+</html>

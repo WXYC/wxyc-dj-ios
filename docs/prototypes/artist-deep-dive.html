@@ -1,0 +1,1294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Artist Deep Dive — Prototype</title>
+<style>
+  :root {
+    --ios-bg: #F2F2F7;
+    --ios-card: #FFFFFF;
+    --ios-sep: #C6C6C8;
+    --ios-blue: #007AFF;
+    --ios-purple: #5856D6;
+    --ios-pink: #FF2D55;
+    --ios-orange: #FF9500;
+    --ios-yellow: #FFCC00;
+    --ios-green: #34C759;
+    --ios-teal: #5AC8FA;
+    --ios-gray: #8E8E93;
+    --ios-gray-light: #E5E5EA;
+    --ios-gray-bg: #EFEFF4;
+    --ios-label: #000000;
+    --ios-label-sec: #3C3C43;
+    --ios-label-tert: #3C3C4399;
+    --frame-bg: #1c1c1e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    background: #d8d8df;
+    color: #111;
+    padding: 24px 16px 48px;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1 {
+    margin: 0 0 4px 0;
+    font-size: 22px;
+    font-weight: 600;
+    text-align: center;
+  }
+  .subtitle {
+    text-align: center;
+    color: #555;
+    margin-bottom: 24px;
+    font-size: 14px;
+  }
+  .stage {
+    max-width: 900px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  @media (max-width: 800px) {
+    .stage { grid-template-columns: 1fr; }
+  }
+
+  /* ----- Top-of-page artist selector (outside the phone) ----- */
+  .selector-row {
+    max-width: 900px;
+    margin: 0 auto 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .selector-row .selector-label {
+    font-size: 12px;
+    color: #555;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .artist-chip {
+    background: white;
+    border: 1px solid var(--ios-gray-light);
+    border-radius: 16px;
+    padding: 6px 12px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ios-label);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .artist-chip:hover { border-color: var(--ios-blue); }
+  .artist-chip.active {
+    background: var(--ios-blue);
+    color: white;
+    border-color: var(--ios-blue);
+  }
+
+  /* ----- Phone frame ----- */
+  .phone-frame {
+    width: 390px;
+    margin: 0 auto;
+    background: var(--frame-bg);
+    border-radius: 50px;
+    padding: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    position: relative;
+  }
+  .phone-screen {
+    background: var(--ios-bg);
+    border-radius: 40px;
+    height: 800px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .notch {
+    width: 120px;
+    height: 30px;
+    background: var(--frame-bg);
+    border-radius: 0 0 18px 18px;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+  }
+  .status-bar {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+    background: var(--ios-bg);
+    z-index: 10;
+    position: relative;
+  }
+
+  /* ----- Nav stack ----- */
+  .nav-stack {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+  .nav-page {
+    position: absolute;
+    inset: 0;
+    background: var(--ios-bg);
+    display: flex;
+    flex-direction: column;
+    transform: translateX(0);
+    transition: transform 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .nav-page.entering { transform: translateX(100%); }
+  .nav-page.exiting { transform: translateX(-25%); opacity: 0.6; }
+
+  .nav-bar {
+    padding: 6px 16px 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 44px;
+    flex-shrink: 0;
+  }
+  .back-btn {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 17px;
+    cursor: pointer;
+    padding: 4px 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .back-btn svg { stroke: var(--ios-blue); }
+  .nav-spacer { flex: 1; }
+
+  .scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 24px;
+  }
+  .scroll-area::-webkit-scrollbar { width: 0; }
+
+  /* ----- Hero ----- */
+  .hero {
+    padding: 0 16px 14px;
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 14px;
+    align-items: start;
+  }
+  .hero-photo {
+    width: 120px;
+    height: 120px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 36px;
+    font-weight: 700;
+    letter-spacing: -1px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    overflow: hidden;
+    position: relative;
+  }
+  .hero-photo::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.18), transparent 60%);
+  }
+  .hero-photo span { position: relative; z-index: 1; }
+  .hero-info {
+    min-width: 0;
+  }
+  .hero-name {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--ios-label);
+    letter-spacing: -0.4px;
+    line-height: 1.15;
+    margin: 0;
+  }
+  .hero-region {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    margin: 4px 0 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .hero-region svg { stroke: var(--ios-label-tert); flex-shrink: 0; }
+  .hero-meta {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .hero-meta-pill {
+    background: var(--ios-gray-light);
+    border-radius: 9px;
+    padding: 2px 7px;
+    font-weight: 500;
+    color: var(--ios-label-sec);
+  }
+
+  /* ----- Bio ----- */
+  .bio-card {
+    margin: 0 16px 16px;
+    background: white;
+    border-radius: 12px;
+    padding: 14px 16px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    line-height: 1.55;
+  }
+  .bio-card p {
+    margin: 0 0 8px;
+  }
+  .bio-card p:last-child { margin-bottom: 0; }
+  .bio-clamp p:nth-child(n+2) { display: none; }
+  .bio-card.expanded p { display: block; }
+  .bio-toggle {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 4px 0 0;
+    cursor: pointer;
+  }
+
+  /* ----- Section header ----- */
+  .section-header {
+    padding: 6px 16px 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ios-label-sec);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .section-header .header-aux {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ios-label-tert);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  /* ----- Catalog rail ----- */
+  .rail-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 0 16px 4px;
+    scroll-snap-type: x proximity;
+  }
+  .rail-scroll::-webkit-scrollbar { height: 0; }
+  .rail-inner {
+    display: flex;
+    gap: 10px;
+    padding-bottom: 6px;
+  }
+  .rail-card {
+    flex-shrink: 0;
+    width: 110px;
+    scroll-snap-align: start;
+    cursor: pointer;
+  }
+  .rail-cover {
+    width: 110px;
+    height: 110px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+    padding: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    position: relative;
+    overflow: hidden;
+    line-height: 1.15;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.25);
+  }
+  .rail-cover::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 70% 25%, rgba(255,255,255,0.22), transparent 65%);
+  }
+  .rail-cover span { position: relative; z-index: 1; }
+  .rail-title {
+    margin-top: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ios-label);
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .rail-year {
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ----- Plays section ----- */
+  .play-cards {
+    padding: 0 16px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .play-card {
+    background: white;
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+  .play-card-label {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    font-weight: 600;
+  }
+  .play-card-count {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--ios-label);
+    letter-spacing: -0.6px;
+    font-variant-numeric: tabular-nums;
+    margin-top: 2px;
+    line-height: 1.05;
+  }
+  .play-card-count small {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ios-label-tert);
+    letter-spacing: 0;
+  }
+  .play-card-foot {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    margin-top: 4px;
+  }
+
+  .barchart-card {
+    background: white;
+    margin: 12px 16px 0;
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+  .barchart-title {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-bottom: 10px;
+  }
+  .bar-row {
+    display: grid;
+    grid-template-columns: 1fr 28px;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+  }
+  .bar-row + .bar-row { border-top: 0.5px solid var(--ios-gray-bg); }
+  .bar-name {
+    font-size: 12px;
+    color: var(--ios-label);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bar-name .bar-bar {
+    display: block;
+    height: 6px;
+    background: linear-gradient(to right, var(--ios-blue), var(--ios-teal));
+    border-radius: 3px;
+    margin-top: 4px;
+  }
+  .bar-count {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+
+  /* ----- Similar artists ----- */
+  .sim-grid {
+    padding: 0 16px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .sim-tile {
+    background: white;
+    border-radius: 12px;
+    padding: 10px;
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    gap: 10px;
+    align-items: center;
+    cursor: pointer;
+    border: none;
+    font: inherit;
+    text-align: left;
+    color: inherit;
+    transition: transform 0.1s;
+  }
+  .sim-tile:active { transform: scale(0.98); }
+  .sim-photo {
+    width: 44px;
+    height: 44px;
+    border-radius: 22px;
+    color: white;
+    font-size: 14px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    text-shadow: 0 1px 1px rgba(0,0,0,0.25);
+    position: relative;
+    overflow: hidden;
+  }
+  .sim-photo::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 22px;
+    background: radial-gradient(circle at 30% 25%, rgba(255,255,255,0.22), transparent 65%);
+  }
+  .sim-photo span { position: relative; z-index: 1; }
+  .sim-info {
+    min-width: 0;
+  }
+  .sim-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ios-label);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sim-pct {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .sim-pct .pct-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--ios-green);
+    margin-right: 4px;
+    vertical-align: 1px;
+  }
+  .sim-pct .pct-dot.mid { background: var(--ios-yellow); }
+  .sim-pct .pct-dot.low { background: var(--ios-orange); }
+
+  /* ----- Reviews ----- */
+  .review-list {
+    margin: 0 16px;
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .review-row {
+    padding: 12px 14px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    display: grid;
+    grid-template-columns: 1fr 14px;
+    gap: 6px;
+    align-items: center;
+    cursor: pointer;
+  }
+  .review-row:last-child { border-bottom: none; }
+  .review-row:active { background: var(--ios-gray-bg); }
+  .review-headline {
+    grid-column: 1;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ios-label);
+    line-height: 1.25;
+  }
+  .review-meta {
+    grid-column: 1;
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    margin-top: 4px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .review-stars {
+    color: var(--ios-orange);
+    letter-spacing: 1px;
+    font-size: 12px;
+  }
+  .review-chevron {
+    grid-row: 1 / span 2;
+    grid-column: 2;
+    color: var(--ios-gray);
+    font-size: 16px;
+    justify-self: end;
+  }
+
+  /* ----- Footer links ----- */
+  .footer-actions {
+    margin: 16px;
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .footer-link {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    color: var(--ios-blue);
+    font-size: 14px;
+    font-weight: 500;
+    border-bottom: 0.5px solid var(--ios-sep);
+    cursor: pointer;
+    background: white;
+    border: none;
+    border-bottom: 0.5px solid var(--ios-sep);
+    width: 100%;
+    text-align: left;
+    font: inherit;
+    font-size: 14px;
+    color: var(--ios-blue);
+    font-weight: 500;
+  }
+  .footer-link:last-child { border-bottom: none; }
+  .footer-link svg { flex-shrink: 0; }
+  .footer-link-arrow { margin-left: auto; color: var(--ios-gray); }
+
+  /* ----- Explainer panel ----- */
+  .explainer {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    align-self: start;
+    position: sticky;
+    top: 16px;
+  }
+  .explainer h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .explainer h4 {
+    margin: 14px 0 6px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+  }
+  .explainer p {
+    color: #555;
+    font-size: 13px;
+    line-height: 1.55;
+    margin: 0 0 8px 0;
+  }
+  .explainer ul {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    line-height: 1.55;
+  }
+  .explainer li { margin-bottom: 4px; }
+  .explainer code {
+    background: var(--ios-gray-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Cascadia Code", monospace;
+  }
+  .opt-tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .opt-tag {
+    background: var(--ios-purple);
+    color: white;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .opt-tag.pick { background: var(--ios-blue); }
+  .opt-tag.adr  { background: var(--ios-orange); }
+  .opt-tag.phase { background: var(--ios-pink); }
+
+  .code-block {
+    background: #1c1c1e;
+    color: #f0f0f0;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Cascadia Code", monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    overflow-x: auto;
+    margin: 8px 0;
+  }
+  .code-block .verb { color: #34C759; }
+  .code-block .path { color: #5AC8FA; }
+  .code-block .comm { color: #8E8E93; }
+  .code-block .lit  { color: #FF9F0A; }
+</style>
+</head>
+<body>
+
+<h1>Artist Deep Dive</h1>
+<p class="subtitle">One screen, five backends, one round trip. Tap a similar-artist tile to rewire the view.</p>
+
+<div class="selector-row" id="selectorRow">
+  <span class="selector-label">Showcasing:</span>
+  <!-- chips injected here -->
+</div>
+
+<div class="stage">
+
+  <div class="phone-frame">
+    <div class="phone-screen">
+      <div class="notch"></div>
+      <div class="status-bar">
+        <span>9:41</span>
+        <span>•••</span>
+      </div>
+      <div class="nav-stack" id="navStack"></div>
+    </div>
+  </div>
+
+  <div class="explainer">
+    <div class="opt-tags">
+      <span class="opt-tag phase">Phase 2</span>
+      <span class="opt-tag adr">ADR 0002</span>
+      <span class="opt-tag pick">Pick #8</span>
+      <span class="opt-tag">BS composition</span>
+    </div>
+    <h3>Artist Deep Dive — five backends in one round trip</h3>
+    <p>The phone screen looks unified, but five different systems contribute. <strong>LML</strong> supplies the bio + Discogs photo via the existing metadata proxy. <strong>BS</strong> owns the catalog rows (the WXYC library, plus per-DJ and station play tallies). The <strong>semantic-index</strong> service computes the neighbor list — embeddings over a corpus we don't have in BS yet. And the <strong>reviews</strong> table lives in BS as a sibling to plays.</p>
+
+    <p>iOS calls <strong>one</strong> composed endpoint (<code>/graph/artists/{id}/deep-dive</code>). BS does the fan-out concurrently and stitches the response. Doing this on the phone would mean five sequential HTTPS handshakes on LTE plus an OAuth dance for semantic-index — easily 3-4× the wall-clock latency before the first paint.</p>
+
+    <p>The deeper reason for the proxy is authentication: semantic-index uses a different auth model (service token, not DJ JWT). Exposing that surface to the phone would mean a second token lifecycle in the iOS keychain. BS already holds the service-side credentials; let it broker.</p>
+
+    <h4>Try it</h4>
+    <ul>
+      <li>Switch between the <strong>4 showcased artists</strong> with the chips up top</li>
+      <li>Scroll the catalog rail horizontally</li>
+      <li>Tap a <strong>similar-artist tile</strong> — the view rewires to that artist (this is the live recursion you'd see on device)</li>
+      <li>Tap <strong>Read more</strong> in the bio to expand the clamp</li>
+    </ul>
+
+    <h4>BS contract</h4>
+    <div class="code-block">
+<span class="verb">GET</span> <span class="path">/graph/artists/{artist_id}/deep-dive</span>
+<span class="comm"># one composed call · returns:</span>
+{
+  <span class="path">artist</span>: { bio, photo, region, ... },
+  <span class="path">catalog</span>: [{ release_id, title, year, cover_hash, ... }],
+  <span class="path">plays</span>: {
+    station: { count, last_played_at },
+    you: { count, last_played_at, top_albums }
+  },
+  <span class="path">similar</span>: [{ artist_id, name, similarity }],
+  <span class="path">reviews</span>: [{ id, headline, author, rating, ... }]
+}
+    </div>
+
+    <h4>Server-side fan-out</h4>
+    <ul>
+      <li><code>LML /proxy/metadata/artist</code> — bio + Discogs photo</li>
+      <li><code>BS /library/by-artist</code> — catalog rows + cover hashes</li>
+      <li><code>BS /djs/{id}/plays?artist_id=...</code> — counts + top albums by you</li>
+      <li><code>BS /plays/station-stats?artist_id=...</code> — station-wide counts</li>
+      <li><code>semantic-index /artists/{id}/neighbors</code> — top-k by cosine sim</li>
+      <li><code>BS /reviews?artist_id=...</code> — review list with ratings</li>
+    </ul>
+
+    <h4>Coordination notes</h4>
+    <p>Depends on <strong>C1</strong> — extending <code>AlbumSearchResult</code> with <code>artist_id</code> so search rows become tappable into this view. <strong>Identifier translation</strong> happens in BS: iOS only knows BS <code>artist_id</code>; BS resolves to whatever opaque key semantic-index needs internally. The phone never sees a semantic-index ID.</p>
+  </div>
+</div>
+
+<script>
+// ---------- Artist palettes (Discogs photo placeholder + cover gradients) ----------
+const PALETTES = {
+  polvo:    { hero: "linear-gradient(135deg, #B45309 0%, #78350F 50%, #1C1917 100%)", covers: ["#451A03","#7C2D12","#9A3412","#C2410C","#1C1917","#292524"] },
+  juana:    { hero: "linear-gradient(135deg, #6D28D9 0%, #4338CA 50%, #1E1B4B 100%)", covers: ["#4C1D95","#5B21B6","#3730A3","#4338CA","#1E1B4B","#312E81"] },
+  pratt:    { hero: "linear-gradient(135deg, #BE185D 0%, #831843 50%, #500724 100%)", covers: ["#831843","#9D174D","#BE185D","#9F1239","#500724","#7F1D1D"] },
+  chuqui:   { hero: "linear-gradient(135deg, #047857 0%, #065F46 40%, #064E3B 100%)", covers: ["#065F46","#047857","#0F766E","#115E59","#134E4A","#064E3B"] },
+  // similar-artist tile colors
+  archers:    "linear-gradient(135deg, #DC2626 0%, #7F1D1D 100%)",
+  slint:      "linear-gradient(135deg, #1F2937 0%, #030712 100%)",
+  pavement:   "linear-gradient(135deg, #2563EB 0%, #1E3A8A 100%)",
+  donCaballero: "linear-gradient(135deg, #7C3AED 0%, #3B0764 100%)",
+  unwound:    "linear-gradient(135deg, #B91C1C 0%, #450A0A 100%)",
+  karp:       "linear-gradient(135deg, #92400E 0%, #422006 100%)",
+  toraja:     "linear-gradient(135deg, #BE123C 0%, #4C0519 100%)",
+  arto:       "linear-gradient(135deg, #6D28D9 0%, #2E1065 100%)",
+  feist:      "linear-gradient(135deg, #B91C1C 0%, #1F2937 100%)",
+  vaszquez:   "linear-gradient(135deg, #0D9488 0%, #134E4A 100%)",
+  dirtyP:     "linear-gradient(135deg, #4F46E5 0%, #1E1B4B 100%)",
+  laetitia:   "linear-gradient(135deg, #DB2777 0%, #500724 100%)",
+  weyes:      "linear-gradient(135deg, #92400E 0%, #1C1917 100%)",
+  marisaA:    "linear-gradient(135deg, #B45309 0%, #422006 100%)",
+  hatfield:   "linear-gradient(135deg, #6366F1 0%, #1E1B4B 100%)",
+  joannaN:    "linear-gradient(135deg, #C2410C 0%, #431407 100%)",
+  natural:    "linear-gradient(135deg, #16A34A 0%, #052E16 100%)",
+  sofia:      "linear-gradient(135deg, #EA580C 0%, #431407 100%)",
+  chancha:    "linear-gradient(135deg, #65A30D 0%, #1A2E05 100%)",
+  ela:        "linear-gradient(135deg, #BE185D 0%, #500724 100%)",
+  nicolaC:    "linear-gradient(135deg, #0EA5E9 0%, #0C4A6E 100%)",
+  matiasA:    "linear-gradient(135deg, #047857 0%, #022C22 100%)",
+  helado:     "linear-gradient(135deg, #FACC15 0%, #713F12 100%)",
+};
+
+// ---------- Artist data ----------
+const ARTISTS = {
+  polvo: {
+    name: "Polvo",
+    initials: "PV",
+    region: "Chapel Hill, NC",
+    meta: ["Active 1990–", "Indie Rock", "Math Rock"],
+    palette: "polvo",
+    bio: [
+      "Polvo formed in Chapel Hill, North Carolina in 1990 — Ash Bowie and Dave Brylawski on guitars, Steve Popson on bass, and Eddie Watkins on drums. They emerged from the same scene that produced Superchunk and Archers of Loaf, but stood apart from the start by treating the guitar as a tuning system rather than a chord instrument.",
+      "Across six albums on Merge and Touch & Go they perfected an interlocking polyrhythmic style — overlapping odd meters, microtonal tunings, modal scales borrowed from Indian and North African music. Today's Active Lifestyles (1993) and Exploded Drawing (1996) became cornerstones of the math-rock canon.",
+      "After disbanding in 1998, the band reunited in 2008 and released two further records (In Prism, Siberia). They remain a touchstone for the Chapel Hill sound — and one of the most-played artists in the WXYC catalog."
+    ],
+    catalog: [
+      { title: "Cor-Crane Secret", year: 1992 },
+      { title: "Today's Active Lifestyles", year: 1993 },
+      { title: "Celebrate the New Dark Age", year: 1995 },
+      { title: "Exploded Drawing", year: 1996 },
+      { title: "Shapes", year: 1997 },
+      { title: "In Prism", year: 2009 }
+    ],
+    catalogCount: 12,
+    plays: {
+      station: { count: 289, last: "Mar 12, 2026" },
+      you: { count: 18, last: "Feb 28, 2026" }
+    },
+    topAlbums: [
+      { title: "Today's Active Lifestyles", c: 7 },
+      { title: "Exploded Drawing", c: 5 },
+      { title: "Cor-Crane Secret", c: 3 },
+      { title: "Shapes", c: 2 },
+      { title: "In Prism", c: 1 }
+    ],
+    similar: [
+      { id: "archersOfLoaf",  name: "Archers of Loaf", pct: 96, color: "archers" },
+      { id: "slint",          name: "Slint",           pct: 89, color: "slint" },
+      { id: "pavement",       name: "Pavement",        pct: 87, color: "pavement" },
+      { id: "donCaballero",   name: "Don Caballero",   pct: 85, color: "donCaballero" },
+      { id: "unwound",        name: "Unwound",         pct: 82, color: "unwound" },
+      { id: "karp",           name: "Karp",            pct: 78, color: "karp" }
+    ],
+    reviews: [
+      { headline: "Today's Active Lifestyles: the album that broke math rock open", author: "Roxanne McKnight", date: "Apr 2024", rating: 5 },
+      { headline: "Polvo's Exploded Drawing at 28 — still rearranging guitars", author: "Kelly Reichardt", date: "Aug 2024", rating: 4 },
+      { headline: "Live at Cat's Cradle: a returning ensemble in fine form",       author: "Marcus Liang",   date: "Mar 2024", rating: 4 }
+    ],
+    discogsUrl: "https://www.discogs.com/artist/24551-Polvo",
+    wikiUrl: "https://en.wikipedia.org/wiki/Polvo"
+  },
+
+  juana: {
+    name: "Juana Molina",
+    initials: "JM",
+    region: "Buenos Aires, AR",
+    meta: ["Active 1996–", "Folktronica", "Experimental"],
+    palette: "juana",
+    bio: [
+      "Juana Molina trained as a television actress in Argentina — her sketch comedy show Juana y sus hermanas ran on national TV for five seasons in the early 1990s. She walked away at the peak of its popularity to pursue music full-time, a pivot that bewildered Buenos Aires at the time.",
+      "Her records use looping pedals as a compositional language rather than an effect. She builds layered worlds in real time: nylon-string guitar phrases stacked against synth drones, her own multitracked vocals processed into a chorus, fragments of Argentinian folk woven through electronic texture. Halo (2017) is widely cited as her masterpiece.",
+      "Tours have placed her on bills with Björk, Devendra Banhart, and Thom Yorke. She remains based in Buenos Aires, where she records mostly at home."
+    ],
+    catalog: [
+      { title: "Rara", year: 1996 },
+      { title: "Segundo", year: 2003 },
+      { title: "Tres Cosas", year: 2004 },
+      { title: "Son", year: 2006 },
+      { title: "Un Día", year: 2008 },
+      { title: "Wed 21", year: 2013 },
+      { title: "Halo", year: 2017 }
+    ],
+    catalogCount: 9,
+    plays: {
+      station: { count: 174, last: "Mar 04, 2026" },
+      you: { count: 14, last: "Feb 21, 2026" }
+    },
+    topAlbums: [
+      { title: "Halo", c: 6 },
+      { title: "Wed 21", c: 4 },
+      { title: "Un Día", c: 2 },
+      { title: "Tres Cosas", c: 2 }
+    ],
+    similar: [
+      { id: "feist",        name: "Feist",                  pct: 88, color: "feist" },
+      { id: "laetitiaSadier", name: "Laetitia Sadier",      pct: 84, color: "laetitia" },
+      { id: "natural",      name: "The Natural History",    pct: 81, color: "natural" },
+      { id: "weyesBlood",   name: "Weyes Blood",            pct: 79, color: "weyes" },
+      { id: "sofiaKourtesis", name: "Sofia Kourtesis",      pct: 76, color: "sofia" },
+      { id: "matiasAguayo", name: "Matías Aguayo",          pct: 74, color: "matiasA" }
+    ],
+    reviews: [
+      { headline: "Halo: looping pedals as a writing tool, not an effect",       author: "Roxanne McKnight", date: "Sep 2023", rating: 5 },
+      { headline: "Juana Molina in conversation: walking away from television",  author: "Kelly Reichardt",  date: "Jan 2024", rating: 5 },
+      { headline: "Wed 21 — the album that made folktronica feel inevitable",   author: "Marcus Liang",     date: "Nov 2023", rating: 4 }
+    ],
+    discogsUrl: "https://www.discogs.com/artist/93019-Juana-Molina",
+    wikiUrl: "https://en.wikipedia.org/wiki/Juana_Molina"
+  },
+
+  pratt: {
+    name: "Jessica Pratt",
+    initials: "JP",
+    region: "Los Angeles, CA",
+    meta: ["Active 2012–", "Acid Folk", "Indie Folk"],
+    palette: "pratt",
+    bio: [
+      "Jessica Pratt grew up in the Bay Area and learned to play guitar by ear, copying the phrasing from her older brother's Vashti Bunyan and Karen Dalton records. Her self-titled 2012 debut on Birth Records collected songs recorded on a four-track in her bedroom, and word spread quickly inside Drag City's Tim Presley orbit.",
+      "Her distinctive vocal phrasing — held vowels that slide a quarter-tone across each syllable, a delivery somewhere between Sibyl Baier and a heavily filtered Joni Mitchell — became the signature of On Your Own Love Again (2015) and Quiet Signs (2019). Critics call it acid folk; she calls it just trying to make the chords behave.",
+      "She now records for Mexican Summer. Her 2024 record Here in the Pitch added a small string section and tape echo, and was widely interpreted as her first 'pop' move."
+    ],
+    catalog: [
+      { title: "Jessica Pratt", year: 2012 },
+      { title: "On Your Own Love Again", year: 2015 },
+      { title: "Quiet Signs", year: 2019 },
+      { title: "Here in the Pitch", year: 2024 }
+    ],
+    catalogCount: 4,
+    plays: {
+      station: { count: 142, last: "Mar 09, 2026" },
+      you: { count: 11, last: "Feb 24, 2026" }
+    },
+    topAlbums: [
+      { title: "On Your Own Love Again", c: 5 },
+      { title: "Quiet Signs", c: 3 },
+      { title: "Here in the Pitch", c: 2 },
+      { title: "Jessica Pratt", c: 1 }
+    ],
+    similar: [
+      { id: "weyesBlood",     name: "Weyes Blood",         pct: 91, color: "weyes" },
+      { id: "joannaNewsom",   name: "Joanna Newsom",       pct: 88, color: "joannaN" },
+      { id: "marisaAnderson", name: "Marisa Anderson",     pct: 85, color: "marisaA" },
+      { id: "hatfieldJuliana",name: "Juliana Hatfield",    pct: 79, color: "hatfield" },
+      { id: "feist",          name: "Feist",               pct: 76, color: "feist" },
+      { id: "arto",           name: "Arto Lindsay",        pct: 71, color: "arto" }
+    ],
+    reviews: [
+      { headline: "On Your Own Love Again: a folk record made of breath",      author: "Roxanne McKnight", date: "Feb 2024", rating: 5 },
+      { headline: "Here in the Pitch — strings, tape echo, and a confident new room", author: "Marcus Liang",   date: "Jul 2024", rating: 4 },
+      { headline: "Quiet Signs at five years: a re-listen",                     author: "Kelly Reichardt",  date: "Mar 2024", rating: 4 }
+    ],
+    discogsUrl: "https://www.discogs.com/artist/3094795-Jessica-Pratt",
+    wikiUrl: "https://en.wikipedia.org/wiki/Jessica_Pratt_(musician)"
+  },
+
+  chuqui: {
+    name: "Chuquimamani-Condori",
+    initials: "CC",
+    region: "La Paz / Long Beach",
+    meta: ["Active 2014–", "Chola Electronics", "Andean Folk"],
+    palette: "chuqui",
+    bio: [
+      "Elysia Crampton Chuquimia released early records as E+E and later as Chuquimamani-Condori — a multi-arc career that traces a long return to her Aymara heritage. She lives between La Paz and Long Beach, recording from both poles.",
+      "Her music shatters Andean huayno, sikuri, and cumbia fragments through digital glitch, MIDI-bell loops, and a tireless cut-and-paste editing approach borrowed from chola sound-system culture. DJ E Tape (2014) circulated on cassette before any label would touch it; by Demon City (2016) she was a fixture on Hausu Mountain.",
+      "Her 2023 record DJ E (released as Chuquimamani-Condori on her own Sondiyu imprint) earned a place in many year-end critical lists and pushed the chola-electronics vocabulary into broader experimental circles."
+    ],
+    catalog: [
+      { title: "DJ E Tape", year: 2014 },
+      { title: "Demon City", year: 2016 },
+      { title: "Spots y Escupitajo", year: 2018 },
+      { title: "Ocoñawi (Voz)", year: 2020 },
+      { title: "Edits", year: 2021 },
+      { title: "DJ E", year: 2023 }
+    ],
+    catalogCount: 8,
+    plays: {
+      station: { count: 118, last: "Mar 11, 2026" },
+      you: { count: 12, last: "Feb 26, 2026" }
+    },
+    topAlbums: [
+      { title: "DJ E Tape", c: 4 },
+      { title: "DJ E", c: 4 },
+      { title: "Edits", c: 2 },
+      { title: "Demon City", c: 2 }
+    ],
+    similar: [
+      { id: "chancha",      name: "Chancha Via Circuito", pct: 93, color: "chancha" },
+      { id: "helado",       name: "Helado Negro",         pct: 86, color: "helado" },
+      { id: "ela",          name: "Ela Minus",            pct: 82, color: "ela" },
+      { id: "nicolaC",      name: "Nicola Cruz",          pct: 80, color: "nicolaC" },
+      { id: "sofiaKourtesis", name: "Sofia Kourtesis",    pct: 77, color: "sofia" },
+      { id: "matiasAguayo", name: "Matías Aguayo",        pct: 74, color: "matiasA" }
+    ],
+    reviews: [
+      { headline: "DJ E: chola electronics finds its boldest statement",      author: "Roxanne McKnight", date: "Dec 2023", rating: 5 },
+      { headline: "Edits at three years: still the cassette no one expected", author: "Marcus Liang",     date: "Sep 2024", rating: 4 },
+      { headline: "Chuquimamani-Condori on Aymara song-form and digital glitch", author: "Kelly Reichardt", date: "Feb 2024", rating: 5 }
+    ],
+    discogsUrl: "https://www.discogs.com/artist/3094795-Chuquimamani-Condori",
+    wikiUrl: "https://en.wikipedia.org/wiki/Elysia_Crampton"
+  }
+};
+
+const SHOWCASED = ["polvo","juana","pratt","chuqui"];
+let currentKey = "polvo";
+
+// ---------- Render ----------
+function getCoverGrad(artistKey, idx) {
+  const palette = PALETTES[ARTISTS[artistKey].palette];
+  const c = palette.covers[idx % palette.covers.length];
+  // Slight angle variation per cover so the rail doesn't feel cloned.
+  const angle = 105 + (idx * 18) % 90;
+  return `linear-gradient(${angle}deg, ${c} 0%, ${shade(c, -0.35)} 100%)`;
+}
+
+// utility: darken a hex color
+function shade(hex, amt) {
+  const h = hex.replace("#","");
+  const r = parseInt(h.substring(0,2),16);
+  const g = parseInt(h.substring(2,4),16);
+  const b = parseInt(h.substring(4,6),16);
+  const f = (n) => Math.max(0, Math.min(255, Math.round(n + n*amt)));
+  return `#${f(r).toString(16).padStart(2,"0")}${f(g).toString(16).padStart(2,"0")}${f(b).toString(16).padStart(2,"0")}`;
+}
+
+function renderSelector() {
+  const row = document.getElementById("selectorRow");
+  // Preserve the label, append chips.
+  row.innerHTML = `<span class="selector-label">Showcasing:</span>` +
+    SHOWCASED.map(key => {
+      const a = ARTISTS[key];
+      return `<button class="artist-chip ${key===currentKey?"active":""}" data-key="${key}">${a.name}</button>`;
+    }).join("");
+  row.querySelectorAll(".artist-chip").forEach(el => {
+    el.addEventListener("click", () => {
+      currentKey = el.dataset.key;
+      mount();
+    });
+  });
+}
+
+function renderDeepDive(artistKey, isPushed) {
+  const a = ARTISTS[artistKey];
+  const palette = PALETTES[a.palette];
+
+  const railHtml = a.catalog.map((release, i) => `
+    <div class="rail-card">
+      <div class="rail-cover" style="background:${getCoverGrad(artistKey, i)}">
+        <span>${release.title}</span>
+      </div>
+      <div class="rail-title">${release.title}</div>
+      <div class="rail-year">${release.year}</div>
+    </div>
+  `).join("");
+
+  const maxTop = Math.max(...a.topAlbums.map(t => t.c));
+  const topHtml = a.topAlbums.map(t => {
+    const pct = (t.c / maxTop) * 100;
+    return `
+      <div class="bar-row">
+        <div class="bar-name">
+          ${t.title}
+          <span class="bar-bar" style="width:${pct}%"></span>
+        </div>
+        <div class="bar-count">${t.c}</div>
+      </div>
+    `;
+  }).join("");
+
+  const simHtml = a.similar.map(s => {
+    const grad = PALETTES[s.color] || "linear-gradient(135deg,#8E8E93,#3C3C43)";
+    const dotClass = s.pct >= 85 ? "" : s.pct >= 78 ? "mid" : "low";
+    const initials = s.name.split(/\s+/).filter(w => w[0] && w[0].toUpperCase()===w[0]).slice(0,2).map(w => w[0]).join("");
+    return `
+      <button class="sim-tile" data-sim="${s.id}" data-name="${s.name}">
+        <div class="sim-photo" style="background:${grad}"><span>${initials || s.name[0]}</span></div>
+        <div class="sim-info">
+          <div class="sim-name">${s.name}</div>
+          <div class="sim-pct"><span class="pct-dot ${dotClass}"></span>${s.pct}% similar</div>
+        </div>
+      </button>
+    `;
+  }).join("");
+
+  const reviewsHtml = a.reviews.map(r => {
+    const filled = "★".repeat(r.rating) + "☆".repeat(5 - r.rating);
+    return `
+      <div class="review-row">
+        <div class="review-headline">${r.headline}</div>
+        <div class="review-meta">
+          <span class="review-stars">${filled}</span>
+          <span>${r.author}</span>
+          <span>·</span>
+          <span>${r.date}</span>
+        </div>
+        <div class="review-chevron">›</div>
+      </div>
+    `;
+  }).join("");
+
+  return `
+    <div class="nav-page ${isPushed?"entering":""}" data-page="dive" data-artist="${artistKey}">
+      <div class="nav-bar">
+        <button class="back-btn" data-back>
+          <svg width="12" height="20" viewBox="0 0 12 20" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="10 2 2 10 10 18"/></svg>
+          Search
+        </button>
+        <span class="nav-spacer"></span>
+      </div>
+      <div class="scroll-area">
+        <div class="hero">
+          <div class="hero-photo" style="background:${palette.hero}"><span>${a.initials}</span></div>
+          <div class="hero-info">
+            <h2 class="hero-name">${a.name}</h2>
+            <div class="hero-region">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+              ${a.region}
+            </div>
+            <div class="hero-meta">
+              ${a.meta.map(m => `<span class="hero-meta-pill">${m}</span>`).join("")}
+            </div>
+          </div>
+        </div>
+
+        <div class="bio-card bio-clamp" id="bioCard">
+          ${a.bio.map(p => `<p>${p}</p>`).join("")}
+          <button class="bio-toggle" id="bioToggle">Read more</button>
+        </div>
+
+        <div class="section-header">
+          <span>At WXYC · ${a.catalogCount} in catalog</span>
+          <span class="header-aux">Showing ${a.catalog.length}</span>
+        </div>
+        <div class="rail-scroll">
+          <div class="rail-inner">${railHtml}</div>
+        </div>
+
+        <div class="section-header">
+          <span>Plays</span>
+        </div>
+        <div class="play-cards">
+          <div class="play-card">
+            <div class="play-card-label">Station</div>
+            <div class="play-card-count">${a.plays.station.count}<small> plays</small></div>
+            <div class="play-card-foot">last ${a.plays.station.last}</div>
+          </div>
+          <div class="play-card">
+            <div class="play-card-label">You</div>
+            <div class="play-card-count">${a.plays.you.count}<small> plays</small></div>
+            <div class="play-card-foot">last ${a.plays.you.last}</div>
+          </div>
+        </div>
+        <div class="barchart-card">
+          <div class="barchart-title">Top played by you</div>
+          ${topHtml}
+        </div>
+
+        <div class="section-header">
+          <span>Similar artists</span>
+          <span class="header-aux">via semantic-index</span>
+        </div>
+        <div class="sim-grid">${simHtml}</div>
+
+        <div class="section-header">
+          <span>Reviews · ${a.reviews.length}</span>
+        </div>
+        <div class="review-list">${reviewsHtml}</div>
+
+        <div class="footer-actions">
+          <button class="footer-link" data-ext="discogs" data-href="${a.discogsUrl}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            Open Discogs
+            <span class="footer-link-arrow">›</span>
+          </button>
+          <button class="footer-link" data-ext="wiki" data-href="${a.wikiUrl}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h20v3H2zM4 6h2v15H4zm14 0h2v15h-2z"/><path d="M6 21h12"/></svg>
+            Open Wikipedia
+            <span class="footer-link-arrow">›</span>
+          </button>
+        </div>
+
+        <div style="height: 24px"></div>
+      </div>
+    </div>
+  `;
+}
+
+// ---------- Mount + navigation ----------
+const stack = document.getElementById("navStack");
+
+function mount() {
+  renderSelector();
+  stack.innerHTML = renderDeepDive(currentKey, false);
+  wirePage(stack.querySelector('[data-page="dive"]'), /*root=*/true);
+}
+
+function wirePage(page, isRoot) {
+  // Bio expand
+  const bioCard = page.querySelector("#bioCard");
+  const bioToggle = page.querySelector("#bioToggle");
+  if (bioToggle) {
+    bioToggle.addEventListener("click", () => {
+      const expanded = bioCard.classList.toggle("expanded");
+      bioToggle.textContent = expanded ? "Read less" : "Read more";
+    });
+  }
+
+  // Back button
+  page.querySelectorAll("[data-back]").forEach(el => {
+    el.addEventListener("click", () => {
+      if (isRoot) {
+        // wiggle to suggest we'd return to search
+        page.animate(
+          [{ transform: "translateX(0)" }, { transform: "translateX(6px)" }, { transform: "translateX(0)" }],
+          { duration: 220 }
+        );
+      } else {
+        popPage();
+      }
+    });
+  });
+
+  // Similar-artist tiles: try to resolve to a showcased artist key; otherwise
+  // synthesize a minimal "neighbor" view stub.
+  page.querySelectorAll(".sim-tile").forEach(el => {
+    el.addEventListener("click", () => {
+      const name = el.dataset.name;
+      const resolved = resolveSimilar(name);
+      if (resolved) {
+        currentKey = resolved;
+        renderSelector();
+      }
+      pushPage(currentKey);
+    });
+  });
+
+  // Footer external links: don't actually navigate inside the prototype.
+  page.querySelectorAll("[data-ext]").forEach(el => {
+    el.addEventListener("click", e => {
+      e.preventDefault();
+      // Visually flash a "would open in Safari" hint via the page.
+      el.animate(
+        [{ background: "var(--ios-gray-bg)" }, { background: "white" }],
+        { duration: 300 }
+      );
+    });
+  });
+}
+
+// Try to point a similar-artist tap at one of the 4 showcased deep dives.
+// Names match by initial overlap; fallback re-renders the current artist so
+// the recursion is at least demonstrable in the prototype.
+function resolveSimilar(name) {
+  const lookup = {
+    "Polvo": "polvo",
+    "Juana Molina": "juana",
+    "Jessica Pratt": "pratt",
+    "Chuquimamani-Condori": "chuqui",
+    // Aliases — Polvo's similar list points at scene-mates, which we route
+    // back into the showcased pool for demo purposes.
+    "Archers of Loaf": "polvo",
+    "Pavement": "polvo",
+    "Slint": "polvo",
+    "Don Caballero": "polvo",
+    "Unwound": "polvo",
+    "Karp": "polvo",
+    // Juana Molina neighbors
+    "Feist": "juana",
+    "Laetitia Sadier": "juana",
+    "Weyes Blood": "pratt",
+    "Sofia Kourtesis": "chuqui",
+    "Matías Aguayo": "chuqui",
+    "The Natural History": "juana",
+    // Jessica Pratt neighbors
+    "Joanna Newsom": "pratt",
+    "Marisa Anderson": "pratt",
+    "Juliana Hatfield": "pratt",
+    "Arto Lindsay": "pratt",
+    // Chuqui neighbors
+    "Chancha Via Circuito": "chuqui",
+    "Helado Negro": "chuqui",
+    "Ela Minus": "chuqui",
+    "Nicola Cruz": "chuqui"
+  };
+  // The aliasing intentionally keeps demo navigation inside the four
+  // fleshed-out artists; in the real app each tap would hit BS with the
+  // semantic-index neighbor's artist_id.
+  return lookup[name] || null;
+}
+
+function pushPage(artistKey) {
+  // Mark current page as exiting, insert the new one in `entering` state.
+  const cur = stack.querySelector(".nav-page:not(.exiting)");
+  if (cur) cur.classList.add("exiting");
+  stack.insertAdjacentHTML("beforeend", renderDeepDive(artistKey, true));
+  const next = stack.querySelector('.nav-page:last-child');
+  requestAnimationFrame(() => next.classList.remove("entering"));
+  wirePage(next, /*root=*/false);
+}
+
+function popPage() {
+  const pages = stack.querySelectorAll(".nav-page");
+  if (pages.length < 2) return;
+  const top = pages[pages.length - 1];
+  const prev = pages[pages.length - 2];
+  top.classList.add("entering");
+  prev.classList.remove("exiting");
+  // Restore the chip selector to the artist we're returning to.
+  const prevKey = prev.dataset.artist;
+  if (prevKey && prevKey !== currentKey) {
+    currentKey = prevKey;
+    renderSelector();
+  }
+  setTimeout(() => top.remove(), 320);
+}
+
+mount();
+</script>
+</body>
+</html>

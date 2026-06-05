@@ -1,0 +1,1676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>In-show Queue — Prototype</title>
+<style>
+  :root {
+    --ios-bg: #F2F2F7;
+    --ios-card: #FFFFFF;
+    --ios-sep: #C6C6C8;
+    --ios-blue: #007AFF;
+    --ios-purple: #5856D6;
+    --ios-pink: #FF2D55;
+    --ios-orange: #FF9500;
+    --ios-green: #34C759;
+    --ios-teal: #5AC8FA;
+    --ios-yellow: #FFCC00;
+    --ios-red: #FF3B30;
+    --ios-gray: #8E8E93;
+    --ios-gray-light: #E5E5EA;
+    --ios-gray-bg: #EFEFF4;
+    --ios-label: #000000;
+    --ios-label-sec: #3C3C43;
+    --ios-label-tert: #3C3C4399;
+    --ios-label-quat: #3C3C432E;
+    --frame-bg: #1c1c1e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    background: #d8d8df;
+    color: #111;
+    padding: 24px 16px 48px;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1 {
+    margin: 0 0 4px 0;
+    font-size: 22px;
+    font-weight: 600;
+    text-align: center;
+  }
+  .subtitle {
+    text-align: center;
+    color: #555;
+    margin-bottom: 16px;
+    font-size: 14px;
+  }
+
+  /* On-air mode toggle */
+  .mode-toggle-row {
+    max-width: 900px;
+    margin: 0 auto 24px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    background: #fff;
+    border-radius: 12px;
+    padding: 10px 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .mode-toggle-row .lbl {
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    font-weight: 500;
+  }
+  .mode-seg {
+    background: var(--ios-gray-light);
+    border-radius: 9px;
+    padding: 2px;
+    display: flex;
+  }
+  .mode-seg button {
+    background: transparent;
+    border: none;
+    border-radius: 7px;
+    padding: 6px 14px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ios-label);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .mode-seg button.active {
+    background: white;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+  .mode-seg .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--ios-gray);
+    display: inline-block;
+  }
+  .mode-seg .dot.live {
+    background: var(--ios-green);
+    box-shadow: 0 0 0 0 rgba(52,199,89, 0.6);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(52,199,89, 0.55); }
+    70%  { box-shadow: 0 0 0 8px rgba(52,199,89, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(52,199,89, 0); }
+  }
+
+  .stage {
+    max-width: 900px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  @media (max-width: 800px) {
+    .stage { grid-template-columns: 1fr; }
+  }
+
+  /* ----- Phone frame ----- */
+  .phone-frame {
+    width: 390px;
+    margin: 0 auto;
+    background: var(--frame-bg);
+    border-radius: 50px;
+    padding: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    position: relative;
+  }
+  .phone-screen {
+    background: var(--ios-bg);
+    border-radius: 40px;
+    height: 800px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .notch {
+    width: 120px;
+    height: 30px;
+    background: var(--frame-bg);
+    border-radius: 0 0 18px 18px;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+  }
+  .status-bar {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+    background: var(--ios-bg);
+    z-index: 10;
+    position: relative;
+  }
+
+  /* ----- Page body ----- */
+  .body-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .nav-bar-large {
+    padding: 0 16px 6px;
+  }
+  .nav-bar-large h1 {
+    margin: 0;
+    font-size: 34px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+    color: var(--ios-label);
+  }
+
+  .live-status {
+    padding: 0 16px 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    font-weight: 500;
+  }
+  .live-status .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--ios-green);
+    box-shadow: 0 0 0 0 rgba(52,199,89, 0.6);
+    animation: pulse 2s infinite;
+    flex-shrink: 0;
+  }
+  .live-status .show {
+    color: var(--ios-label);
+    font-weight: 600;
+  }
+  .live-status .ends {
+    color: var(--ios-label-tert);
+    font-weight: 400;
+  }
+
+  /* off-air banner */
+  .offair-banner {
+    margin: 4px 16px 12px;
+    background: #FFF4DA;
+    border: 1px solid #F2C97A;
+    border-radius: 12px;
+    padding: 12px 14px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .offair-banner .icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--ios-orange);
+    color: white;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 14px;
+  }
+  .offair-banner .text {
+    font-size: 12px;
+    color: #5b3d00;
+    line-height: 1.45;
+  }
+  .offair-banner .text strong {
+    color: #3a2700;
+  }
+
+  .scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 24px;
+  }
+  .scroll-area::-webkit-scrollbar { width: 0; }
+
+  /* ----- Now Playing card ----- */
+  .now-card {
+    background: white;
+    margin: 0 16px 16px;
+    border-radius: 14px;
+    padding: 12px;
+    display: grid;
+    grid-template-columns: 64px 1fr;
+    gap: 12px;
+    align-items: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    position: relative;
+    overflow: hidden;
+  }
+  .now-card .cover {
+    width: 64px;
+    height: 64px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #FF7AA1, #5C4DEB);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    flex-shrink: 0;
+  }
+  .now-card .meta {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .now-card .now-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--ios-pink);
+    font-weight: 700;
+  }
+  .now-card .title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ios-label);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .now-card .artist {
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .now-card .album {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .now-card .progress-row {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+    font-size: 10px;
+    color: var(--ios-label-tert);
+    font-variant-numeric: tabular-nums;
+  }
+  .now-card .progress {
+    flex: 1;
+    height: 3px;
+    background: var(--ios-gray-light);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .now-card .progress-fill {
+    height: 100%;
+    background: var(--ios-pink);
+    width: 38%;
+    border-radius: 2px;
+    transition: width 1s linear;
+  }
+
+  /* ----- Section header ----- */
+  .sec-header {
+    padding: 0 18px 6px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .sec-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ios-label-sec);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .row-badge {
+    background: var(--ios-gray-light);
+    color: var(--ios-label-sec);
+    border-radius: 10px;
+    padding: 1px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ----- Queue list ----- */
+  .queue-list {
+    background: white;
+    margin: 0 16px 16px;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .queue-row {
+    display: grid;
+    grid-template-columns: 28px 44px 1fr 28px;
+    gap: 10px;
+    align-items: center;
+    padding: 10px 12px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    position: relative;
+    background: white;
+    transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow 0.18s cubic-bezier(0.4, 0, 0.2, 1),
+                background 0.15s;
+    will-change: transform;
+    cursor: default;
+    overflow: visible;
+  }
+  .queue-row:last-child { border-bottom: none; }
+
+  .queue-row.lifted {
+    background: #fafbff;
+    box-shadow: 0 8px 18px rgba(0,0,0,0.18);
+    transform: scale(1.02);
+    z-index: 5;
+    border-radius: 10px;
+  }
+  .queue-row.shift-down { transform: translateY(58px); }
+  .queue-row.shift-up { transform: translateY(-58px); }
+
+  .queue-row .handle {
+    color: var(--ios-gray);
+    font-size: 17px;
+    line-height: 1;
+    cursor: grab;
+    user-select: none;
+    text-align: center;
+    padding: 6px 0;
+  }
+  .queue-row .handle:active { cursor: grabbing; }
+  .queue-row .handle.dim { opacity: 0.3; cursor: not-allowed; }
+
+  .queue-row .cover {
+    width: 44px;
+    height: 44px;
+    border-radius: 6px;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    flex-shrink: 0;
+  }
+  .queue-row .meta { min-width: 0; }
+  .queue-row .title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ios-label);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .queue-row .title.placeholder {
+    color: var(--ios-orange);
+    font-style: italic;
+    font-weight: 500;
+  }
+  .queue-row .artist {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .queue-row .album {
+    font-size: 11px;
+    color: var(--ios-label-quat);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .queue-row .overflow-btn {
+    background: transparent;
+    border: none;
+    color: var(--ios-gray);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px;
+    line-height: 1;
+    border-radius: 6px;
+  }
+  .queue-row .overflow-btn:hover { background: var(--ios-gray-bg); }
+
+  /* swipe-to-delete affordance */
+  .swipe-wrap {
+    position: relative;
+    overflow: hidden;
+  }
+  .swipe-delete-bg {
+    position: absolute;
+    inset: 0;
+    background: var(--ios-red);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0 26px;
+    font-weight: 600;
+    font-size: 14px;
+    gap: 6px;
+  }
+  .swipe-wrap.show-delete .queue-row {
+    transform: translateX(-92px);
+  }
+
+  /* ----- Floating Add button ----- */
+  .fab {
+    position: absolute;
+    right: 18px;
+    bottom: 96px;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--ios-blue);
+    color: white;
+    border: none;
+    font-size: 28px;
+    font-weight: 300;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 6px 20px rgba(0, 122, 255, 0.4);
+    z-index: 30;
+    transition: transform 0.15s, opacity 0.15s, box-shadow 0.15s;
+  }
+  .fab:active { transform: scale(0.92); }
+  .fab.disabled {
+    background: var(--ios-gray);
+    opacity: 0.55;
+    cursor: not-allowed;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.12);
+  }
+
+  /* ----- Tab bar (bottom) ----- */
+  .tab-bar-ios {
+    background: rgba(248,248,250,0.94);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-top: 0.5px solid var(--ios-sep);
+    flex-shrink: 0;
+    display: flex;
+    padding: 6px 0 18px;
+    z-index: 20;
+  }
+  .tab-bar-ios button {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--ios-gray);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 0;
+    font: inherit;
+    font-size: 10px;
+    font-weight: 500;
+  }
+  .tab-bar-ios button.active { color: var(--ios-blue); }
+  .tab-bar-ios .icon {
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ----- Sheet (Add menu + From Bin + From Search) ----- */
+  .sheet-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 100;
+    display: none;
+  }
+  .sheet-overlay.open { display: block; }
+  .sheet {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--ios-bg);
+    border-radius: 16px 16px 0 0;
+    max-height: 86%;
+    display: flex;
+    flex-direction: column;
+    transform: translateY(100%);
+    transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  .sheet-overlay.open .sheet { transform: translateY(0); }
+  .sheet.tall { height: 78%; }
+  .grabber {
+    width: 36px;
+    height: 5px;
+    background: var(--ios-gray-light);
+    border-radius: 3px;
+    margin: 8px auto 4px;
+  }
+  .sheet-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 16px 14px;
+    border-bottom: 0.5px solid var(--ios-sep);
+  }
+  .sheet-header .sheet-title {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ios-label);
+  }
+  .sheet-header button {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 15px;
+    cursor: pointer;
+    padding: 4px 0;
+  }
+  .sheet-header button.primary { font-weight: 600; }
+  .sheet-header button.primary:disabled {
+    color: var(--ios-label-quat);
+    cursor: not-allowed;
+  }
+  .sheet-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+  .sheet-body::-webkit-scrollbar { width: 0; }
+
+  /* Add menu (simple two-option chooser) */
+  .add-menu {
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .add-menu button {
+    width: 100%;
+    background: transparent;
+    border: none;
+    padding: 16px 18px;
+    text-align: left;
+    font: inherit;
+    font-size: 16px;
+    color: var(--ios-label);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border-bottom: 0.5px solid var(--ios-sep);
+  }
+  .add-menu button:last-child { border-bottom: none; }
+  .add-menu button:active { background: var(--ios-gray-bg); }
+  .add-menu .ico {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: var(--ios-blue);
+    color: white;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+  .add-menu .ico.bin { background: var(--ios-purple); }
+  .add-menu .ico.search { background: var(--ios-teal); }
+  .add-menu .lbl-strong {
+    font-weight: 500;
+    line-height: 1.2;
+  }
+  .add-menu .lbl-sub {
+    display: block;
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    margin-top: 2px;
+    line-height: 1.3;
+  }
+
+  /* Mail Bin sheet */
+  .bin-row {
+    background: white;
+    padding: 10px 14px;
+    display: grid;
+    grid-template-columns: 26px 40px 1fr;
+    gap: 10px;
+    align-items: center;
+    border-bottom: 0.5px solid var(--ios-sep);
+    cursor: pointer;
+  }
+  .bin-list {
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .bin-row:last-child { border-bottom: none; }
+  .bin-row:active { background: var(--ios-gray-bg); }
+  .checkbox {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1.5px solid var(--ios-gray);
+    background: white;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 13px;
+    font-weight: 700;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .bin-row.checked .checkbox {
+    background: var(--ios-blue);
+    border-color: var(--ios-blue);
+  }
+  .bin-row .cover {
+    width: 40px;
+    height: 40px;
+    border-radius: 6px;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    flex-shrink: 0;
+  }
+  .bin-row .meta { min-width: 0; }
+  .bin-row .artist {
+    font-size: 14px;
+    color: var(--ios-label);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bin-row .album {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bin-cta {
+    background: var(--ios-blue);
+    color: white;
+    border: none;
+    width: 100%;
+    border-radius: 12px;
+    padding: 14px;
+    font: inherit;
+    font-size: 16px;
+    font-weight: 600;
+    margin-top: 14px;
+    cursor: pointer;
+    box-shadow: 0 3px 10px rgba(0,122,255,0.25);
+  }
+  .bin-cta:disabled {
+    background: var(--ios-gray-light);
+    color: var(--ios-label-tert);
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+  .sheet-note {
+    text-align: center;
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    margin-top: 12px;
+    line-height: 1.4;
+  }
+  .sheet-note code {
+    background: var(--ios-gray-bg);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 10px;
+  }
+
+  /* Search overlay */
+  .search-overlay-bar {
+    padding: 0 16px 12px;
+  }
+  .search-input {
+    background: var(--ios-gray-light);
+    border-radius: 10px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+  }
+  .search-input input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    font: inherit;
+    font-size: 15px;
+    outline: none;
+    color: var(--ios-label);
+  }
+  .search-input svg { opacity: 0.5; flex-shrink: 0; }
+  .search-results {
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+    margin-top: 4px;
+  }
+  .search-row {
+    padding: 10px 14px;
+    display: grid;
+    grid-template-columns: 40px 1fr 24px;
+    gap: 10px;
+    align-items: center;
+    border-bottom: 0.5px solid var(--ios-sep);
+    cursor: pointer;
+  }
+  .search-row:last-child { border-bottom: none; }
+  .search-row:active { background: var(--ios-gray-bg); }
+  .search-row .cover {
+    width: 40px;
+    height: 40px;
+    border-radius: 6px;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    flex-shrink: 0;
+  }
+  .search-row .title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ios-label);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .search-row .sub {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .search-row .plus {
+    color: var(--ios-blue);
+    font-size: 22px;
+    font-weight: 300;
+    line-height: 1;
+    text-align: center;
+  }
+
+  /* Toast */
+  .toast {
+    position: absolute;
+    left: 50%;
+    bottom: 110px;
+    transform: translate(-50%, 24px);
+    background: rgba(28,28,30,0.95);
+    color: white;
+    padding: 12px 18px;
+    border-radius: 14px;
+    font-size: 13px;
+    font-weight: 500;
+    z-index: 200;
+    opacity: 0;
+    pointer-events: none;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+    transition: opacity 0.22s, transform 0.22s;
+    min-width: 180px;
+    text-align: center;
+    line-height: 1.3;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  .toast .toast-sub {
+    display: block;
+    margin-top: 3px;
+    font-size: 10.5px;
+    color: rgba(255,255,255,0.65);
+    font-variant-numeric: tabular-nums;
+    font-weight: 400;
+  }
+
+  /* Overflow menu (per-row dropdown) */
+  .row-menu {
+    position: absolute;
+    background: rgba(252,252,254,0.96);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.25);
+    overflow: hidden;
+    z-index: 80;
+    min-width: 200px;
+    display: none;
+  }
+  .row-menu.open { display: block; }
+  .row-menu button {
+    width: 100%;
+    background: transparent;
+    border: none;
+    text-align: left;
+    padding: 11px 16px;
+    font: inherit;
+    font-size: 15px;
+    color: var(--ios-label);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    border-bottom: 0.5px solid var(--ios-sep);
+  }
+  .row-menu button:last-child { border-bottom: none; }
+  .row-menu button:active { background: var(--ios-gray-bg); }
+  .row-menu button.destructive { color: var(--ios-red); }
+
+  /* ----- Explainer ----- */
+  .explainer {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    align-self: start;
+    position: sticky;
+    top: 16px;
+  }
+  .explainer h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .explainer h4 {
+    margin: 16px 0 6px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .explainer p {
+    color: #555;
+    font-size: 13px;
+    line-height: 1.55;
+    margin: 0 0 8px 0;
+  }
+  .explainer ul {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    line-height: 1.55;
+  }
+  .explainer li { margin-bottom: 4px; }
+  .explainer code {
+    background: var(--ios-gray-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+  .opt-tags {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .opt-tag {
+    background: var(--ios-purple);
+    color: white;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .opt-tag.phase  { background: var(--ios-green); }
+  .opt-tag.adr    { background: var(--ios-blue); }
+
+  .bs-block {
+    background: #1c1c1e;
+    color: #f5f5f7;
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11.5px;
+    line-height: 1.7;
+    margin: 6px 0 4px;
+    overflow-x: auto;
+  }
+  .bs-block .verb { color: #FFA657; font-weight: 600; }
+  .bs-block .path { color: #79C0FF; }
+  .bs-block .cm   { color: #8b949e; }
+
+  .pill-note {
+    background: var(--ios-gray-bg);
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: var(--ios-label-sec);
+    font-size: 12px;
+    line-height: 1.45;
+    margin-top: 8px;
+  }
+</style>
+</head>
+<body>
+
+<h1>In-show companion mode — live Queue</h1>
+<p class="subtitle">iOS phone view of the unplayed-yet tail of the current show's flowsheet. The on-air gate controls who can write.</p>
+
+<div class="mode-toggle-row">
+  <span class="lbl">Mode</span>
+  <div class="mode-seg" id="modeSeg">
+    <button data-mode="onair" class="active"><span class="dot live"></span> On-air</button>
+    <button data-mode="offair"><span class="dot"></span> Off-air</button>
+  </div>
+</div>
+
+<div class="stage">
+
+  <div class="phone-frame">
+    <div class="phone-screen" id="screen">
+      <div class="notch"></div>
+      <div class="status-bar">
+        <span>9:41</span>
+        <span>•••</span>
+      </div>
+      <div class="body-wrap" id="bodyWrap">
+        <!-- nav + scroll injected here -->
+      </div>
+
+      <!-- Bottom tab bar -->
+      <nav class="tab-bar-ios" id="tabBar">
+        <button data-tab="search">
+          <span class="icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </span>
+          Search
+        </button>
+        <button data-tab="bin">
+          <span class="icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16l-1.5 12.5a2 2 0 0 1-2 1.5H7.5a2 2 0 0 1-2-1.5L4 7z"/><path d="M9 7V5a3 3 0 0 1 6 0v2"/></svg>
+          </span>
+          Bin
+        </button>
+        <button data-tab="queue" class="active">
+          <span class="icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.5"/><circle cx="3.5" cy="12" r="1.5"/><circle cx="3.5" cy="18" r="1.5"/></svg>
+          </span>
+          Queue
+        </button>
+        <button data-tab="profile">
+          <span class="icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.42 3.58-8 8-8s8 3.58 8 8"/></svg>
+          </span>
+          Profile
+        </button>
+      </nav>
+
+      <!-- FAB -->
+      <button class="fab" id="fab" aria-label="Add to queue">+</button>
+
+      <!-- Sheets -->
+      <div class="sheet-overlay" id="sheetOverlay">
+        <div class="sheet" id="sheet"></div>
+      </div>
+
+      <!-- Row-level overflow menu -->
+      <div class="row-menu" id="rowMenu"></div>
+
+      <!-- Toast -->
+      <div class="toast" id="toast"></div>
+    </div>
+  </div>
+
+  <div class="explainer">
+    <div class="opt-tags">
+      <span class="opt-tag phase">Phase 1</span>
+      <span class="opt-tag adr">ADR 0003</span>
+      <span class="opt-tag">Pick #1</span>
+    </div>
+    <h3>In-show companion mode — Queue read + targeted writes</h3>
+    <p>iOS becomes a first-class in-show companion to dj-site, not a replacement. The Queue is the unplayed-yet tail of the current show's flowsheet — DJs can read it from anywhere, then send tracks from Mail Bin or Search, reorder, and remove entries.</p>
+    <p>Both surfaces operate on the same Queue resource — last write wins. The Mail Bin → Queue handoff mirrors dj-site's <code>convertBinToQueue</code>: the row is queued with empty <code>track_title</code>, and the DJ fills it in on-air.</p>
+    <p>iOS leapfrogs dj-site on one thing: native drag-and-drop reorder. dj-site's <code>handleReorder</code> is currently a no-op; we wire the same <code>PATCH /flowsheet/play-order</code> contract here and ship it first.</p>
+
+    <h4>Try it</h4>
+    <ul>
+      <li>Toggle <strong>On-air / Off-air</strong> at the top — write affordances dim when off-air</li>
+      <li>When on-air, tap <strong>+</strong> to send tracks from <em>Mail Bin</em> (multi-select) or <em>Search</em></li>
+      <li><strong>Long-press</strong> a drag handle (≡) to enter reorder mode — neighbours shift and a save toast fires</li>
+      <li><strong>Swipe</strong> a row left to reveal Delete (try the Wednesday row)</li>
+      <li>Tap a row's <strong>⋯</strong> for the overflow menu</li>
+    </ul>
+
+    <h4>BS contract</h4>
+    <div class="bs-block"><span class="verb">GET</span>    <span class="path">/flowsheet/on-air?dj_id=me</span>       <span class="cm"># poll every 30s</span>
+<span class="verb">GET</span>    <span class="path">/flowsheet/latest</span>                <span class="cm"># now-playing</span>
+<span class="verb">GET</span>    <span class="path">/flowsheet/playlist</span>              <span class="cm"># queue tail</span>
+<span class="verb">POST</span>   <span class="path">/flowsheet</span>                       <span class="cm"># add (empty title = bin handoff)</span>
+<span class="verb">PATCH</span>  <span class="path">/flowsheet/play-order</span>            <span class="cm"># reorder</span>
+<span class="verb">DELETE</span> <span class="path">/flowsheet/{entry_id}</span>            <span class="cm"># remove</span></div>
+
+    <h4>Out of scope for v1</h4>
+    <p style="margin-top:0">FCC-adjacent operations stay with dj-site: show start/end, talksets, breakpoints, and DJ join/leave. iOS reads them; it doesn't write them yet.</p>
+
+    <div class="pill-note">On-air status comes from <code>/flowsheet/on-air?dj_id=me</code>. The write gate is enforced server-side too — iOS just hides the affordance when it knows the DJ isn't on-air, to avoid a confusing 403.</div>
+  </div>
+</div>
+
+<script>
+// ---------- State ----------
+let mode = "onair"; // onair | offair
+let activeTab = "queue";
+
+// Sample queue (with deliberate placeholder for #4 from Bin)
+const QUEUE_SEED = [
+  { id: "q1", title: "Thermal Cathedral", artist: "Polvo",                 album: "Today's Active Lifestyles",  cov: "PV", grad: ["#FF9500","#FF2D55"] },
+  { id: "q2", title: "Paraguaya",          artist: "Juana Molina",          album: "Halo",                       cov: "JM", grad: ["#5AC8FA","#5856D6"] },
+  { id: "q3", title: "Back, Baby",         artist: "Jessica Pratt",         album: "On Your Own Love Again",     cov: "JP", grad: ["#F2C97A","#C7917A"] },
+  { id: "q4", title: "",                   artist: "Chuquimamani-Condori",  album: "DJ E Tape",                  cov: "CC", grad: ["#34C759","#007AFF"], fromBin: true },
+  { id: "q5", title: "Beg Brett",          artist: "DOGA",                  album: "All Hat",                    cov: "DG", grad: ["#1c1c1e","#5C4DEB"] },
+  { id: "q6", title: "Bull Believer",      artist: "Wednesday",             album: "Rat Saw God",                cov: "WD", grad: ["#8B6F47","#E6A85C"] },
+  { id: "q7", title: "Web in Front",       artist: "Archers of Loaf",       album: "Icky Mettle",                cov: "AL", grad: ["#A23B72","#F18F01"] },
+  { id: "q8", title: "Summer Babe",        artist: "Pavement",              album: "Slanted and Enchanted",      cov: "PV", grad: ["#2E86AB","#A23B72"] },
+];
+
+let queue = QUEUE_SEED.map(r => ({...r}));
+
+const NOW_PLAYING = {
+  title: "Hold U",
+  artist: "Indigo De Souza",
+  album: "Any Shape You Take",
+  cov: "ID",
+  startedAt: "10:32",
+  pct: 38,
+};
+
+const SHOW = {
+  dj: "biscuit",
+  ends: "11:00",
+};
+
+// Mail bin contents (8 entries)
+const BIN_ITEMS = [
+  { id: "b1", artist: "Caroline Polachek",      album: "Pang",              cov: "CP", grad: ["#FF7AA1","#C7917A"] },
+  { id: "b2", artist: "Squid",                  album: "Bright Green Field", cov: "SQ", grad: ["#34C759","#5AC8FA"] },
+  { id: "b3", artist: "Yo La Tengo",            album: "Painful",            cov: "YL", grad: ["#3C3C43","#8E8E93"] },
+  { id: "b4", artist: "Wednesday",              album: "Rat Saw God",        cov: "WD", grad: ["#8B6F47","#E6A85C"] },
+  { id: "b5", artist: "Polvo",                  album: "Exploded Drawing",   cov: "PV", grad: ["#FF9500","#FF2D55"] },
+  { id: "b6", artist: "DOGA",                   album: "All Hat",            cov: "DG", grad: ["#1c1c1e","#5C4DEB"] },
+  { id: "b7", artist: "Chuquimamani-Condori",   album: "Edits",              cov: "CC", grad: ["#34C759","#007AFF"] },
+  { id: "b8", artist: "Juana Molina",           album: "Wed 21",             cov: "JM", grad: ["#5AC8FA","#5856D6"] },
+];
+
+// Search results (static demo set)
+const SEARCH_RESULTS = [
+  { id: "s1", title: "Tile Breaker",      artist: "Polvo",         album: "Today's Active Lifestyles", cov: "PV", grad: ["#FF9500","#FF2D55"] },
+  { id: "s2", title: "Total Pigs",        artist: "Polvo",         album: "Today's Active Lifestyles", cov: "PV", grad: ["#FF9500","#FF2D55"] },
+  { id: "s3", title: "Eras",              artist: "Polvo",         album: "In Prism",                  cov: "PV", grad: ["#FF7AA1","#5C4DEB"] },
+  { id: "s4", title: "Lazy Comet",        artist: "Polvo",         album: "Exploded Drawing",          cov: "PV", grad: ["#FF9500","#FF2D55"] },
+  { id: "s5", title: "Stinger (Five Wigs)", artist: "Polvo",       album: "Today's Active Lifestyles", cov: "PV", grad: ["#FF9500","#FF2D55"] },
+];
+
+// Bin selection state for the multi-select sheet
+let binSelected = new Set();
+
+// ---------- Helpers ----------
+function coverStyle(grad) {
+  return `background: linear-gradient(135deg, ${grad[0]}, ${grad[1]});`;
+}
+
+function showToast(text, sub) {
+  const t = document.getElementById("toast");
+  t.innerHTML = `${text}${sub ? `<span class="toast-sub">${sub}</span>` : ""}`;
+  t.classList.add("show");
+  clearTimeout(showToast._tid);
+  showToast._tid = setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+// ---------- Rendering ----------
+function renderBody() {
+  const bw = document.getElementById("bodyWrap");
+
+  let html = `<div class="nav-bar-large"><h1>Queue</h1></div>`;
+
+  if (mode === "onair") {
+    html += `
+      <div class="live-status">
+        <span class="dot"></span>
+        Live · <span class="show">${SHOW.dj}'s show</span> · <span class="ends">ends ${SHOW.ends}</span>
+      </div>
+    `;
+  } else {
+    html += `
+      <div class="offair-banner">
+        <span class="icon">⏱</span>
+        <span class="text"><strong>You're not on-air.</strong> Only the active DJ can write to the Queue. Reading is allowed — pull-to-refresh stays live.</span>
+      </div>
+    `;
+  }
+
+  // Now playing card
+  html += `
+    <div class="scroll-area" id="scrollArea">
+      <div class="now-card">
+        <div class="cover" style="${coverStyle(['#FF7AA1','#5C4DEB'])}">${NOW_PLAYING.cov}</div>
+        <div class="meta">
+          <span class="now-label">Now playing</span>
+          <span class="title">${NOW_PLAYING.title}</span>
+          <span class="artist">${NOW_PLAYING.artist}</span>
+          <span class="album">${NOW_PLAYING.album}</span>
+        </div>
+        <div class="progress-row">
+          <span>${NOW_PLAYING.startedAt}</span>
+          <div class="progress"><div class="progress-fill" id="progFill"></div></div>
+          <span>−2:14</span>
+        </div>
+      </div>
+
+      <div class="sec-header">
+        <span class="sec-title">Up next <span class="row-badge" id="queueCountBadge">${queue.length}</span></span>
+      </div>
+      <div class="queue-list" id="queueList">
+        ${queue.map((r, i) => renderQueueRow(r, i)).join("")}
+      </div>
+      <div style="height: 8px"></div>
+    </div>
+  `;
+
+  bw.innerHTML = html;
+
+  wireQueueRows();
+
+  // Tick progress bar lightly so the page feels alive
+  if (mode === "onair") {
+    setTimeout(() => {
+      const pf = document.getElementById("progFill");
+      if (pf) pf.style.width = (NOW_PLAYING.pct + 1) + "%";
+    }, 600);
+  }
+}
+
+function renderQueueRow(r, i) {
+  const swipeable = r.id === "q6"; // demo: Wednesday row pre-opens delete affordance
+  const handleClass = mode === "onair" ? "" : "dim";
+  return `
+    <div class="swipe-wrap ${swipeable ? "show-delete" : ""}" data-row-id="${r.id}">
+      <div class="swipe-delete-bg">
+        <span>🗑 Delete</span>
+      </div>
+      <div class="queue-row" data-row-id="${r.id}" data-idx="${i}">
+        <span class="handle ${handleClass}" data-handle="${r.id}">≡</span>
+        <span class="cover" style="${coverStyle(r.grad)}">${r.cov}</span>
+        <div class="meta">
+          <div class="title ${r.title ? "" : "placeholder"}">${r.title ? r.title : "[track to be set on-air]"}</div>
+          <div class="artist">${r.artist}</div>
+          <div class="album">${r.album}${r.fromBin ? " · from Mail Bin" : ""}</div>
+        </div>
+        <button class="overflow-btn" data-overflow="${r.id}">⋯</button>
+      </div>
+    </div>
+  `;
+}
+
+function wireQueueRows() {
+  document.querySelectorAll("[data-overflow]").forEach(btn => {
+    btn.addEventListener("click", e => {
+      e.stopPropagation();
+      openRowMenu(btn);
+    });
+  });
+
+  // Swipe-to-delete demo: tap the open delete affordance to remove
+  document.querySelectorAll(".swipe-wrap.show-delete .swipe-delete-bg").forEach(el => {
+    el.addEventListener("click", () => {
+      const id = el.closest(".swipe-wrap").dataset.rowId;
+      deleteFromQueue(id);
+    });
+  });
+
+  // Long-press → reorder demo
+  document.querySelectorAll("[data-handle]").forEach(h => {
+    let timer = null;
+    const start = () => {
+      if (mode !== "onair") return;
+      timer = setTimeout(() => {
+        const id = h.dataset.handle;
+        triggerReorderDemo(id);
+      }, 480);
+    };
+    const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    h.addEventListener("mousedown", start);
+    h.addEventListener("touchstart", start);
+    h.addEventListener("mouseup", cancel);
+    h.addEventListener("mouseleave", cancel);
+    h.addEventListener("touchend", cancel);
+    h.addEventListener("touchcancel", cancel);
+  });
+
+  // Tapping a row also closes the row menu
+  document.querySelectorAll(".queue-row").forEach(r => {
+    r.addEventListener("click", () => closeRowMenu());
+  });
+}
+
+// ---------- Reorder demo ----------
+function triggerReorderDemo(rowId) {
+  // Visually: lift the row, shift the row directly below it up, shift this one down,
+  // wait, then swap places in queue, re-render, and fire a save toast.
+  const list = document.getElementById("queueList");
+  if (!list) return;
+  const row = list.querySelector(`.queue-row[data-row-id="${rowId}"]`);
+  if (!row) return;
+  const idx = parseInt(row.dataset.idx);
+  if (idx >= queue.length - 1) {
+    // last row — swap with one above instead
+    const above = list.querySelector(`.queue-row[data-idx="${idx - 1}"]`);
+    if (!above) return;
+    row.classList.add("lifted");
+    above.classList.add("shift-down");
+    setTimeout(() => {
+      [queue[idx - 1], queue[idx]] = [queue[idx], queue[idx - 1]];
+      renderBody();
+      showToast("Queue reordered", "PATCH /flowsheet/play-order");
+    }, 360);
+    return;
+  }
+  const below = list.querySelector(`.queue-row[data-idx="${idx + 1}"]`);
+  row.classList.add("lifted");
+  if (below) below.classList.add("shift-up");
+  setTimeout(() => {
+    [queue[idx], queue[idx + 1]] = [queue[idx + 1], queue[idx]];
+    renderBody();
+    showToast("Queue reordered", "PATCH /flowsheet/play-order");
+  }, 360);
+}
+
+// ---------- Overflow menu ----------
+function openRowMenu(btn) {
+  closeRowMenu();
+  const menu = document.getElementById("rowMenu");
+  const id = btn.dataset.overflow;
+  const rect = btn.getBoundingClientRect();
+  const screen = document.getElementById("screen").getBoundingClientRect();
+  const top = rect.bottom - screen.top + 6;
+  const right = screen.right - rect.right;
+
+  const writable = mode === "onair";
+  menu.innerHTML = `
+    <button data-act="move-top">Move to top <span>↥</span></button>
+    <button data-act="move-bot">Move to bottom <span>↧</span></button>
+    <button class="destructive" data-act="remove">Remove from Queue <span>🗑</span></button>
+  `;
+  menu.style.top = top + "px";
+  menu.style.right = right + "px";
+  menu.style.left = "auto";
+  menu.classList.add("open");
+
+  menu.querySelectorAll("button").forEach(b => {
+    b.addEventListener("click", e => {
+      e.stopPropagation();
+      const act = b.dataset.act;
+      if (!writable) {
+        closeRowMenu();
+        showToast("You're not on-air", "Write actions disabled");
+        return;
+      }
+      if (act === "remove") deleteFromQueue(id);
+      else if (act === "move-top") moveQueue(id, "top");
+      else if (act === "move-bot") moveQueue(id, "bottom");
+      closeRowMenu();
+    });
+  });
+
+  // dismiss on outside click
+  setTimeout(() => {
+    document.addEventListener("click", outsideCloseOnce, { once: true });
+  }, 0);
+}
+function outsideCloseOnce(ev) {
+  const m = document.getElementById("rowMenu");
+  if (!m.contains(ev.target)) closeRowMenu();
+}
+function closeRowMenu() {
+  document.getElementById("rowMenu").classList.remove("open");
+}
+function moveQueue(id, where) {
+  const idx = queue.findIndex(r => r.id === id);
+  if (idx < 0) return;
+  const [item] = queue.splice(idx, 1);
+  if (where === "top") queue.unshift(item);
+  else queue.push(item);
+  renderBody();
+  showToast("Queue reordered", "PATCH /flowsheet/play-order");
+}
+
+// ---------- Delete from queue ----------
+function deleteFromQueue(id) {
+  if (mode !== "onair") {
+    showToast("You're not on-air", "Write actions disabled");
+    return;
+  }
+  const row = queue.find(r => r.id === id);
+  queue = queue.filter(r => r.id !== id);
+  renderBody();
+  showToast("Removed from Queue", `DELETE /flowsheet/${id}`);
+}
+
+// ---------- FAB / Add sheet ----------
+const sheetOverlay = document.getElementById("sheetOverlay");
+const sheetEl = document.getElementById("sheet");
+
+function openAddMenu() {
+  if (mode !== "onair") return;
+  sheetEl.classList.remove("tall");
+  sheetEl.innerHTML = `
+    <div class="grabber"></div>
+    <div class="sheet-header">
+      <button id="cancelAdd">Cancel</button>
+      <span class="sheet-title">Add to Queue</span>
+      <span style="width:48px"></span>
+    </div>
+    <div class="sheet-body">
+      <div class="add-menu">
+        <button id="openBin">
+          <span class="ico bin">📬</span>
+          <span>
+            <span class="lbl-strong">From Mail Bin</span>
+            <span class="lbl-sub">Send bookmarked releases — DJ fills the track on-air</span>
+          </span>
+        </button>
+        <button id="openSearch">
+          <span class="ico search">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </span>
+          <span>
+            <span class="lbl-strong">From Search</span>
+            <span class="lbl-sub">Pick a specific track from the WXYC library</span>
+          </span>
+        </button>
+      </div>
+      <div class="sheet-note">All adds <code>POST /flowsheet</code>. The Mail Bin path uses empty <code>track_title</code> — dj-site parity with <code>convertBinToQueue</code>.</div>
+    </div>
+  `;
+  sheetOverlay.classList.add("open");
+  document.getElementById("cancelAdd").addEventListener("click", closeSheet);
+  document.getElementById("openBin").addEventListener("click", openBinSheet);
+  document.getElementById("openSearch").addEventListener("click", openSearchSheet);
+}
+
+function openBinSheet() {
+  binSelected = new Set();
+  sheetEl.classList.add("tall");
+  renderBinSheet();
+}
+
+function renderBinSheet() {
+  const n = binSelected.size;
+  sheetEl.innerHTML = `
+    <div class="grabber"></div>
+    <div class="sheet-header">
+      <button id="binBack">Back</button>
+      <span class="sheet-title">From Mail Bin</span>
+      <button id="binCancel">Cancel</button>
+    </div>
+    <div class="sheet-body">
+      <div class="sheet-note" style="text-align:left;margin:0 0 12px;color:var(--ios-label-sec)">
+        Tracks are added with an empty title — fill in <em>"track on-air"</em> as you cue them up.
+      </div>
+      <div class="bin-list">
+        ${BIN_ITEMS.map(b => `
+          <div class="bin-row ${binSelected.has(b.id) ? "checked" : ""}" data-bin-id="${b.id}">
+            <span class="checkbox">${binSelected.has(b.id) ? "✓" : ""}</span>
+            <span class="cover" style="${coverStyle(b.grad)}">${b.cov}</span>
+            <div class="meta">
+              <div class="artist">${b.artist}</div>
+              <div class="album">${b.album}</div>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+      <button class="bin-cta" id="binSend" ${n === 0 ? "disabled" : ""}>
+        ${n === 0 ? "Select tracks to send" : `Send ${n} to Queue`}
+      </button>
+      <div class="sheet-note">${n} selected · <code>POST /flowsheet</code> ×${n} (empty <code>track_title</code>)</div>
+    </div>
+  `;
+
+  sheetEl.querySelector("#binBack").addEventListener("click", () => {
+    sheetEl.classList.remove("tall");
+    openAddMenu();
+  });
+  sheetEl.querySelector("#binCancel").addEventListener("click", closeSheet);
+  sheetEl.querySelectorAll("[data-bin-id]").forEach(row => {
+    row.addEventListener("click", () => {
+      const id = row.dataset.binId;
+      if (binSelected.has(id)) binSelected.delete(id);
+      else binSelected.add(id);
+      renderBinSheet();
+    });
+  });
+  sheetEl.querySelector("#binSend").addEventListener("click", () => {
+    if (binSelected.size === 0) return;
+    const added = [];
+    binSelected.forEach(id => {
+      const b = BIN_ITEMS.find(x => x.id === id);
+      if (!b) return;
+      added.push({
+        id: "q" + (1000 + queue.length + added.length),
+        title: "",
+        artist: b.artist,
+        album: b.album,
+        cov: b.cov,
+        grad: b.grad,
+        fromBin: true,
+      });
+    });
+    queue = queue.concat(added);
+    const n = added.length;
+    closeSheet();
+    renderBody();
+    showToast(`Sent ${n} to Queue`, "convertBinToQueue → POST /flowsheet");
+  });
+}
+
+function openSearchSheet() {
+  sheetEl.classList.add("tall");
+  renderSearchSheet("polvo");
+}
+function renderSearchSheet(query) {
+  sheetEl.innerHTML = `
+    <div class="grabber"></div>
+    <div class="sheet-header">
+      <button id="srchBack">Back</button>
+      <span class="sheet-title">From Search</span>
+      <button id="srchDone">Done</button>
+    </div>
+    <div class="sheet-body" id="srchBody">
+      <div class="search-overlay-bar">
+        <div class="search-input">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="srchInput" type="text" value="${query}" placeholder="Search the library"/>
+        </div>
+      </div>
+      <div class="search-results" id="srchResults"></div>
+      <div class="sheet-note">Tap a result → <code>POST /flowsheet</code> with the full track. Sheet stays open so you can add several.</div>
+    </div>
+  `;
+  renderSearchRows();
+  sheetEl.querySelector("#srchBack").addEventListener("click", () => {
+    sheetEl.classList.remove("tall");
+    openAddMenu();
+  });
+  sheetEl.querySelector("#srchDone").addEventListener("click", closeSheet);
+  sheetEl.querySelector("#srchInput").addEventListener("input", () => renderSearchRows());
+}
+function renderSearchRows() {
+  const root = sheetEl.querySelector("#srchResults");
+  const q = (sheetEl.querySelector("#srchInput")?.value || "").toLowerCase();
+  const filtered = q
+    ? SEARCH_RESULTS.filter(r =>
+        r.title.toLowerCase().includes(q) ||
+        r.artist.toLowerCase().includes(q) ||
+        r.album.toLowerCase().includes(q))
+    : SEARCH_RESULTS;
+  if (filtered.length === 0) {
+    root.innerHTML = `<div style="padding:24px;text-align:center;color:var(--ios-label-tert);font-size:13px">No results</div>`;
+    return;
+  }
+  root.innerHTML = filtered.map(r => `
+    <div class="search-row" data-srch-id="${r.id}">
+      <span class="cover" style="${coverStyle(r.grad)}">${r.cov}</span>
+      <div class="meta">
+        <div class="title">${r.title}</div>
+        <div class="sub">${r.artist} · ${r.album}</div>
+      </div>
+      <span class="plus">+</span>
+    </div>
+  `).join("");
+  root.querySelectorAll("[data-srch-id]").forEach(row => {
+    row.addEventListener("click", () => {
+      const r = SEARCH_RESULTS.find(x => x.id === row.dataset.srchId);
+      if (!r) return;
+      const entry = {
+        id: "q" + (2000 + queue.length),
+        title: r.title,
+        artist: r.artist,
+        album: r.album,
+        cov: r.cov,
+        grad: r.grad,
+      };
+      queue.push(entry);
+      // brief inline confirmation
+      const plus = row.querySelector(".plus");
+      plus.style.color = "var(--ios-green)";
+      plus.textContent = "✓";
+      setTimeout(() => {
+        plus.style.color = "var(--ios-blue)";
+        plus.textContent = "+";
+      }, 900);
+      showToast(`Added "${r.title}"`, "POST /flowsheet");
+      // update underlying queue view in background
+      const badge = document.getElementById("queueCountBadge");
+      if (badge) badge.textContent = queue.length;
+    });
+  });
+}
+
+function closeSheet() {
+  sheetOverlay.classList.remove("open");
+  // when sheet closes, ensure queue view reflects any additions
+  renderBody();
+}
+
+// ---------- Wire mode toggle, tab bar, FAB ----------
+document.getElementById("modeSeg").addEventListener("click", e => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  document.querySelectorAll("#modeSeg button").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  mode = btn.dataset.mode;
+  const fab = document.getElementById("fab");
+  fab.classList.toggle("disabled", mode !== "onair");
+  closeSheet();
+  renderBody();
+});
+
+document.getElementById("tabBar").addEventListener("click", e => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  document.querySelectorAll("#tabBar button").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  activeTab = btn.dataset.tab;
+  // We only render Queue in this mock; other tabs show a stub
+  if (activeTab === "queue") {
+    renderBody();
+  } else {
+    renderTabStub(activeTab);
+  }
+});
+
+function renderTabStub(tab) {
+  const titles = { search: "Search", bin: "Bin", profile: "Profile" };
+  const subs = {
+    search: "Library search lives on its own tab. The Queue's Add → From Search action opens an embedded version.",
+    bin: "Mail Bin (bookmarked releases) lives here. The Queue's Add → From Mail Bin pulls from the same list.",
+    profile: "DJ profile, sign-out, on-air history. The mode toggle on this prototype simulates the on-air signal that lives on this tab in a real build.",
+  };
+  document.getElementById("bodyWrap").innerHTML = `
+    <div class="nav-bar-large"><h1>${titles[tab]}</h1></div>
+    <div class="scroll-area" style="padding:16px">
+      <div style="background:white;border-radius:12px;padding:20px;text-align:center;color:var(--ios-label-sec);font-size:14px;line-height:1.5">
+        <div style="font-size:28px;margin-bottom:10px;opacity:0.5">${tab==="search"?"🔎":tab==="bin"?"📬":"👤"}</div>
+        <div style="font-weight:600;margin-bottom:6px">${titles[tab]} tab</div>
+        <div style="font-size:12px;color:var(--ios-label-tert)">${subs[tab]}</div>
+        <button id="goQueue" style="margin-top:14px;background:var(--ios-blue);color:white;border:none;border-radius:10px;padding:10px 18px;font:inherit;font-size:14px;font-weight:500;cursor:pointer">Back to Queue</button>
+      </div>
+    </div>
+  `;
+  document.getElementById("goQueue").addEventListener("click", () => {
+    document.querySelectorAll("#tabBar button").forEach(b => b.classList.toggle("active", b.dataset.tab === "queue"));
+    activeTab = "queue";
+    renderBody();
+  });
+}
+
+document.getElementById("fab").addEventListener("click", () => {
+  if (mode !== "onair") {
+    showToast("Only the on-air DJ can write", "Toggle mode above to demo");
+    return;
+  }
+  openAddMenu();
+});
+
+// Click on sheet overlay backdrop closes
+sheetOverlay.addEventListener("click", e => {
+  if (e.target === sheetOverlay) closeSheet();
+});
+
+// ---------- Boot ----------
+renderBody();
+</script>
+</body>
+</html>

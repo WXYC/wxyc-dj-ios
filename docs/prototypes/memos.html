@@ -1,0 +1,1274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DJ Memos — Prototype</title>
+<style>
+  :root {
+    --ios-bg: #F2F2F7;
+    --ios-card: #FFFFFF;
+    --ios-sep: #C6C6C8;
+    --ios-blue: #007AFF;
+    --ios-purple: #5856D6;
+    --ios-pink: #FF2D55;
+    --ios-orange: #FF9500;
+    --ios-green: #34C759;
+    --ios-teal: #5AC8FA;
+    --ios-red: #FF3B30;
+    --ios-gray: #8E8E93;
+    --ios-gray-light: #E5E5EA;
+    --ios-gray-bg: #EFEFF4;
+    --ios-label: #000000;
+    --ios-label-sec: #3C3C43;
+    --ios-label-tert: #3C3C4399;
+    --frame-bg: #1c1c1e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    background: #d8d8df;
+    color: #111;
+    padding: 24px 16px 48px;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1 {
+    margin: 0 0 4px 0;
+    font-size: 22px;
+    font-weight: 600;
+    text-align: center;
+  }
+  .subtitle {
+    text-align: center;
+    color: #555;
+    margin-bottom: 24px;
+    font-size: 14px;
+  }
+
+  /* ----- Mode tabs ----- */
+  .tab-bar {
+    max-width: 900px;
+    margin: 0 auto 24px;
+    display: flex;
+    gap: 8px;
+    padding: 4px;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .tab-btn {
+    flex: 1;
+    padding: 10px 14px;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    color: #444;
+    text-align: left;
+    line-height: 1.3;
+  }
+  .tab-btn .tab-title {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .tab-btn .tab-desc {
+    display: block;
+    font-size: 11px;
+    color: #777;
+    font-weight: 400;
+  }
+  .tab-btn.active {
+    background: var(--ios-blue);
+    color: white;
+  }
+  .tab-btn.active .tab-desc { color: rgba(255,255,255,0.85); }
+
+  .stage {
+    max-width: 900px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  @media (max-width: 800px) {
+    .stage { grid-template-columns: 1fr; }
+  }
+
+  /* ----- Phone frame ----- */
+  .phone-frame {
+    width: 390px;
+    margin: 0 auto;
+    background: var(--frame-bg);
+    border-radius: 50px;
+    padding: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    position: relative;
+  }
+  .phone-screen {
+    background: var(--ios-bg);
+    border-radius: 40px;
+    height: 800px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .notch {
+    width: 120px;
+    height: 30px;
+    background: var(--frame-bg);
+    border-radius: 0 0 18px 18px;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+  }
+  .status-bar {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+    background: var(--ios-bg);
+    z-index: 10;
+    position: relative;
+  }
+
+  /* ----- Nav bar ----- */
+  .nav-bar {
+    padding: 6px 16px 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 44px;
+    background: var(--ios-bg);
+    flex-shrink: 0;
+  }
+  .back-btn {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 17px;
+    cursor: pointer;
+    padding: 4px 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .back-btn svg { stroke: var(--ios-blue); }
+  .nav-title {
+    flex: 1;
+    text-align: center;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ios-label);
+  }
+  .nav-spacer { width: 60px; }
+
+  /* ----- Scroll area ----- */
+  .scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 24px;
+  }
+  .scroll-area::-webkit-scrollbar { width: 0; }
+
+  /* ----- Album hero ----- */
+  .hero {
+    padding: 12px 16px 18px;
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+  }
+  .hero-cover {
+    width: 100px;
+    height: 100px;
+    border-radius: 8px;
+    flex-shrink: 0;
+    background:
+      radial-gradient(circle at 30% 30%, #f7d1a8 0%, #d68a52 40%, #5e3520 100%);
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.18);
+  }
+  .hero-cover::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      repeating-radial-gradient(circle at 50% 50%, transparent 0 6px, rgba(0,0,0,0.06) 6px 7px);
+  }
+  .hero-cover-label {
+    position: absolute;
+    bottom: 6px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 8px;
+    color: rgba(255,255,255,0.9);
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    z-index: 1;
+  }
+  .hero-text {
+    flex: 1;
+    min-width: 0;
+    padding-top: 2px;
+  }
+  .hero-artist {
+    font-size: 13px;
+    color: var(--ios-blue);
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .hero-title {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--ios-label);
+    letter-spacing: -0.4px;
+    line-height: 1.15;
+    margin-bottom: 6px;
+  }
+  .hero-meta {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    line-height: 1.4;
+  }
+
+  /* ----- Section headers ----- */
+  .section-header {
+    padding: 16px 16px 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ios-label-sec);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .section-aside {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+  }
+
+  /* ----- Memo cards ----- */
+  .memo-list {
+    padding: 0 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .memo-card {
+    background: white;
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+  .memo-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .memo-avatar {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--ios-purple), var(--ios-blue));
+    color: white;
+    font-size: 10px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .memo-author {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ios-label);
+  }
+  .memo-date {
+    font-size: 11px;
+    color: var(--ios-label-tert);
+    margin-left: auto;
+  }
+  .memo-body {
+    font-size: 14px;
+    color: var(--ios-label);
+    line-height: 1.4;
+    margin: 4px 0 8px;
+    word-wrap: break-word;
+  }
+  .memo-body:last-child { margin-bottom: 4px; }
+
+  /* ----- Voice clip row ----- */
+  .clip-row {
+    background: var(--ios-gray-bg);
+    border-radius: 10px;
+    padding: 8px 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 4px 0 6px;
+  }
+  .clip-play {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--ios-blue);
+    color: white;
+    border: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  .clip-play.playing { background: var(--ios-pink); }
+  .clip-play svg { display: block; }
+  .clip-waveform {
+    flex: 1;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    gap: 1.5px;
+    min-width: 0;
+  }
+  .clip-bar {
+    flex: 1;
+    background: var(--ios-blue);
+    opacity: 0.55;
+    border-radius: 1px;
+    min-width: 1px;
+  }
+  .clip-bar.active { opacity: 1; }
+  .clip-duration {
+    font-size: 12px;
+    color: var(--ios-label-sec);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+
+  /* ----- Memo actions ----- */
+  .memo-actions {
+    display: flex;
+    gap: 14px;
+    margin-top: 4px;
+    padding-top: 6px;
+    border-top: 0.5px solid var(--ios-sep);
+  }
+  .memo-action {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    padding: 2px 0;
+  }
+  .memo-action.danger { color: var(--ios-red); }
+
+  /* ----- New memo button ----- */
+  .new-memo {
+    margin: 12px 16px 0;
+    background: white;
+    border: none;
+    border-radius: 12px;
+    padding: 14px;
+    font: inherit;
+    font-size: 15px;
+    color: var(--ios-blue);
+    font-weight: 500;
+    cursor: pointer;
+    width: calc(100% - 32px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .new-memo:active { background: var(--ios-gray-bg); }
+
+  /* ----- Tracklist ----- */
+  .tracklist {
+    margin: 0 16px;
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .track-row {
+    padding: 10px 14px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+  }
+  .track-row:last-child { border-bottom: none; }
+  .track-num {
+    color: var(--ios-label-tert);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    width: 18px;
+    flex-shrink: 0;
+    text-align: right;
+  }
+  .track-name {
+    flex: 1;
+    color: var(--ios-label);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .track-len {
+    color: var(--ios-label-tert);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ----- Composer sheet ----- */
+  .sheet-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 100;
+    display: none;
+  }
+  .sheet-overlay.open { display: block; }
+  .sheet {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--ios-bg);
+    border-radius: 16px 16px 0 0;
+    height: 70%;
+    display: flex;
+    flex-direction: column;
+    transform: translateY(0);
+  }
+
+  /* In static "force-open" mode we don't animate */
+  .sheet-overlay.static { display: block; }
+  .sheet-overlay.static .sheet { transform: translateY(0); }
+
+  /* But animate when toggled from view mode */
+  .sheet-overlay.open:not(.static) .sheet {
+    animation: slideUp 0.25s ease-out;
+  }
+  @keyframes slideUp {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+
+  .sheet-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--ios-sep);
+    background: var(--ios-bg);
+    flex-shrink: 0;
+  }
+  .sheet-header .sheet-title {
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .sheet-header button {
+    background: transparent;
+    border: none;
+    color: var(--ios-blue);
+    font: inherit;
+    font-size: 15px;
+    cursor: pointer;
+    padding: 4px 0;
+    min-width: 60px;
+    text-align: left;
+  }
+  .sheet-header button.primary {
+    font-weight: 600;
+    text-align: right;
+  }
+  .sheet-header button.primary:disabled {
+    color: var(--ios-gray);
+    cursor: default;
+  }
+
+  .sheet-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .sheet-body::-webkit-scrollbar { width: 0; }
+
+  .composer-text {
+    background: white;
+    border-radius: 12px;
+    padding: 14px;
+    border: none;
+    width: 100%;
+    min-height: 140px;
+    resize: none;
+    font: inherit;
+    font-size: 15px;
+    color: var(--ios-label);
+    line-height: 1.45;
+    outline: none;
+  }
+  .composer-text::placeholder { color: var(--ios-label-tert); }
+
+  /* Record button — idle */
+  .record-btn {
+    background: white;
+    border: none;
+    border-radius: 12px;
+    padding: 14px;
+    font: inherit;
+    font-size: 15px;
+    color: var(--ios-red);
+    font-weight: 500;
+    cursor: pointer;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .record-btn:active { background: var(--ios-gray-bg); }
+  .record-dot-idle {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--ios-red);
+    flex-shrink: 0;
+  }
+
+  /* Recording UI */
+  .recording-card {
+    background: white;
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .recording-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .rec-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--ios-red);
+    flex-shrink: 0;
+    animation: pulseDot 1s infinite;
+  }
+  @keyframes pulseDot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  .rec-label {
+    font-size: 13px;
+    color: var(--ios-red);
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+  }
+  .rec-time {
+    margin-left: auto;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ios-label);
+    font-variant-numeric: tabular-nums;
+  }
+  .rec-time .of {
+    color: var(--ios-label-tert);
+    font-weight: 400;
+  }
+
+  .rec-waveform {
+    height: 60px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .rec-bar {
+    flex: 1;
+    background: var(--ios-red);
+    border-radius: 1.5px;
+    min-width: 2px;
+    transition: height 0.12s ease;
+  }
+
+  .rec-controls {
+    display: flex;
+    gap: 8px;
+  }
+  .rec-control {
+    flex: 1;
+    background: var(--ios-gray-bg);
+    border: none;
+    border-radius: 10px;
+    padding: 10px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ios-label);
+    cursor: pointer;
+  }
+  .rec-control.primary {
+    background: var(--ios-red);
+    color: white;
+  }
+
+  /* Composer clip preview row */
+  .clip-preview {
+    background: white;
+    border-radius: 12px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .clip-preview-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .clip-preview-actions {
+    display: flex;
+    gap: 14px;
+    padding-top: 4px;
+    border-top: 0.5px solid var(--ios-sep);
+  }
+
+  /* ----- Explainer ----- */
+  .explainer {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    align-self: start;
+    position: sticky;
+    top: 16px;
+  }
+  .explainer h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .explainer h4 {
+    margin: 14px 0 6px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+  }
+  .explainer p {
+    color: #555;
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 0 0 8px 0;
+  }
+  .explainer ul {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+    color: var(--ios-label-sec);
+    line-height: 1.5;
+  }
+  .explainer li { margin-bottom: 4px; }
+  .explainer code {
+    background: var(--ios-gray-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+  .opt-tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .opt-tag {
+    background: var(--ios-purple);
+    color: white;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .code-block {
+    background: var(--ios-gray-bg);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--ios-label-sec);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .code-block .verb {
+    color: var(--ios-purple);
+    font-weight: 600;
+  }
+  .note {
+    font-size: 12px;
+    color: var(--ios-label-tert);
+    line-height: 1.5;
+    margin-top: 6px;
+  }
+</style>
+</head>
+<body>
+
+<h1>DJ Memos — private scratch notes with voice</h1>
+<p class="subtitle">Per-album text memos with an optional 15-second voice clip. Three modes — view, compose, record.</p>
+
+<nav class="tab-bar" id="tabBar">
+  <button class="tab-btn active" data-mode="view"><span class="tab-title">View</span><span class="tab-desc">Album Detail with memos</span></button>
+  <button class="tab-btn" data-mode="composer"><span class="tab-title">Composer (text)</span><span class="tab-desc">New memo sheet open</span></button>
+  <button class="tab-btn" data-mode="recording"><span class="tab-title">Composer (recording)</span><span class="tab-desc">Mid-recording, 0:00 → 0:15</span></button>
+</nav>
+
+<div class="stage">
+
+  <div class="phone-frame">
+    <div class="phone-screen">
+      <div class="notch"></div>
+      <div class="status-bar">
+        <span>9:41</span>
+        <span>•••</span>
+      </div>
+
+      <!-- Album Detail (always rendered as base) -->
+      <div class="nav-bar">
+        <button class="back-btn">
+          <svg width="12" height="20" viewBox="0 0 12 20" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="10 2 2 10 10 18"/></svg>
+          Album
+        </button>
+        <span class="nav-title">Halo</span>
+        <span class="nav-spacer"></span>
+      </div>
+
+      <div class="scroll-area" id="albumScroll">
+        <div class="hero">
+          <div class="hero-cover">
+            <div class="hero-cover-label">Halo</div>
+          </div>
+          <div class="hero-text">
+            <div class="hero-artist">Juana Molina</div>
+            <div class="hero-title">Halo</div>
+            <div class="hero-meta">Crammed Discs · 2017<br/>Latin Electronic · Folktronica</div>
+          </div>
+        </div>
+
+        <div class="section-header">
+          <span class="section-title">My Memos · 3</span>
+          <span class="section-aside">private to you</span>
+        </div>
+
+        <div class="memo-list" id="memoList"></div>
+
+        <button class="new-memo" id="newMemoBtn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New memo
+        </button>
+
+        <div class="section-header">
+          <span class="section-title">Tracklist · 12</span>
+        </div>
+        <div class="tracklist">
+          <div class="track-row"><span class="track-num">1</span><span class="track-name">Paraguaya</span><span class="track-len">5:32</span></div>
+          <div class="track-row"><span class="track-num">2</span><span class="track-name">In the Lassa</span><span class="track-len">5:24</span></div>
+          <div class="track-row"><span class="track-num">3</span><span class="track-name">Sin Dones</span><span class="track-len">4:18</span></div>
+          <div class="track-row"><span class="track-num">4</span><span class="track-name">Andó</span><span class="track-len">3:45</span></div>
+          <div class="track-row"><span class="track-num">5</span><span class="track-name">Cara de Espejo</span><span class="track-len">4:52</span></div>
+          <div class="track-row"><span class="track-num">6</span><span class="track-name">Cosoco</span><span class="track-len">5:13</span></div>
+          <div class="track-row"><span class="track-num">7</span><span class="track-name">Eras</span><span class="track-len">4:01</span></div>
+          <div class="track-row"><span class="track-num">8</span><span class="track-name">A00 B01</span><span class="track-len">5:48</span></div>
+        </div>
+        <div style="height: 32px"></div>
+      </div>
+
+      <!-- Composer sheet -->
+      <div class="sheet-overlay" id="sheetOverlay">
+        <div class="sheet">
+          <div class="sheet-header">
+            <button id="cancelBtn">Cancel</button>
+            <span class="sheet-title">New memo</span>
+            <button class="primary" id="saveBtn" disabled>Save</button>
+          </div>
+          <div class="sheet-body" id="sheetBody"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="explainer">
+    <div class="opt-tags">
+      <span class="opt-tag">Phase 2</span>
+      <span class="opt-tag">Pick #6</span>
+    </div>
+    <h3>Memos — private scratch notes with voice</h3>
+    <p>Memos are <strong>private per-DJ notes</strong> attached to an album. Text is the spine; an optional voice clip (≤ 15s) rides along when speech is easier than typing — a mix instinct, a vocal hook to remember, a quick gut reaction recorded mid-show.</p>
+    <p><strong>Why private only.</strong> DJs need to be candid about programming reactions — "first track is fine, the rest is dead air" — without performing for peers. Cross-DJ visibility turns honest notes into curated public takes, and we lose the candor that makes the feature useful. Memos stay scoped to <code>dj_id</code> server-side; the API has no surface for reading another DJ's memos.</p>
+    <p><strong>Why per-album, not per-track.</strong> Track-keyed memo selection waits on Catalog-Track-Search (Track 3) and coordination item C3 — until the iOS app has a reliable way to identify "the second track on this CD," typing or paging through a track picker on a phone feels worse than just saying "watch the gap between 'Eras' and 'Cosoco'" in the album-level note.</p>
+    <p><strong>Why 15s cap on voice.</strong> Object storage cost stays bounded (15s @ 64kbps AAC ≈ 120 KB per clip), the upload is fast enough to feel synchronous on station Wi-Fi, and short clips remain tractable for future server-side transcription (v2 idea: transcribe into <code>body</code> so memos become searchable).</p>
+
+    <h4>Try it</h4>
+    <ul>
+      <li>Tap <strong>+ New memo</strong> to open the composer sheet</li>
+      <li>In the composer, type to enable Save</li>
+      <li>Tap <strong>Record voice clip</strong> — preview the recording UI in mode <em>Composer (recording)</em></li>
+      <li>Tap a memo's <strong>play</strong> button to flash through a faked waveform progression</li>
+      <li>Switch modes with the tabs at the top of the page</li>
+    </ul>
+
+    <h4>BS contract</h4>
+    <div class="code-block"><span class="verb">GET</span>    /memos?album_id={id}
+<span class="verb">POST</span>   /memos                { album_id, body, clip_url? }
+<span class="verb">POST</span>   /memos/upload-url     → { put_url, clip_url, expires_at }
+<span class="verb">PUT</span>    {put_url}             (client uploads m4a/aac, ≤ 15s)
+<span class="verb">DELETE</span> /memos/{id}</div>
+
+    <h4>Notes</h4>
+    <p class="note">15s hard cap enforced both client (record button auto-stops at 15.0s) and server (rejects clips with longer duration on the upload-url issuance and on POST /memos validation).</p>
+    <p class="note">Object storage TBD: S3-compatible, signed PUT URL valid for 5 min, server stores only <code>clip_url</code> on the memo row — no bytes in Postgres.</p>
+    <p class="note">Private — the <code>GET /memos</code> handler scopes by JWT's <code>dj_id</code>. No flag, no parameter — there's no way to request another DJ's memos.</p>
+    <p class="note">Future v2: server-side transcription of the clip, stored alongside <code>body</code>, so memos become first-class search-targets in the flowsheet-archive search.</p>
+  </div>
+
+</div>
+
+<script>
+// ---------- Mock data ----------
+const MEMOS = [
+  {
+    id: "m1",
+    author: "you",
+    date: "2 weeks ago",
+    body: "First track is the showstopper. Lean on it when the set needs grounding — it's the kind of song that resets the room without anyone noticing.",
+    clip: null
+  },
+  {
+    id: "m2",
+    author: "you",
+    date: "3 days ago",
+    body: "Watch the gap between 'Eras' and 'Cosoco' — needs a crossfade, not a hard cut. Notes in the voice clip:",
+    clip: { duration: 12, waveform: [3,5,8,12,16,22,18,14,20,24,19,15,10,7,11,16,22,26,21,17,13,9,6,4] }
+  },
+  {
+    id: "m3",
+    author: "you",
+    date: "1 day ago",
+    body: "Listen back:",
+    clip: { duration: 8, waveform: [4,7,11,15,20,18,14,19,23,17,12,8,5,9,14,18,22,16,11,7] }
+  }
+];
+
+// ---------- State ----------
+let mode = "view";  // view | composer | recording
+let composerText = "";
+let recordingElapsed = 0;  // tenths of a second (0..150)
+let recordingTimer = null;
+let recordingWaveform = [];
+
+// ---------- Memo list (album view) ----------
+function renderMemoList() {
+  const root = document.getElementById("memoList");
+  root.innerHTML = MEMOS.map(m => `
+    <div class="memo-card">
+      <div class="memo-head">
+        <span class="memo-avatar">YO</span>
+        <span class="memo-author">${m.author}</span>
+        <span class="memo-date">${m.date}</span>
+      </div>
+      <div class="memo-body">${m.body}</div>
+      ${m.clip ? renderClipRow(m.id, m.clip) : ""}
+      <div class="memo-actions">
+        <button class="memo-action">Edit</button>
+        <button class="memo-action danger">Delete</button>
+      </div>
+    </div>
+  `).join("");
+
+  // Wire play buttons
+  document.querySelectorAll(".clip-play").forEach(btn => {
+    btn.addEventListener("click", () => togglePlayback(btn));
+  });
+}
+
+function renderClipRow(id, clip) {
+  const bars = clip.waveform.map((h, i) => {
+    const heightPct = (h / 30) * 100;
+    return `<div class="clip-bar" data-i="${i}" style="height:${Math.max(8, heightPct)}%"></div>`;
+  }).join("");
+  const dur = formatTime(clip.duration);
+  return `
+    <div class="clip-row" data-clip="${id}">
+      <button class="clip-play" aria-label="Play">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M3 1.5 L10 6 L3 10.5 Z"/></svg>
+      </button>
+      <div class="clip-waveform">${bars}</div>
+      <span class="clip-duration">${dur}</span>
+    </div>
+  `;
+}
+
+function formatTime(secs) {
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m}:${String(s).padStart(2,"0")}`;
+}
+
+// Faked playback: animate bars filling left-to-right, swap icon
+let playbackTimer = null;
+function togglePlayback(btn) {
+  const row = btn.closest(".clip-row");
+  if (!row) return;
+  const bars = row.querySelectorAll(".clip-bar");
+  if (btn.classList.contains("playing")) {
+    // stop
+    btn.classList.remove("playing");
+    btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M3 1.5 L10 6 L3 10.5 Z"/></svg>`;
+    bars.forEach(b => b.classList.remove("active"));
+    clearInterval(playbackTimer);
+    playbackTimer = null;
+    return;
+  }
+  // stop any other playing clip
+  document.querySelectorAll(".clip-play.playing").forEach(other => {
+    if (other !== btn) {
+      other.classList.remove("playing");
+      other.innerHTML = `<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M3 1.5 L10 6 L3 10.5 Z"/></svg>`;
+      const otherRow = other.closest(".clip-row");
+      otherRow.querySelectorAll(".clip-bar").forEach(b => b.classList.remove("active"));
+    }
+  });
+  clearInterval(playbackTimer);
+
+  btn.classList.add("playing");
+  btn.innerHTML = `<svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect x="1.5" y="1" width="2.5" height="8" rx="0.5"/><rect x="6" y="1" width="2.5" height="8" rx="0.5"/></svg>`;
+  bars.forEach(b => b.classList.remove("active"));
+  let i = 0;
+  const total = bars.length;
+  // step duration so the whole clip "plays" in ~3 seconds visually
+  const step = 3000 / total;
+  playbackTimer = setInterval(() => {
+    if (i >= total) {
+      btn.classList.remove("playing");
+      btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M3 1.5 L10 6 L3 10.5 Z"/></svg>`;
+      bars.forEach(b => b.classList.remove("active"));
+      clearInterval(playbackTimer);
+      playbackTimer = null;
+      return;
+    }
+    bars[i].classList.add("active");
+    i++;
+  }, step);
+}
+
+// ---------- Composer sheet ----------
+function openSheet(initialMode) {
+  // initialMode: "text" or "recording"
+  composerText = "";
+  recordingElapsed = 0;
+  stopRecordingTimer();
+  recordingWaveform = makeWaveform(40);
+  document.getElementById("sheetOverlay").classList.add("open");
+  if (initialMode === "recording") {
+    renderSheetBody({ recording: true });
+    startRecordingTimer();
+  } else {
+    renderSheetBody({ recording: false });
+  }
+}
+function closeSheet() {
+  document.getElementById("sheetOverlay").classList.remove("open", "static");
+  stopRecordingTimer();
+}
+
+function renderSheetBody({ recording, clipSaved } = {}) {
+  const body = document.getElementById("sheetBody");
+  const saveBtn = document.getElementById("saveBtn");
+  saveBtn.disabled = composerText.trim().length === 0 && !clipSaved;
+
+  let html = `
+    <textarea class="composer-text" id="composerText" placeholder="Note on this album…">${composerText}</textarea>
+  `;
+
+  if (recording) {
+    html += renderRecordingCard();
+  } else if (clipSaved) {
+    html += renderClipPreviewInComposer();
+  } else {
+    html += `
+      <button class="record-btn" id="recordBtn">
+        <span class="record-dot-idle"></span>
+        Record voice clip
+      </button>
+      <p style="margin:0;font-size:12px;color:var(--ios-label-tert);text-align:center;line-height:1.4">
+        Optional. Up to 15 seconds. Stored privately alongside this memo.
+      </p>
+    `;
+  }
+
+  body.innerHTML = html;
+
+  // Wire text
+  const txt = document.getElementById("composerText");
+  if (txt) {
+    txt.addEventListener("input", e => {
+      composerText = e.target.value;
+      saveBtn.disabled = composerText.trim().length === 0 && !clipSaved;
+    });
+    if (!recording) {
+      // focus on launch in text mode
+      setTimeout(() => txt.focus(), 50);
+    }
+  }
+
+  // Wire record button (idle state)
+  const rec = document.getElementById("recordBtn");
+  if (rec) {
+    rec.addEventListener("click", () => {
+      mode = "recording";
+      syncTabs();
+      renderSheetBody({ recording: true });
+      startRecordingTimer();
+    });
+  }
+
+  // Wire recording controls
+  const stopBtn = document.getElementById("stopRecBtn");
+  if (stopBtn) {
+    stopBtn.addEventListener("click", () => {
+      stopRecordingTimer();
+      mode = "composer";
+      syncTabs();
+      renderSheetBody({ clipSaved: true });
+    });
+  }
+  const cancelRecBtn = document.getElementById("cancelRecBtn");
+  if (cancelRecBtn) {
+    cancelRecBtn.addEventListener("click", () => {
+      stopRecordingTimer();
+      recordingElapsed = 0;
+      mode = "composer";
+      syncTabs();
+      renderSheetBody({ recording: false });
+    });
+  }
+
+  // Wire clip preview actions
+  const replaceBtn = document.getElementById("replaceClipBtn");
+  if (replaceBtn) {
+    replaceBtn.addEventListener("click", () => {
+      recordingElapsed = 0;
+      mode = "recording";
+      syncTabs();
+      renderSheetBody({ recording: true });
+      startRecordingTimer();
+    });
+  }
+  const removeBtn = document.getElementById("removeClipBtn");
+  if (removeBtn) {
+    removeBtn.addEventListener("click", () => {
+      recordingElapsed = 0;
+      renderSheetBody({ recording: false });
+    });
+  }
+
+  // Wire preview clip play
+  document.querySelectorAll(".clip-preview .clip-play").forEach(btn => {
+    btn.addEventListener("click", () => togglePlayback(btn));
+  });
+}
+
+function renderRecordingCard() {
+  const tenths = Math.min(recordingElapsed, 150);
+  const secs = tenths / 10;
+  const timeStr = `${formatTime(secs)} / 0:15`;
+  const bars = recordingWaveform.map((h, i) => {
+    // only bars before the cursor are "live" — fade the rest
+    const progress = tenths / 150;
+    const isPast = (i / recordingWaveform.length) < progress;
+    const opacity = isPast ? 1 : 0.18;
+    return `<div class="rec-bar" style="height:${h}%; opacity:${opacity}"></div>`;
+  }).join("");
+
+  return `
+    <div class="recording-card">
+      <div class="recording-head">
+        <span class="rec-dot"></span>
+        <span class="rec-label">Recording</span>
+        <span class="rec-time">${timeStr.split(" / ")[0]}<span class="of"> / 0:15</span></span>
+      </div>
+      <div class="rec-waveform" id="recWaveform">${bars}</div>
+      <div class="rec-controls">
+        <button class="rec-control" id="cancelRecBtn">Cancel</button>
+        <button class="rec-control primary" id="stopRecBtn">Stop</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderClipPreviewInComposer() {
+  const dur = Math.max(1, recordingElapsed / 10);
+  // Generate a clip object from what was "recorded"
+  const wave = recordingWaveform.slice(0, Math.max(8, Math.round(recordingWaveform.length * (recordingElapsed/150))));
+  const bars = wave.map((h, i) => `<div class="clip-bar" data-i="${i}" style="height:${Math.max(8, h)}%"></div>`).join("");
+  return `
+    <div class="clip-preview">
+      <div class="clip-preview-row">
+        <button class="clip-play" aria-label="Play">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M3 1.5 L10 6 L3 10.5 Z"/></svg>
+        </button>
+        <div class="clip-waveform">${bars}</div>
+        <span class="clip-duration">${formatTime(dur)}</span>
+      </div>
+      <div class="clip-preview-actions">
+        <button class="memo-action" id="replaceClipBtn">Replace</button>
+        <button class="memo-action danger" id="removeClipBtn">Remove</button>
+      </div>
+    </div>
+  `;
+}
+
+function makeWaveform(n) {
+  // Pseudo-random waveform heights 20..95
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const base = 30 + Math.sin(i * 0.6) * 18 + Math.cos(i * 0.21) * 14;
+    const jitter = (i * 73 % 17) - 8;
+    out.push(Math.max(18, Math.min(95, Math.round(base + jitter + 35))));
+  }
+  return out;
+}
+
+function startRecordingTimer() {
+  stopRecordingTimer();
+  // Each tick = 100ms, advance recordingElapsed by 1 (tenths of seconds)
+  recordingTimer = setInterval(() => {
+    recordingElapsed += 1;
+    // re-shuffle a slice of the waveform to make it feel "live"
+    const cur = Math.min(recordingElapsed, recordingWaveform.length);
+    for (let i = Math.max(0, cur - 3); i < Math.min(recordingWaveform.length, cur + 1); i++) {
+      const base = 30 + Math.sin((Date.now() / 80) + i) * 25 + Math.cos(i * 0.4) * 15;
+      recordingWaveform[i] = Math.max(20, Math.min(95, Math.round(base + 35)));
+    }
+    if (recordingElapsed >= 150) {
+      // auto-stop at 15.0s
+      stopRecordingTimer();
+      mode = "composer";
+      syncTabs();
+      renderSheetBody({ clipSaved: true });
+      return;
+    }
+    // patch just the timer + bars without nuking listeners
+    const card = document.querySelector(".recording-card");
+    if (card) {
+      const timeEl = card.querySelector(".rec-time");
+      if (timeEl) {
+        const secs = recordingElapsed / 10;
+        timeEl.innerHTML = `${formatTime(secs)}<span class="of"> / 0:15</span>`;
+      }
+      const wf = card.querySelector(".rec-waveform");
+      if (wf) {
+        const progress = recordingElapsed / 150;
+        const total = recordingWaveform.length;
+        const barEls = wf.querySelectorAll(".rec-bar");
+        barEls.forEach((bar, i) => {
+          bar.style.height = recordingWaveform[i] + "%";
+          const isPast = (i / total) < progress;
+          bar.style.opacity = isPast ? "1" : "0.18";
+        });
+      }
+    }
+  }, 100);
+}
+function stopRecordingTimer() {
+  if (recordingTimer) {
+    clearInterval(recordingTimer);
+    recordingTimer = null;
+  }
+}
+
+// ---------- Mode switching ----------
+function syncTabs() {
+  document.querySelectorAll(".tab-btn").forEach(b => {
+    b.classList.toggle("active", b.dataset.mode === mode);
+  });
+}
+
+function applyMode(newMode) {
+  mode = newMode;
+  syncTabs();
+  if (mode === "view") {
+    closeSheet();
+    return;
+  }
+  // composer or recording
+  document.getElementById("sheetOverlay").classList.add("open", "static");
+  if (mode === "recording") {
+    composerText = "";
+    recordingElapsed = 0;
+    recordingWaveform = makeWaveform(40);
+    // simulate that they've been recording for 6.4s when previewing this mode
+    recordingElapsed = 64;
+    renderSheetBody({ recording: true });
+    startRecordingTimer();
+  } else {
+    composerText = "";
+    recordingElapsed = 0;
+    renderSheetBody({ recording: false });
+  }
+}
+
+// ---------- Wiring ----------
+document.getElementById("tabBar").addEventListener("click", e => {
+  const btn = e.target.closest(".tab-btn");
+  if (!btn) return;
+  applyMode(btn.dataset.mode);
+});
+
+document.getElementById("newMemoBtn").addEventListener("click", () => {
+  applyMode("composer");
+});
+
+document.getElementById("cancelBtn").addEventListener("click", () => {
+  applyMode("view");
+});
+
+document.getElementById("saveBtn").addEventListener("click", () => {
+  // No-op for prototype: just close
+  applyMode("view");
+});
+
+// ---------- Boot ----------
+renderMemoList();
+syncTabs();
+</script>
+</body>
+</html>
