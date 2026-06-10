@@ -45,6 +45,7 @@
 
 /* Begin PBXFileReference section */
 		1D49AA8BD0ED10A86E3E9A12 /* LoginViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginViewModel.swift; sourceTree = "<group>"; };
+		278C5246CAFE54FCFC5CF403 /* WXYCDJTool.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = WXYCDJTool.entitlements; sourceTree = "<group>"; };
 		2AC7251FA351490A1AF674C6 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		3082A0A5EA9271121EA369DB /* WXYCDJToolTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = WXYCDJToolTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3503469C3A1405958D55CE14 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -175,6 +176,7 @@
 				3503469C3A1405958D55CE14 /* Assets.xcassets */,
 				A779488BBFD9CDCBAB7B37C7 /* MainView.swift */,
 				E31033BE44902A35FA415AB9 /* RootView.swift */,
+				278C5246CAFE54FCFC5CF403 /* WXYCDJTool.entitlements */,
 				50BD744873DADB1197139875 /* WXYCDJToolApp.swift */,
 				CD2EF47599E934D5D69C485D /* Auth */,
 				1024F82D3DD40E128F26F10A /* Bin */,
@@ -382,6 +384,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = WXYCDJTool/WXYCDJTool.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_KEY_CFBundleDisplayName = "WXYC DJ Tool";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -559,6 +562,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = WXYCDJTool/WXYCDJTool.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_KEY_CFBundleDisplayName = "WXYC DJ Tool";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
