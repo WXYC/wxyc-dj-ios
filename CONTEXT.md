@@ -1,4 +1,4 @@
-## WXYC DJ Tool
+## WXYC DJ
 
 The internal iOS app for WXYC DJs. Sign in with dj.wxyc.org credentials, search the catalog, manage a personal Mail Bin, view release metadata, and plan shows. Companion to [[dj-site]] — both share Backend-Service as their API.
 

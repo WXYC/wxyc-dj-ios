@@ -1,6 +1,8 @@
-# WXYC DJ Tool — Claude Code Instructions
+# WXYC DJ — Claude Code Instructions
 
 A small SwiftUI iOS app: sign in with dj.wxyc.org credentials, search the WXYC library with live results, view release metadata, and edit a per-DJ "bin" of favorites. Read `README.md` for the user-facing tour.
+
+The local directory is `wxyc-dj-ios`; the Xcode project, scheme, and Swift module are all `WXYCDJ`; the display name is "WXYC DJ"; the bundle ID is `org.wxyc.dj`.
 
 ## Core conventions
 
@@ -28,21 +30,21 @@ Every Swift file (except `Package.swift`) starts with:
 //
 ```
 
-`ModuleName` is `WXYCAPI` for files in `Packages/WXYCAPI/`, `WXYCDJTool` for app sources, `WXYCAPITests` for tests.
+`ModuleName` is `WXYCAPI` for files in `Packages/WXYCAPI/`, `WXYCDJ` for app sources, `WXYCAPITests` for tests.
 
 ## Project structure
 
 ```
-WXYCDJTool/                      App target sources
-WXYCDJToolTests/                 App-target unit-test bundle (Swift Testing)
+WXYCDJ/                          App target sources
+WXYCDJTests/                     App-target unit-test bundle (Swift Testing)
 Packages/WXYCAPI/                Local SPM package: DTOs, AuthService, APIClient
 project.yml                      xcodegen spec (regen via `xcodegen generate`)
-WXYCDJTool.xcodeproj/            Generated; tracked in git for IDE convenience
+WXYCDJ.xcodeproj/                Generated; tracked in git for IDE convenience
 ```
 
-The Xcode project is regenerated from `project.yml`. Run `xcodegen generate` after editing `project.yml` **and** after adding any new source files to `WXYCDJTool/` or `WXYCDJToolTests/` — xcodegen bakes explicit file references into the pbxproj at generation time, so new files aren't picked up until you regen.
+The Xcode project is regenerated from `project.yml`. Run `xcodegen generate` after editing `project.yml` **and** after adding any new source files to `WXYCDJ/` or `WXYCDJTests/` — xcodegen bakes explicit file references into the pbxproj at generation time, so new files aren't picked up until you regen.
 
-`WXYCDJToolTests` is the bundle for anything that has to `@testable import WXYCDJTool` (view models, the AppDependencies composition root, etc.). Pure networking / DTO / auth tests stay in `Packages/WXYCAPI/Tests/WXYCAPITests` so `swift test` can run them on the host without booting a simulator. `WXYCDJToolTests/Support/StubRequestSession.swift` + `Fixtures.swift` are deliberate copies of their `WXYCAPITests/Support/` counterparts — promote them to a shared SPM test-support target if a third bundle ever needs them.
+`WXYCDJTests` is the bundle for anything that has to `@testable import WXYCDJ` (view models, the AppDependencies composition root, etc.). Pure networking / DTO / auth tests stay in `Packages/WXYCAPI/Tests/WXYCAPITests` so `swift test` can run them on the host without booting a simulator. `WXYCDJTests/Support/StubRequestSession.swift` + `Fixtures.swift` are deliberate copies of their `WXYCAPITests/Support/` counterparts — promote them to a shared SPM test-support target if a third bundle ever needs them.
 
 ## Networking layer (`WXYCAPI`)
 
@@ -61,7 +63,7 @@ When adding a new endpoint, prefer to:
 2. Add a DTO in `Sources/WXYCAPI/DTOs/`. Keep `snake_case` mapping in an explicit `CodingKeys` enum — `convertFromSnakeCase` is intentionally not used because the wire format mixes camelCase paths (e.g. `albumId` in nested types coming from Drizzle) with snake_case top-level.
 3. Write tests against `StubRequestSession`. See `APIClientTests.swift` for the pattern.
 
-## UI layer (`WXYCDJTool`)
+## UI layer (`WXYCDJ`)
 
 - `AppDependencies` is the composition root. One instance, in the app's `@State`, environment-injected.
 - View models are `@MainActor @Observable` classes; each view either constructs its VM via `onAppear` (e.g. `SearchView`) or takes one from a parent.
@@ -73,7 +75,7 @@ When adding a new endpoint, prefer to:
 Two bundles, both Swift Testing (not XCTest):
 
 - **`WXYCAPITests`** in `Packages/WXYCAPI/Tests/` — networking, DTOs, auth, JWT decoding. Runs via `swift test --package-path Packages/WXYCAPI` on the host (no simulator needed; the package declares both `.iOS(.v18)` and `.macOS(.v14)`).
-- **`WXYCDJToolTests`** in `WXYCDJToolTests/` — app-target tests for view models and other code that has to `@testable import WXYCDJTool`. Runs via `xcodebuild test` against a booted iOS simulator.
+- **`WXYCDJTests`** in `WXYCDJTests/` — app-target tests for view models and other code that has to `@testable import WXYCDJ`. Runs via `xcodebuild test` against a booted iOS simulator.
 
 Test fixtures use WXYC-representative artists — Juana Molina / DOGA, Jessica Pratt / On Your Own Love Again, Chuquimamani-Condori / Edits. **Do not** introduce mainstream substitutes (Queen, Radiohead, The Beatles); the canonical pool is `wxyc-shared/src/test-utils/wxyc-example-data.json`.
 
@@ -87,14 +89,14 @@ swift test --package-path Packages/WXYCAPI
 # Pick any booted iPhone simulator; the workflow pre-boots iPhone 16 Pro.
 SIM_ID=$(xcrun simctl list devices available | grep -m1 'iPhone 1[67].*Booted' | grep -oE '\([A-F0-9-]{36}\)' | tr -d '()')
 xcodebuild test \
-  -project WXYCDJTool.xcodeproj \
-  -scheme WXYCDJTool \
+  -project WXYCDJ.xcodeproj \
+  -scheme WXYCDJ \
   -destination "platform=iOS Simulator,id=$SIM_ID" \
   -configuration Debug \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-`CODE_SIGNING_ALLOWED=NO` because the app's `DEVELOPMENT_TEAM` is empty in `project.yml`. The test step needs a real simulator (not `generic/platform=iOS Simulator`) because `WXYCDJToolTests` is a host-app unit-test bundle.
+`CODE_SIGNING_ALLOWED=NO` keeps the test step from requiring a provisioning profile. The test step needs a real simulator (not `generic/platform=iOS Simulator`) because `WXYCDJTests` is a host-app unit-test bundle.
 
 ## Things explicitly out of scope
 
@@ -107,7 +109,7 @@ Don't add these without asking:
 
 ## LML enrichment
 
-The detail view fan-outs two calls: `GET /library/info` (catalog row, source of truth for shelf data) and `GET /proxy/metadata/album` (LML — release year, label, genres, styles, tracklist, streaming URLs, Discogs URL, Wikipedia URL). The `AlbumMetadata` DTO matches the camelCase response shape `proxy.controller.ts` emits. The metadata call is **best-effort**: a 404, decoding failure, or rate-limit is captured via `os_log` under subsystem `org.wxyc.dj-tool`, category `metadata`, and surfaced inline as a faint footer note instead of a red error banner — the catalog row still renders.
+The detail view fan-outs two calls: `GET /library/info` (catalog row, source of truth for shelf data) and `GET /proxy/metadata/album` (LML — release year, label, genres, styles, tracklist, streaming URLs, Discogs URL, Wikipedia URL). The `AlbumMetadata` DTO matches the camelCase response shape `proxy.controller.ts` emits. The metadata call is **best-effort**: a 404, decoding failure, or rate-limit is captured via `os_log` under subsystem `org.wxyc.dj`, category `metadata`, and surfaced inline as a faint footer note instead of a red error banner — the catalog row still renders.
 
 ## Related repos
 

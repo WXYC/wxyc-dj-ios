@@ -1,6 +1,6 @@
-# WXYC DJ Tool (iOS)
+# WXYC DJ (iOS)
 
-[![CI](https://github.com/WXYC/wxyc-dj-tool-ios/actions/workflows/ci.yml/badge.svg)](https://github.com/WXYC/wxyc-dj-tool-ios/actions/workflows/ci.yml)
+[![CI](https://github.com/WXYC/wxyc-dj-ios/actions/workflows/ci.yml/badge.svg)](https://github.com/WXYC/wxyc-dj-ios/actions/workflows/ci.yml)
 
 A small SwiftUI app for WXYC DJs. Log in with dj.wxyc.org credentials, search the WXYC library with live results, view a release's full metadata (catalog row + LML enrichment — release year, label, genres, styles, tracklist, streaming links, Discogs and Wikipedia URLs), and add/remove items from your personal **bin** (the per-DJ favorites collection Backend-Service exposes at `/djs/bin`).
 
@@ -16,8 +16,8 @@ This is a focused tool. It deliberately does **not** ship: flowsheet integration
 ## Layout
 
 ```
-WXYCDJTool/                      # App target sources
-  WXYCDJToolApp.swift            # @main
+WXYCDJ/                          # App target sources
+  WXYCDJApp.swift                # @main
   AppDependencies.swift          # @Observable composition root
   RootView.swift                 # auth gate
   MainView.swift                 # TabView (Search, Bin)
@@ -38,7 +38,7 @@ project.yml                      # xcodegen spec
 xcodegen generate
 
 # Build (replace simulator name as needed)
-xcodebuild -project WXYCDJTool.xcodeproj -scheme WXYCDJTool \
+xcodebuild -project WXYCDJ.xcodeproj -scheme WXYCDJ \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
 
 # Run unit tests for WXYCAPI

@@ -15,7 +15,7 @@ import Security
 public struct KeychainTokenStorage: TokenStorage {
     private let service: String
 
-    public init(service: String = "org.wxyc.dj-tool") {
+    public init(service: String = "org.wxyc.dj") {
         self.service = service
     }
 

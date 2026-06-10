@@ -20,7 +20,7 @@ Packages/*/.build/
 
 # Generated Xcode project (regenerate via `xcodegen generate`)
 # Keep tracked for now — uncomment to make project.yml the source of truth:
-# WXYCDJTool.xcodeproj/
+# WXYCDJ.xcodeproj/
 
 # IDE
 .vscode/

@@ -1,6 +1,6 @@
-# WXYC DJ Tool — Project Overview
+# WXYC DJ — Project Overview
 
-The WXYC DJ Tool is the internal iPhone app for DJs at [WXYC](https://wxyc.org), the student-run college radio station at UNC Chapel Hill. v1 ships search + Mail Bin + release metadata. v2 (this design effort) expands the app into a full in-show companion, a discovery surface, an editorial workflow, a personal-insight surface, and a shared-computer sign-in helper. This document is the entry point — every concept below links to the deeper design artifact that defines it.
+WXYC DJ is the internal iPhone app for DJs at [WXYC](https://wxyc.org), the student-run college radio station at UNC Chapel Hill. v1 ships search + Mail Bin + release metadata. v2 (this design effort) expands the app into a full in-show companion, a discovery surface, an editorial workflow, a personal-insight surface, and a shared-computer sign-in helper. This document is the entry point — every concept below links to the deeper design artifact that defines it.
 
 For the app's user-facing description and setup instructions, see [`README.md`](../README.md) at the repo root. For coding conventions, see [`CLAUDE.md`](../CLAUDE.md).
 
@@ -42,7 +42,7 @@ The DJ Tool is one node in a larger WXYC software ecosystem. Every v2 ADR commit
 
 | Repo | Role | This app's interaction |
 |---|---|---|
-| **[wxyc-dj-tool-ios](https://github.com/WXYC/wxyc-dj-tool-ios)** (this repo) | The iPhone app | Two Swift sources: [`WXYCDJTool/`](../WXYCDJTool/) (app target) and [`Packages/WXYCAPI/`](../Packages/WXYCAPI/) (local SPM: DTOs, AuthService, APIClient) |
+| **[wxyc-dj-ios](https://github.com/WXYC/wxyc-dj-ios)** (this repo) | The iPhone app | Two Swift sources: [`WXYCDJ/`](../WXYCDJ/) (app target) and [`Packages/WXYCAPI/`](../Packages/WXYCAPI/) (local SPM: DTOs, AuthService, APIClient) |
 | **[Backend-Service](https://github.com/WXYC/Backend-Service)** | REST API + auth service backing every WXYC surface | iOS hits BS via [`APIClient.swift`](../Packages/WXYCAPI/Sources/WXYCAPI/APIClient.swift) for catalog, flowsheet, bin, condition, review, memo, graph, and auth endpoints. v2 adds 33 BS tickets (see [`bs-work-inventory.md`](./bs-work-inventory.md)) |
 | **[wxyc-shared](https://github.com/WXYC/wxyc-shared)** | OpenAPI source of truth ([`api.yaml`](https://github.com/WXYC/wxyc-shared/blob/main/api.yaml)) and shared TS contracts | Every new BS endpoint gets documented in `api.yaml`. iOS doesn't currently codegen from `api.yaml` (DTOs are hand-rolled per [`CLAUDE.md`](../CLAUDE.md)) but the option is there |
 | **[library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup)** (LML) | Metadata composer for albums and artists | iOS reads `/proxy/metadata/album` for release year, label, genres, styles, tracklist, streaming URLs (Spotify / Apple Music / Bandcamp), Discogs URL, Wikipedia URL. All LML calls are **best-effort** — failures fall through to a graceful no-marker / no-extras state per [`CLAUDE.md`](../CLAUDE.md) |

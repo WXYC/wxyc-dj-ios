@@ -1,12 +1,12 @@
 # Cross-repo ADRs
 
-This document tracks architectural decisions made during the wxyc-dj-tool-ios v2 design that ripple beyond this repository. Each decision below either commits another repo to specific work or needs a mirror ADR filed in the affected repo so the shared commitment is visible from every surface.
+This document tracks architectural decisions made during the wxyc-dj-ios v2 design that ripple beyond this repository. Each decision below either commits another repo to specific work or needs a mirror ADR filed in the affected repo so the shared commitment is visible from every surface.
 
 The full per-decision context lives in this repo's [CONTEXT.md](../CONTEXT.md) (glossary) and the individual [ADRs](./adr/) (decisions). This doc is the bird's-eye view across the WXYC ecosystem.
 
 ## Affected repositories
 
-- [WXYC/wxyc-dj-tool-ios](https://github.com/WXYC/wxyc-dj-tool-ios) — this repo
+- [WXYC/wxyc-dj-ios](https://github.com/WXYC/wxyc-dj-ios) — this repo
 - [WXYC/Backend-Service](https://github.com/WXYC/Backend-Service) — REST API and auth ([CLAUDE.md](https://github.com/WXYC/Backend-Service/blob/main/CLAUDE.md), [INVARIANTS.md](https://github.com/WXYC/Backend-Service/blob/main/INVARIANTS.md))
 - [WXYC/wxyc-shared](https://github.com/WXYC/wxyc-shared) — OpenAPI source of truth at [`api.yaml`](https://github.com/WXYC/wxyc-shared/blob/main/api.yaml), shared TS contracts
 - [WXYC/library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup) — LML, the identity composer ([CLAUDE.md](https://github.com/WXYC/library-metadata-lookup/blob/main/CLAUDE.md))
@@ -288,7 +288,7 @@ POST-with-structured-body because the iOS surface composes filters via a row-bas
 
 iOS UI: simple primary search bar for the 80% case (type a name, browse) plus a [Filters] affordance opening a builder sheet modeled directly on dj-site's [`PlaylistAdvancedSearch.tsx`](https://github.com/WXYC/dj-site/blob/main/src/components/experiences/modern/playlist-search/PlaylistAdvancedSearch.tsx). Unlimited rows; per-row field selector (Artist / Song / Album / Label / DJ / Date / Date Range); per-row AND/OR/NOT operator between rows; per-row exact-match checkbox for text fields; date pickers for date fields. Apply closes the sheet and renders active-filter badges below the search bar — each badge's × removes that condition. Default scope is station-wide; per-DJ scope is one DJ filter row away (`DJ contains "biscuit"` or similar), not a segmented toggle. Result row tap navigates to Album Detail (the iOS surface holding Queue, condition, review, memos, [histogram per ADR 0008](#adr-0008--per-album-play-history-is-a-first-class-api-surface-parallel-to-per-dj-plays)) — [wxyc.info](http://www.wxyc.info/playlists/searchPlaylists) navigates to show context because that's all it has; iOS has Album Detail, and that's the destination DJs need.
 
-The builder sheet ships as a reusable `FilterBuilder` primitive in `WXYCDJTool/Sources/Views/FilterBuilder/`, parameterized over a `FieldConfig` (`{ name, type: .text | .date | .dateRange, supportsExactMatch: Bool }`). dj-site's two near-identical builders (catalog [`QueryBuilder.tsx`](https://github.com/WXYC/dj-site/blob/main/src/components/experiences/modern/catalog/Search/QueryBuilder.tsx) and playlist [`PlaylistAdvancedSearch.tsx`](https://github.com/WXYC/dj-site/blob/main/src/components/experiences/modern/playlist-search/PlaylistAdvancedSearch.tsx)) are the cautionary precedent: same shape implemented twice, diverging slowly, paying duplicated test and evolution costs. Building iOS's primitive once, parameterized over the field-config those two would have shared, prevents that drift before it starts. Search Plays is the first consumer; a future advanced catalog filter or MD review-queue search is the anticipated second.
+The builder sheet ships as a reusable `FilterBuilder` primitive in `WXYCDJ/Sources/Views/FilterBuilder/`, parameterized over a `FieldConfig` (`{ name, type: .text | .date | .dateRange, supportsExactMatch: Bool }`). dj-site's two near-identical builders (catalog [`QueryBuilder.tsx`](https://github.com/WXYC/dj-site/blob/main/src/components/experiences/modern/catalog/Search/QueryBuilder.tsx) and playlist [`PlaylistAdvancedSearch.tsx`](https://github.com/WXYC/dj-site/blob/main/src/components/experiences/modern/playlist-search/PlaylistAdvancedSearch.tsx)) are the cautionary precedent: same shape implemented twice, diverging slowly, paying duplicated test and evolution costs. Building iOS's primitive once, parameterized over the field-config those two would have shared, prevents that drift before it starts. Search Plays is the first consumer; a future advanced catalog filter or MD review-queue search is the anticipated second.
 
 ### Mirrors needed
 
@@ -300,7 +300,7 @@ The builder sheet ships as a reusable `FilterBuilder` primitive in `WXYCDJTool/S
 - BS new endpoint: `POST /flowsheet/search` (tickets [BS-32](./bs-work-inventory.md#bs-32-post-flowsheetsearch-endpoint-with-structured-body-and-always-included-histogram) endpoint + [BS-33](./bs-work-inventory.md#bs-33-document-post-flowsheetsearch-in-wxyc-sharedapiyaml) OpenAPI)
 - BS query foundation: existing [`flowsheet_entries`](https://github.com/WXYC/Backend-Service/blob/main/shared/database/src/schema.ts) full-text indexing (same substrate that backs [wxyc.info](http://www.wxyc.info/playlists/searchPlaylists)'s search today, ported to a structured-body endpoint)
 - iOS dependencies: [Pick #16](./sequencing.md#phase-5--flowsheet-archive-search--structured-filter-builder) (Search Plays + structured builder, Phase 5)
-- iOS reusable primitive: `WXYCDJTool/Sources/Views/FilterBuilder/` — `FilterBuilder<FieldConfig>` view parameterized on field-config
+- iOS reusable primitive: `WXYCDJ/Sources/Views/FilterBuilder/` — `FilterBuilder<FieldConfig>` view parameterized on field-config
 - dj-site reference component: [`src/components/experiences/modern/playlist-search/PlaylistAdvancedSearch.tsx`](https://github.com/WXYC/dj-site/blob/main/src/components/experiences/modern/playlist-search/PlaylistAdvancedSearch.tsx) (the model iOS mirrors)
 - Future convergence opportunity: dj-site's playlist search migrates onto `POST /flowsheet/search` in a follow-up ADR (not committed in v1; see [`dj-site/docs/adr/0006-search-plays-flowsheet-builder.md`](https://github.com/WXYC/dj-site/blob/main/docs/adr/0006-search-plays-flowsheet-builder.md))
 - Prototype: [`docs/prototypes/search-ux-options.html`](./prototypes/search-ux-options.html) (compares text-syntax / chips / builder-sheet UX options A / D / E that informed this ADR — E was selected)
@@ -363,7 +363,7 @@ The decisions above came out of a grilling session against this design. Source a
 
 ## Mirror tracking
 
-| ADR | wxyc-dj-tool-ios | Backend-Service | semantic-index | LML | dj-site |
+| ADR | wxyc-dj-ios | Backend-Service | semantic-index | LML | dj-site |
 |---|---|---|---|---|---|
 | 0001 entity_id | ✓ filed | needed | needed | needed | needed |
 | 0002 proxy | (this doc) | needed | needed | — | — |

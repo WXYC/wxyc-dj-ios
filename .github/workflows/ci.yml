@@ -12,8 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PROJECT: WXYCDJTool.xcodeproj
-  SCHEME: WXYCDJTool
+  PROJECT: WXYCDJ.xcodeproj
+  SCHEME: WXYCDJ
 
 jobs:
   test:

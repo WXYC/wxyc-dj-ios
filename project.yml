@@ -1,4 +1,4 @@
-name: WXYCDJTool
+name: WXYCDJ
 options:
   bundleIdPrefix: org.wxyc
   deploymentTarget:
@@ -16,7 +16,7 @@ settings:
     GENERATE_INFOPLIST_FILE: YES
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
-    DEVELOPMENT_TEAM: ""
+    DEVELOPMENT_TEAM: 92V374HC38
     CODE_SIGN_STYLE: Automatic
     SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
     SUPPORTS_MACCATALYST: NO
@@ -27,38 +27,38 @@ packages:
     path: Packages/WXYCAPI
 
 targets:
-  WXYCDJTool:
+  WXYCDJ:
     type: application
     platform: iOS
     sources:
-      - path: WXYCDJTool
+      - path: WXYCDJ
     dependencies:
       - package: WXYCAPI
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.wxyc.dj-tool
+        PRODUCT_BUNDLE_IDENTIFIER: org.wxyc.dj
         TARGETED_DEVICE_FAMILY: "1"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-        INFOPLIST_KEY_CFBundleDisplayName: "WXYC DJ Tool"
+        INFOPLIST_KEY_CFBundleDisplayName: "WXYC DJ"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CODE_SIGN_ENTITLEMENTS: WXYCDJTool/WXYCDJTool.entitlements
+        CODE_SIGN_ENTITLEMENTS: WXYCDJ/WXYCDJ.entitlements
     scheme:
       testTargets:
-        - WXYCDJToolTests
+        - WXYCDJTests
       gatherCoverageData: false
 
-  WXYCDJToolTests:
+  WXYCDJTests:
     type: bundle.unit-test
     platform: iOS
     sources:
-      - path: WXYCDJToolTests
+      - path: WXYCDJTests
     dependencies:
-      - target: WXYCDJTool
+      - target: WXYCDJ
       - package: WXYCAPI
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.wxyc.dj-tool.tests
+        PRODUCT_BUNDLE_IDENTIFIER: org.wxyc.dj.tests
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: YES
