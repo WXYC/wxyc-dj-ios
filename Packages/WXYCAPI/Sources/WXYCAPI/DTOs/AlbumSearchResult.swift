@@ -11,10 +11,12 @@
 
 import Foundation
 
-// Decode-only — search results flow one direction (server → client). If
-// the app ever needs to serialize one back out, swap Decodable for Codable
-// and Swift will synthesize the missing encode(to:) from the CodingKeys.
-public struct AlbumSearchResult: Decodable, Sendable, Hashable, Identifiable {
+// Codable, not decode-only: besides decoding from Backend-Service
+// (`GET /library/` and, per issue #19, the bulk `GET /library/catalog`),
+// rows are encoded back out to persist the on-device catalog clone's local
+// store. Swift synthesizes `encode(to:)` from the CodingKeys; the custom
+// `init(from:)` below stays for the tolerant snake_case decode.
+public struct AlbumSearchResult: Codable, Sendable, Hashable, Identifiable {
     public let id: Int
     public let addDate: Date?
     public let albumTitle: String

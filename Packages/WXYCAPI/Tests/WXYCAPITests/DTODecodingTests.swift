@@ -20,6 +20,51 @@ struct DTODecodingTests {
         #expect(row.rotationBin == .heavy)
     }
 
+    @Test func roundTripsAlbumSearchResultThroughCodable() throws {
+        // The on-device catalog clone (issue #19) persists AlbumSearchResult
+        // rows, so the type must encode as well as decode. Decode → encode →
+        // decode must reproduce an equal value. `add_date` survives as the
+        // same instant even though the encoder emits ISO-8601 without the
+        // fractional seconds the wire carried — equality compares Date
+        // instants, not their string forms.
+        let original = try JSONCoders.decoder.decode(
+            AlbumSearchResult.self,
+            from: Data(Fixtures.juanaMolinaSearchResult.utf8)
+        )
+        let reEncoded = try JSONCoders.encoder.encode(original)
+        let roundTripped = try JSONCoders.decoder.decode(AlbumSearchResult.self, from: reEncoded)
+        #expect(roundTripped == original)
+    }
+
+    @Test func roundTripsMatchedViaThroughCodable() throws {
+        // Exercises the nested TrackMatchHint / TrackMatchSource encode paths,
+        // which flip to Codable alongside AlbumSearchResult. A recognized
+        // source value (cta) round-trips exactly; the always-empty matchedVia
+        // of a plain catalog row is covered by the test above.
+        let raw = """
+            {
+              "id": 410,
+              "album_title": "Duke Ellington & John Coltrane",
+              "artist_name": "Duke Ellington & John Coltrane",
+              "matched_via": [
+                {
+                  "title": "In a Sentimental Mood",
+                  "artist_credit": "Duke Ellington & John Coltrane",
+                  "confidence": 1.0,
+                  "source": "cta"
+                }
+              ]
+            }
+            """
+        let original = try JSONCoders.decoder.decode(AlbumSearchResult.self, from: Data(raw.utf8))
+        let roundTripped = try JSONCoders.decoder.decode(
+            AlbumSearchResult.self,
+            from: try JSONCoders.encoder.encode(original)
+        )
+        #expect(roundTripped == original)
+        #expect(roundTripped.matchedVia.first?.source == .cta)
+    }
+
     @Test func decodesAlbumInfoWithRotation() throws {
         let data = Data(Fixtures.albumInfoJSON.utf8)
         let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: data)

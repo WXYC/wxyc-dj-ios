@@ -13,7 +13,7 @@
 
 import Foundation
 
-public struct TrackMatchHint: Decodable, Sendable, Hashable {
+public struct TrackMatchHint: Codable, Sendable, Hashable {
     public let title: String
     public let artistCredit: String?
     public let position: String?
@@ -47,7 +47,7 @@ public struct TrackMatchHint: Decodable, Sendable, Hashable {
     }
 }
 
-public enum TrackMatchSource: String, Decodable, Sendable, Hashable, CaseIterable {
+public enum TrackMatchSource: String, Codable, Sendable, Hashable, CaseIterable {
     case cta
     case discogsRelease = "discogs_release"
     case discogsMaster = "discogs_master"
