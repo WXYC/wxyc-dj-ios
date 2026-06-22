@@ -92,6 +92,16 @@ struct CatalogRowTests {
         #expect(row.isInRotation(localDay: "2026-06-22"))
     }
 
+    @Test func emptyRotationBinNormalizesToNilAndIsNotInRotation() throws {
+        // A dirty empty-string bin is meaningless — normalized to nil on decode
+        // so it reads as "no rotation" (consistent with artwork_url), not wrongly
+        // counted as in rotation.
+        let raw = #"{"id":1,"artist_name":"y","album_title":"x","code_letters":"X","code_number":1,"code_artist_number":1,"genre_name":"Rock","format_name":"LP","rotation_bin":"","rotation_kill_date":null}"#
+        let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
+        #expect(row.rotationBin == nil)
+        #expect(row.isInRotation(localDay: "2026-06-22") == false)
+    }
+
     @Test func decodesNullRotationFields() throws {
         // An album that has never been in rotation: both fields null.
         let raw = #"{"id":1,"artist_name":"y","album_title":"x","code_letters":"X","code_number":1,"code_artist_number":1,"genre_name":"Rock","format_name":"LP","rotation_bin":null,"rotation_kill_date":null}"#
@@ -114,6 +124,20 @@ struct CatalogRowTests {
             CatalogRow.self,
             from: try JSONCoders.encoder.encode(original)
         )
+        #expect(roundTripped == original)
+    }
+
+    @Test func roundTripsNonCohortBin() throws {
+        // The headline Fix-2 protection: a persisted "N" row must survive
+        // encode -> decode (the old enum-typed field collapsed it on decode,
+        // silently corrupting the clone on reload).
+        let original = makeRow(bin: "N", killDate: nil)
+        let roundTripped = try JSONCoders.decoder.decode(
+            CatalogRow.self,
+            from: try JSONCoders.encoder.encode(original)
+        )
+        #expect(roundTripped.rotationBin == "N")
+        #expect(roundTripped.isInRotation(localDay: "2026-06-22"))
         #expect(roundTripped == original)
     }
 

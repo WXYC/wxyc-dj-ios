@@ -49,8 +49,9 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
     /// as the raw string (not the ``RotationBin`` enum) precisely so a non-cohort
     /// value is preserved rather than collapsed to `nil` — collapsing it would
     /// make ``isInRotation(asOf:timeZone:)`` wrongly report an `"N"` row as out of
-    /// rotation. `nil` means the album has no rotation record. Evaluate rotation
-    /// state with ``isInRotation(asOf:timeZone:)``, never by reading this directly.
+    /// rotation. `nil` (including a dirty empty string, normalized on decode)
+    /// means the album has no rotation record. Evaluate rotation state with
+    /// ``isInRotation(asOf:timeZone:)``, never by reading this directly.
     public let rotationBin: String?
 
     /// Date the current rotation record expires, as the raw `"YYYY-MM-DD"` the
@@ -121,15 +122,20 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
         formatName = try c.decodeIfPresent(String.self, forKey: .formatName)
         onStreaming = try c.decodeIfPresent(Bool.self, forKey: .onStreaming)
         plays = try c.decodeIfPresent(Int.self, forKey: .plays)
-        // artwork_url is free-text typed `string | null`; a legacy empty string
-        // (or any malformed value) maps to nil rather than throwing and failing
-        // the WHOLE row — the full-catalog NDJSON clone must not drop a row over
-        // one dirty URL. Decode the raw string and build the URL ourselves.
+        // artwork_url is free-text typed `string | null`. Decode the raw string
+        // and build the URL ourselves so a dirty value never throws and fails the
+        // WHOLE row — the full-catalog NDJSON clone must not drop a row over one
+        // bad URL. An empty string maps to nil; note URL(string:) is lenient and
+        // turns most non-empty junk into a (harmless, unloadable) URL rather than
+        // nil, which is acceptable here — the goal is row survival, not validation.
         artworkURL = (try c.decodeIfPresent(String.self, forKey: .artworkURL))
             .flatMap { $0.isEmpty ? nil : URL(string: $0) }
         // Raw bin verbatim — preserves "N" and any future server value (see the
-        // rotationBin doc). null/absent decode to nil.
-        rotationBin = try c.decodeIfPresent(String.self, forKey: .rotationBin)
+        // rotationBin doc). null/absent decode to nil; a dirty empty string
+        // normalizes to nil too (an empty bin is no rotation), mirroring the
+        // artwork_url treatment above.
+        rotationBin = (try c.decodeIfPresent(String.self, forKey: .rotationBin))
+            .flatMap { $0.isEmpty ? nil : $0 }
         rotationKillDate = try c.decodeIfPresent(String.self, forKey: .rotationKillDate)
     }
 
@@ -178,13 +184,15 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
     }
 
     /// The calendar day of `now` in `timeZone` as a zero-padded `"YYYY-MM-DD"`
-    /// string. Pinned to `en_US_POSIX` + an explicit time zone so the result
-    /// never drifts with host locale/calendar settings.
+    /// string, via the locale-independent ISO-8601 calendar so the result never
+    /// drifts with host locale/calendar settings. Uses a value-type format style
+    /// (no per-call `DateFormatter` allocation) — the same date-only shape
+    /// `JSONCoders` uses for the inverse parse — so it stays cheap if called per row.
     static func localDay(_ now: Date = Date(), timeZone: TimeZone = .current) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = timeZone
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: now)
+        now.formatted(
+            Date.ISO8601FormatStyle(timeZone: timeZone)
+                .year().month().day()
+                .dateSeparator(.dash)
+        )
     }
 }
