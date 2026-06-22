@@ -6,9 +6,17 @@ These are the three things the problem doc's solution space resolved to, drafted
 
 - **Draft 1 — `api.yaml` additions** (schema + path). Destined for `wxyc-shared` (the cross-repo source of truth, owned upstream); this iOS repo cannot land it. Carried by Draft 2's ticket.
 - **Draft 2 — upstream ticket.** Filed as [`WXYC/wxyc-shared#186`](https://github.com/WXYC/wxyc-shared/issues/186); wired as a native blocker of `wxyc-dj-ios#19`.
-- **Draft 3 — ADR-0005 + #19 corrections, and the iOS `CatalogRow`.** The ADR-0005 edits and the `CatalogRow` DTO + tests are applied on branch `catalog-row-dto` in this repo. The #19 body corrections are drafted here but **not** yet applied to the live issue (an outward-facing edit, left for explicit go-ahead).
+- **Draft 3 — ADR-0005 + #19 corrections, and the iOS `CatalogRow`.** Merged to `main` via [PR #23](https://github.com/WXYC/wxyc-dj-ios/pull/23) (which closed `#19`'s sub-issue `#22`); the live `#19` body has since been corrected to match. The drafts below were **revised during code review** — see the Update note.
 
 The spine of all three: the catalog export is **not** `AlbumSearchResult`, so it gets its **own** type — a separate `CatalogExportRow` schema upstream and a dedicated `CatalogRow` DTO on iOS — never a superset and never reuse. That is what preserves the `rotation_bin` filtered-vs-raw split at the type level (the problem doc's Trap 1) and stops the silent loss of `rotation_kill_date`.
+
+## Update (post code-review, 2026-06-22)
+
+The drafts below are kept as the original record; a max-effort code review of the shipped `CatalogRow` (merged in PR #23) changed three things:
+
+- **`CatalogRow` keeps `rotation_bin` as a raw string, not the `RotationBin` enum.** The export ships rotation raw and the server enum is `[S, L, M, H, N]`; decoding into the `H/M/L/S` enum dropped `'N'` to `nil`, so `isInRotation` wrongly reported an `'N'` row as out of rotation (the server predicate is `rotation_bin != null`). The final type keeps the raw bin (plus a `rotationCohort` accessor for the `H/M/L/S` display cohorts), normalizes a dirty empty string to `nil`, tolerates an empty/dirty `artwork_url` (which otherwise failed the whole row), and exposes `isInRotation(asOf:timeZone:)` (the bare-string predicate is `internal`, to kill an unpadded-`today` footgun). So wherever Draft 3 below says "decodes `rotation_bin` tolerantly → `nil`" or `isInRotation(today:)`, read raw-string + `rotationCohort` + `isInRotation(asOf:)`.
+- **`'N'` is not legacy** — it is a current member of the server rotation enum (`apps/backend/services/library.service.ts:240`; BS `apps/backend/app.yaml`).
+- **The export *is* already in a BS OpenAPI.** Backend-Service's local `apps/backend/app.yaml` carries a `CatalogExportRow` schema (`rotation_bin: enum [S, L, M, H, N]` + `rotation_kill_date`). So Draft 2 / `#186`'s "only a private TS type, never in any `api.yaml`" premise is inaccurate: the shape exists in BS's local app.yaml but was **not propagated to the `wxyc-shared/api.yaml` SSOT**, and the two **drift on the rotation enum** (`[H,M,L,S]` shared vs `[S,L,M,H,N]` in BS). `#186` has been reframed accordingly as drift-reconciliation.
 
 ---
 
@@ -275,7 +283,7 @@ _(Draft 1a + 1b above; 1c if decision 3 is yes.)_
 
 ### The iOS `CatalogRow` DTO (applied on branch `catalog-row-dto`)
 
-`Packages/WXYCAPI/Sources/WXYCAPI/DTOs/CatalogRow.swift` — decodes exactly the 14 export fields, keeps `rotation_kill_date` as the server's raw `"YYYY-MM-DD"` string, decodes `rotation_bin` tolerantly (raw may carry legacy `'N'` → `nil`), reuses `AlbumSearchResult.formatCallNumber` for shelf-code rendering, and puts the rotation predicate in the type. The kill-date compare is lexicographic on the zero-padded ISO string — chronologically correct, timezone-free, and an exact match for the server's deliberate `::text` cast (so it sidesteps the date-only-vs-ISO-datetime decoder question entirely). See the branch for the full source and its `CatalogRowTests`.
+`Packages/WXYCAPI/Sources/WXYCAPI/DTOs/CatalogRow.swift` — decodes exactly the 14 export fields, keeps both `rotation_bin` and `rotation_kill_date` as raw strings (preserving a non-cohort `'N'` — a current server enum member — with a `rotationCohort` accessor for the `H/M/L/S` display cohorts; `isInRotation` counts any non-null bin per the server predicate), reuses `AlbumSearchResult.formatCallNumber` for shelf-code rendering, and exposes `isInRotation(asOf:timeZone:)`. The kill-date compare is lexicographic on the zero-padded ISO string — chronologically correct, timezone-free, and an exact match for the server's deliberate `::text` cast (so it sidesteps the date-only-vs-ISO-datetime decoder question entirely). See `CatalogRow` on `main` (merged via PR #23) and its `CatalogRowTests`.
 
 ### One integration point the switch creates (note in both ADR and #19)
 
