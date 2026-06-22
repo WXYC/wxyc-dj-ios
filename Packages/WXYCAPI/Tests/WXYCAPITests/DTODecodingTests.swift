@@ -21,9 +21,11 @@ struct DTODecodingTests {
     }
 
     @Test func roundTripsAlbumSearchResultThroughCodable() throws {
-        // The on-device catalog clone (issue #19) persists AlbumSearchResult
-        // rows, so the type must encode as well as decode. Decode → encode →
-        // decode must reproduce an equal value. `add_date` survives as the
+        // AlbumSearchResult flipped to Codable in c0a4c5c for the on-device
+        // clone. The clone now persists CatalogRow instead (the export is not
+        // AlbumSearchResult — see docs/library-row-type-contract.md), so this
+        // conformance is retained but no longer clone-driven. Decode → encode →
+        // decode must still reproduce an equal value: `add_date` survives as the
         // same instant even though the encoder emits ISO-8601 without the
         // fractional seconds the wire carried — equality compares Date
         // instants, not their string forms.

@@ -30,6 +30,29 @@ enum Fixtures {
         }
         """
 
+    /// A full 14-field GET /library/catalog export row (BS#1468) — the shape
+    /// CatalogRow decodes. Distinct from juanaMolinaSearchResult: raw rotation
+    /// (rotation_bin + rotation_kill_date), no search decoration. The kill_date
+    /// is in the future, so the row reads as in rotation.
+    static let juanaMolinaCatalogRow = """
+        {
+          "id": 100,
+          "artist_name": "Juana Molina",
+          "album_title": "DOGA",
+          "code_letters": "MOL",
+          "code_number": 12,
+          "code_artist_number": 1,
+          "label": "Sonamos",
+          "genre_name": "Rock",
+          "format_name": "CD",
+          "on_streaming": true,
+          "plays": 34,
+          "artwork_url": "https://img.discogs.com/doga.jpg",
+          "rotation_bin": "H",
+          "rotation_kill_date": "2026-07-01"
+        }
+        """
+
     static let albumInfoJSON = """
         {
           "id": 100,
