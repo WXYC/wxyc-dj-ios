@@ -4,8 +4,8 @@
 //
 //  Decoding + rotation-predicate tests for CatalogRow, the GET /library/catalog
 //  export DTO (issue #19). Pins BS#1468's exact 14-field projection — including
-//  the rotation_kill_date that AlbumSearchResult silently drops — and the
-//  client-side rotation-expiry predicate against drift.
+//  the rotation_kill_date that AlbumSearchResult silently drops — the tolerant
+//  decode of dirty/raw fields, and the client-side rotation-expiry predicate.
 //
 //  Created by Jake on 06/22/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -34,7 +34,8 @@ struct CatalogRowTests {
         #expect(row.onStreaming == true)
         #expect(row.plays == 34)
         #expect(row.artworkURL?.host() == "img.discogs.com")
-        #expect(row.rotationBin == .heavy)
+        #expect(row.rotationBin == "H")
+        #expect(row.rotationCohort == .heavy)
         // The 14th field — absent from AlbumSearchResult — must survive here.
         #expect(row.rotationKillDate == "2026-07-01")
     }
@@ -60,12 +61,35 @@ struct CatalogRowTests {
         #expect(row.callNumber == "MOL 1/12")
     }
 
-    @Test func toleratesUnknownRotationBin() throws {
-        // Raw rotation can carry legacy codes (e.g. 'N') the strict RotationBin
-        // enum doesn't model. Decode to nil rather than failing the row.
-        let raw = #"{"id":1,"artist_name":"y","album_title":"x","code_letters":"X","code_number":1,"code_artist_number":1,"genre_name":"Rock","format_name":"LP","rotation_bin":"N"}"#
+    // MARK: - Dirty / tolerant decode (must not fail the whole row)
+
+    @Test func decodesEmptyArtworkURLAsNil() throws {
+        // library.artwork_url is free text; legacy rows hold "" rather than null.
+        // An empty/invalid URL must map to nil, NOT throw and drop the row from
+        // the full-catalog clone.
+        let raw = #"{"id":1,"artist_name":"y","album_title":"x","code_letters":"X","code_number":1,"code_artist_number":1,"genre_name":"Rock","format_name":"LP","artwork_url":""}"#
         let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
-        #expect(row.rotationBin == nil)
+        #expect(row.artworkURL == nil)
+        #expect(row.id == 1) // row still decoded
+    }
+
+    @Test func decodesNullArtworkURLAsNil() throws {
+        let raw = #"{"id":1,"artist_name":"y","album_title":"x","code_letters":"X","code_number":1,"code_artist_number":1,"genre_name":"Rock","format_name":"LP","artwork_url":null}"#
+        let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
+        #expect(row.artworkURL == nil)
+    }
+
+    @Test func preservesNonCohortRotationBinAndCountsAsInRotation() throws {
+        // "N" is a CURRENT server bin (Backend-Service app.yaml enum [S,L,M,H,N])
+        // outside the H/M/L/S display cohorts. It must be preserved RAW, have no
+        // display cohort, and — per the server predicate (non-null bin = in
+        // rotation) — count as in rotation. Collapsing "N" to nil (the old enum
+        // decode) wrongly reported it out of rotation.
+        let raw = #"{"id":1,"artist_name":"y","album_title":"x","code_letters":"X","code_number":1,"code_artist_number":1,"genre_name":"Rock","format_name":"LP","rotation_bin":"N","rotation_kill_date":null}"#
+        let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
+        #expect(row.rotationBin == "N")
+        #expect(row.rotationCohort == nil)
+        #expect(row.isInRotation(localDay: "2026-06-22"))
     }
 
     @Test func decodesNullRotationFields() throws {
@@ -73,13 +97,15 @@ struct CatalogRowTests {
         let raw = #"{"id":1,"artist_name":"y","album_title":"x","code_letters":"X","code_number":1,"code_artist_number":1,"genre_name":"Rock","format_name":"LP","rotation_bin":null,"rotation_kill_date":null}"#
         let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
         #expect(row.rotationBin == nil)
+        #expect(row.rotationCohort == nil)
         #expect(row.rotationKillDate == nil)
-        #expect(row.isInRotation(today: "2026-06-22") == false)
+        #expect(row.isInRotation(localDay: "2026-06-22") == false)
     }
 
     @Test func roundTripsThroughCodable() throws {
-        // The on-device clone (issue #19) persists CatalogRow, so it must
-        // encode as well as decode; decode → encode → decode is an equal value.
+        // The on-device clone (issue #19) persists CatalogRow, so it must encode
+        // as well as decode. decodesFullExportRow (above) guards the wire keys
+        // against typos; this guards encode/decode symmetry.
         let original = try JSONCoders.decoder.decode(
             CatalogRow.self,
             from: Data(Fixtures.juanaMolinaCatalogRow.utf8)
@@ -91,51 +117,81 @@ struct CatalogRowTests {
         #expect(roundTripped == original)
     }
 
-    // MARK: - isInRotation(today:) — raw rotation, client-side expiry
+    // MARK: - isInRotation core (deterministic local day)
 
     @Test func inRotationWhenBinSetAndNoKillDate() {
-        #expect(makeRow(bin: .heavy, killDate: nil).isInRotation(today: "2026-06-22"))
+        #expect(makeRow(bin: "H", killDate: nil).isInRotation(localDay: "2026-06-22"))
     }
 
     @Test func inRotationWhenKillDateInFuture() {
-        #expect(makeRow(bin: .medium, killDate: "2026-07-01").isInRotation(today: "2026-06-22"))
+        #expect(makeRow(bin: "M", killDate: "2026-07-01").isInRotation(localDay: "2026-06-22"))
     }
 
     @Test func notInRotationWhenKillDateInPast() {
-        #expect(makeRow(bin: .heavy, killDate: "2026-06-01").isInRotation(today: "2026-06-22") == false)
+        #expect(makeRow(bin: "H", killDate: "2026-06-01").isInRotation(localDay: "2026-06-22") == false)
     }
 
     @Test func notInRotationWhenKillDateIsToday() {
-        // Matches the server's `kill_date > CURRENT_DATE` filter (strict
-        // greater-than): a record that expires today is already out.
-        #expect(makeRow(bin: .heavy, killDate: "2026-06-22").isInRotation(today: "2026-06-22") == false)
+        // Matches the server's `kill_date > CURRENT_DATE` filter (strict): a
+        // record that expires today is already out.
+        #expect(makeRow(bin: "H", killDate: "2026-06-22").isInRotation(localDay: "2026-06-22") == false)
     }
 
     @Test func notInRotationWhenNoBinEvenWithFutureKillDate() {
-        #expect(makeRow(bin: nil, killDate: "2027-01-01").isInRotation(today: "2026-06-22") == false)
+        #expect(makeRow(bin: nil, killDate: "2027-01-01").isInRotation(localDay: "2026-06-22") == false)
     }
 
-    // MARK: - localToday formatting
+    @Test func farFutureAndFarPastKillDatesCompareChronologically() {
+        // Lexicographic == chronological holds across the full padded range.
+        #expect(makeRow(bin: "H", killDate: "9999-12-31").isInRotation(localDay: "2026-06-22"))
+        #expect(makeRow(bin: "H", killDate: "0001-01-01").isInRotation(localDay: "2026-06-22") == false)
+    }
 
-    @Test func localTodayZeroPads() {
+    // MARK: - isInRotation(asOf:) — public, computes the padded local day itself
+
+    @Test func isInRotationAsOfComputesLocalDay() {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        let noonUTC = utc.date(from: DateComponents(year: 2026, month: 6, day: 22, hour: 12))!
+        let tz = TimeZone(identifier: "UTC")!
+        // kill tomorrow -> in rotation; kill today -> out (strict); past -> out.
+        #expect(makeRow(bin: "H", killDate: "2026-06-23").isInRotation(asOf: noonUTC, timeZone: tz))
+        #expect(makeRow(bin: "H", killDate: "2026-06-22").isInRotation(asOf: noonUTC, timeZone: tz) == false)
+        #expect(makeRow(bin: "H", killDate: nil).isInRotation(asOf: noonUTC, timeZone: tz))
+    }
+
+    @Test func isInRotationAsOfRespectsTimeZoneBoundary() {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        // 00:30 UTC on the 22nd is still the 21st in America/New_York (EDT, UTC-4).
+        let justAfterMidnightUTC = utc.date(from: DateComponents(year: 2026, month: 6, day: 22, hour: 0, minute: 30))!
+        let row = makeRow(bin: "H", killDate: "2026-06-22") // expires on the 22nd
+        // In UTC, "today" is the 22nd -> kill == today -> out of rotation.
+        #expect(row.isInRotation(asOf: justAfterMidnightUTC, timeZone: TimeZone(identifier: "UTC")!) == false)
+        // In New York, "today" is still the 21st -> kill (22nd) > today -> in rotation.
+        #expect(row.isInRotation(asOf: justAfterMidnightUTC, timeZone: TimeZone(identifier: "America/New_York")!))
+    }
+
+    // MARK: - localDay formatting
+
+    @Test func localDayZeroPads() {
         var utc = Calendar(identifier: .gregorian)
         utc.timeZone = TimeZone(identifier: "UTC")!
         let jan5 = utc.date(from: DateComponents(year: 2026, month: 1, day: 5))!
-        #expect(CatalogRow.localToday(now: jan5, timeZone: TimeZone(identifier: "UTC")!) == "2026-01-05")
+        #expect(CatalogRow.localDay(jan5, timeZone: TimeZone(identifier: "UTC")!) == "2026-01-05")
     }
 
-    @Test func localTodayShiftsWithTimeZone() {
+    @Test func localDayShiftsWithTimeZone() {
         var utc = Calendar(identifier: .gregorian)
         utc.timeZone = TimeZone(identifier: "UTC")!
-        // 2026-06-22 00:30 UTC is still 2026-06-21 in US Eastern (UTC-4 in June).
         let instant = utc.date(from: DateComponents(year: 2026, month: 6, day: 22, hour: 0, minute: 30))!
-        #expect(CatalogRow.localToday(now: instant, timeZone: TimeZone(identifier: "UTC")!) == "2026-06-22")
-        #expect(CatalogRow.localToday(now: instant, timeZone: TimeZone(identifier: "America/New_York")!) == "2026-06-21")
+        #expect(CatalogRow.localDay(instant, timeZone: TimeZone(identifier: "UTC")!) == "2026-06-22")
+        #expect(CatalogRow.localDay(instant, timeZone: TimeZone(identifier: "America/New_York")!) == "2026-06-21")
     }
 
     // MARK: - Helpers
 
-    private func makeRow(bin: RotationBin?, killDate: String?) -> CatalogRow {
+    private func makeRow(bin: String?, killDate: String?) -> CatalogRow {
         CatalogRow(
             id: 1,
             artistName: "Juana Molina",
