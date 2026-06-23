@@ -268,12 +268,15 @@ struct APIClientTests {
         #expect(rows.last?.id == 200)
     }
 
-    @Test func catalogToleratesCRLFLineEndings() async throws {
+    @Test func catalogToleratesBlankLineUnderCRLF() async throws {
         let (client, _, session) = try await Self.makeSignedInClient()
-        // Defensive: if any intermediary normalizes endings to CRLF, splitting on
-        // \n leaves a trailing lone \r per line (and a lone \r as the final
-        // chunk) — none of which may fail the fetch.
-        let body = Fixtures.catalogNDJSON.replacingOccurrences(of: "\n", with: "\r\n") + "\r\n"
+        // A blank line under CRLF endings (`...\r\n\r\nrow2...`) splits on \n into
+        // a lone-`\r` chunk BETWEEN records — non-empty, so the old
+        // `omittingEmptySubsequences: true` path kept it and fed `\r` to
+        // JSONDecoder, failing the whole fetch. Both real rows must still survive.
+        // (Discriminating: an interior blank line, not just a trailing one a
+        // simple split would drop.)
+        let body = Fixtures.catalogNDJSON.replacingOccurrences(of: "\n", with: "\r\n\r\n") + "\r\n"
         session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(body.utf8)))
 
         let result = try await client.catalog(ifModifiedSince: nil)
@@ -283,6 +286,8 @@ struct APIClientTests {
             return
         }
         #expect(rows.count == 2)
+        #expect(rows.first?.id == 100)
+        #expect(rows.last?.id == 200)
     }
 
     @Test func catalogMalformedLineThrowsDecodingError() async throws {
