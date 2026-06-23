@@ -27,6 +27,19 @@ import Foundation
 /// `refresh()`), so concurrent callers never open a second Core Spotlight batch
 /// and the `ids()` diff can't race a concurrent `replace`.
 ///
+/// **A fresh indexer per run.** The service builds a new indexer (via the
+/// injected `makeIndexer` factory) for each `refresh()` and each `poll()`, never
+/// reusing one for the process lifetime. ``CatalogIndexing``'s contract is that a
+/// reindex throwing mid-batch leaves a dangling Core Spotlight batch that can
+/// only be recovered on a *freshly constructed* `CSSearchableIndex`, never by
+/// re-calling `reindex` on the same instance. Step 5 adds **in-process** retries
+/// (a scene-activation refresh, the background reindex leg), so a single
+/// long-lived indexer would let one mid-batch failure poison every later reindex
+/// until the app is relaunched. A fresh indexer per run reads the same persisted
+/// client-state watermark (it lives in the named index, not the instance) and
+/// recovers on the very next run. It also keeps `poll()`'s watermark read on a
+/// *different* instance than any in-flight reindex's open batch.
+///
 /// **Watermark invariant.** The poll watermark comes from
 /// ``CatalogIndexing/indexedWatermark()`` — the index's committed client state —
 /// **not** ``CatalogStore/lastModified()``. The store is replaced before the
@@ -55,17 +68,25 @@ public actor CatalogRefreshService {
 
     private let client: APIClient
     private let store: any CatalogStore
-    private let indexer: any CatalogIndexing
+    /// Builds a fresh indexer per run (see the type's "fresh indexer per run"
+    /// note). Production passes `{ SpotlightCatalogIndexer() }`; tests pass a
+    /// closure returning a spy (the same instance models the daemon's persisted
+    /// client state across handles).
+    private let makeIndexer: @Sendable () -> any CatalogIndexing
     /// The single in-flight run, if any. Overlapping callers await this instead of
     /// starting a second pipeline; it is cleared by the run itself (a `defer` in
     /// `performRefresh`), not by any caller's frame, so a cancelled caller can't
     /// free the slot while the run — and its open Spotlight batch — is still going.
     private var inFlight: Task<Outcome, Error>?
 
-    public init(client: APIClient, store: any CatalogStore, indexer: any CatalogIndexing) {
+    public init(
+        client: APIClient,
+        store: any CatalogStore,
+        makeIndexer: @escaping @Sendable () -> any CatalogIndexing
+    ) {
         self.client = client
         self.store = store
-        self.indexer = indexer
+        self.makeIndexer = makeIndexer
     }
 
     /// Run one refresh cycle: poll conditionally, and on a `200` wholesale-replace
@@ -97,10 +118,15 @@ public actor CatalogRefreshService {
     ///
     /// Not single-flighted against ``refresh()``: `poll()` opens no Spotlight
     /// batch and mutates neither the store nor the index, so it can't race a
-    /// concurrent reindex — it is purely a read.
+    /// concurrent reindex — it is purely a read (and on its own fresh indexer
+    /// instance, so its watermark read never touches a concurrent reindex's open
+    /// batch).
+    ///
+    /// **Known cost (tracked as a follow-up).** On a `200` this still pays the
+    /// full body download + ~50k-row decode just to return `true`; a body-less
+    /// `HEAD`/lightweight probe would avoid it but needs a Backend-Service change.
     public func poll() async throws -> Bool {
-        let watermark = try await indexer.indexedWatermark()
-        switch try await client.catalog(ifModifiedSince: watermark) {
+        switch try await conditionalFetch(using: makeIndexer()) {
         case .notModified:
             return false
         case .modified:
@@ -108,15 +134,25 @@ public actor CatalogRefreshService {
         }
     }
 
+    /// The shared conditional-GET head of `poll()`/`performRefresh()`: read the
+    /// index's committed watermark and issue the conditional `catalog` fetch. The
+    /// watermark comes from the *index* (not `store.lastModified()`) — the
+    /// load-bearing crash-safety invariant lives here, in one place.
+    private func conditionalFetch(using indexer: any CatalogIndexing) async throws -> CatalogFetchResult {
+        let watermark = try await indexer.indexedWatermark()
+        return try await client.catalog(ifModifiedSince: watermark)
+    }
+
     private func performRefresh() async throws -> Outcome {
         // Free the slot when THIS run ends (success, throw, or cancellation),
         // keyed to the run's own lifetime rather than the caller's frame.
         defer { inFlight = nil }
 
-        // Poll against the index's committed watermark (see the type's invariant),
-        // so a store-ahead-of-index crash still re-attempts the reindex.
-        let watermark = try await indexer.indexedWatermark()
-        switch try await client.catalog(ifModifiedSince: watermark) {
+        // A fresh indexer for this run (see the type's "fresh indexer per run"
+        // note): an in-process retry after a mid-batch failure must not reuse a
+        // poisoned Core Spotlight batch.
+        let indexer = makeIndexer()
+        switch try await conditionalFetch(using: indexer) {
         case .notModified:
             return .upToDate
         case .modified(let rows, let lastModified):

@@ -41,9 +41,10 @@ struct WXYCDJApp: App {
                         // Re-entry from background: top up the clone.
                         Task { await dependencies.refreshCatalog() }
                     case .background:
-                        // Arm the background poll for while we're away; it
-                        // re-arms itself thereafter.
-                        CatalogBackgroundTasks.scheduleNextPoll()
+                        // Arm the background poll for while we're away (only if
+                        // there's a catalog to refresh); it re-arms itself
+                        // thereafter.
+                        dependencies.scheduleBackgroundRefreshIfAvailable()
                     default:
                         break
                     }
