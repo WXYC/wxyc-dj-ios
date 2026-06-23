@@ -24,15 +24,8 @@ struct SpotlightCatalogIndexerTests {
         watermark: String? = nil,
         _ body: (SQLiteCatalogStore) async throws -> Void
     ) async throws {
-        let url = FileManager.default.temporaryDirectory
-            .appending(path: "indexer-store-\(UUID().uuidString).sqlite")
-        defer {
-            let base = url.path(percentEncoded: false)
-            try? FileManager.default.removeItem(at: url)
-            for suffix in ["-journal", "-wal", "-shm"] {
-                try? FileManager.default.removeItem(at: URL(filePath: base + suffix))
-            }
-        }
+        let url = CatalogStoreTestSupport.tempStoreURL()
+        defer { CatalogStoreTestSupport.removeStoreFile(url) }
         do {
             let store = try SQLiteCatalogStore(url: url)
             try await store.replace(rows: rows, lastModified: watermark)
@@ -40,22 +33,10 @@ struct SpotlightCatalogIndexerTests {
         }
     }
 
-    static func numberedRows(_ count: Int) -> [CatalogRow] {
-        (1...count).map { i in
-            CatalogRow(
-                id: i, artistName: "Artist \(i)", albumTitle: "Album \(i)",
-                codeLetters: "AAA", codeNumber: i, codeArtistNumber: 1,
-                label: nil, genreName: nil, formatName: nil,
-                onStreaming: nil, plays: nil, artworkURL: nil,
-                rotationBin: nil, rotationKillDate: nil
-            )
-        }
-    }
-
     // MARK: Tests
 
     @Test func upsertsEveryRowAsSearchableItemAndCommitsWatermark() async throws {
-        try await Self.withStore(rows: Self.numberedRows(3)) { store in
+        try await Self.withStore(rows: CatalogStoreTestSupport.numberedRows(3)) { store in
             let fake = FakeSearchableIndex()
             let indexer = SpotlightCatalogIndexer(index: fake)
 
@@ -74,7 +55,7 @@ struct SpotlightCatalogIndexerTests {
     }
 
     @Test func chunksIndexCallsAtChunkSize() async throws {
-        try await Self.withStore(rows: Self.numberedRows(5)) { store in
+        try await Self.withStore(rows: CatalogStoreTestSupport.numberedRows(5)) { store in
             let fake = FakeSearchableIndex()
             let indexer = SpotlightCatalogIndexer(index: fake, chunkSize: 2)
 
@@ -87,7 +68,7 @@ struct SpotlightCatalogIndexerTests {
     }
 
     @Test func deletesOnlyRemovedIDsByIdentifier() async throws {
-        try await Self.withStore(rows: Self.numberedRows(3)) { store in
+        try await Self.withStore(rows: CatalogStoreTestSupport.numberedRows(3)) { store in
             let fake = FakeSearchableIndex()
             let indexer = SpotlightCatalogIndexer(index: fake)
 
@@ -98,7 +79,7 @@ struct SpotlightCatalogIndexerTests {
     }
 
     @Test func nilWatermarkCommitsEmptyStateAndReadsBackNil() async throws {
-        try await Self.withStore(rows: Self.numberedRows(1)) { store in
+        try await Self.withStore(rows: CatalogStoreTestSupport.numberedRows(1)) { store in
             let fake = FakeSearchableIndex()
             let indexer = SpotlightCatalogIndexer(index: fake)
 
@@ -127,7 +108,7 @@ struct SpotlightCatalogIndexerTests {
     @Test func throwMidCommitLeavesPriorWatermarkUnchanged() async throws {
         // Crash-safety seam for step 4: a failure during the commit must not
         // advance the index watermark, so the next refresh re-attempts.
-        try await Self.withStore(rows: Self.numberedRows(2)) { store in
+        try await Self.withStore(rows: CatalogStoreTestSupport.numberedRows(2)) { store in
             let fake = FakeSearchableIndex(
                 initialClientState: Data("OLD-WATERMARK".utf8),
                 failOn: .endBatch

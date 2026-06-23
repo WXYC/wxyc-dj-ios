@@ -33,27 +33,11 @@ struct SQLiteCatalogStoreTests {
     static func withStore(
         _ body: (SQLiteCatalogStore) async throws -> Void
     ) async throws {
-        let url = tempURL()
-        defer { removeFile(url) }
+        let url = CatalogStoreTestSupport.tempStoreURL()
+        defer { CatalogStoreTestSupport.removeStoreFile(url) }
         do {
             let store = try SQLiteCatalogStore(url: url)
             try await body(store)
-        }
-    }
-
-    static func tempURL() -> URL {
-        FileManager.default.temporaryDirectory
-            .appending(path: "catalog-store-test-\(UUID().uuidString).sqlite")
-    }
-
-    /// Remove the database and any SQLite sidecar (`-journal`/`-wal`/`-shm` —
-    /// hyphen-suffixed on the same path, not a `.journal` path extension).
-    static func removeFile(_ url: URL) {
-        let fm = FileManager.default
-        try? fm.removeItem(at: url)
-        let base = url.path(percentEncoded: false)
-        for suffix in ["-journal", "-wal", "-shm"] {
-            try? fm.removeItem(at: URL(filePath: base + suffix))
         }
     }
 
@@ -108,8 +92,8 @@ struct SQLiteCatalogStoreTests {
     }
 
     @Test func persistsRowsAndWatermarkAcrossLaunches() async throws {
-        let url = Self.tempURL()
-        defer { Self.removeFile(url) }
+        let url = CatalogStoreTestSupport.tempStoreURL()
+        defer { CatalogStoreTestSupport.removeStoreFile(url) }
         let rows = try Self.fixtureRows()
         let watermark = "Tue, 02 Jun 2026 09:30:00 GMT"
 
@@ -172,49 +156,23 @@ struct SQLiteCatalogStoreTests {
 
     // MARK: rows(after:limit:) — the step-3 keyset bulk read
 
-    /// `count` WXYC-representative rows with ascending ids `1...count`, inserted
-    /// out of order so the test proves the SELECT orders by id, not insert order.
-    static func numberedRows(_ count: Int) -> [CatalogRow] {
-        let names = ["Juana Molina", "Jessica Pratt", "Chuquimamani-Condori"]
-        return (1...count).map { i in
-            CatalogRow(
-                id: i, artistName: names[i % names.count], albumTitle: "Album \(i)",
-                codeLetters: "AAA", codeNumber: i, codeArtistNumber: 1,
-                label: nil, genreName: nil, formatName: nil,
-                onStreaming: nil, plays: nil, artworkURL: nil,
-                rotationBin: nil, rotationKillDate: nil
-            )
-        }.shuffled()
-    }
-
-    @Test func pageFromStartReturnsFirstAscendingRows() async throws {
-        let rows = Self.numberedRows(10)
+    /// Keyset boundaries in one place: a first page from the start, a mid-catalog
+    /// page after a cursor, and a cursor past the last id. Seeds 10 shuffled rows
+    /// so the ascending-id result also proves the SELECT orders by id.
+    @Test(arguments: [
+        (after: nil, limit: 3, expectedIDs: [1, 2, 3]),
+        (after: 3, limit: 3, expectedIDs: [4, 5, 6]),
+        (after: 10, limit: 5, expectedIDs: []),
+    ] as [(after: Int?, limit: Int, expectedIDs: [Int])])
+    func pageReturnsExpectedAscendingRows(_ page: (after: Int?, limit: Int, expectedIDs: [Int])) async throws {
         try await Self.withStore { store in
-            try await store.replace(rows: rows, lastModified: nil)
-            let page = try await store.rows(after: nil, limit: 3)
-            #expect(page.map(\.id) == [1, 2, 3])
-        }
-    }
-
-    @Test func pageAfterCursorReturnsNextAscendingRows() async throws {
-        let rows = Self.numberedRows(10)
-        try await Self.withStore { store in
-            try await store.replace(rows: rows, lastModified: nil)
-            let page = try await store.rows(after: 3, limit: 3)
-            #expect(page.map(\.id) == [4, 5, 6])
-        }
-    }
-
-    @Test func pageCursorPastLastRowIsEmpty() async throws {
-        let rows = Self.numberedRows(10)
-        try await Self.withStore { store in
-            try await store.replace(rows: rows, lastModified: nil)
-            #expect(try await store.rows(after: 10, limit: 5).isEmpty)
+            try await store.replace(rows: CatalogStoreTestSupport.numberedRows(10, shuffled: true), lastModified: nil)
+            #expect(try await store.rows(after: page.after, limit: page.limit).map(\.id) == page.expectedIDs)
         }
     }
 
     @Test func nonPositiveLimitReturnsEmpty() async throws {
-        let rows = Self.numberedRows(5)
+        let rows = CatalogStoreTestSupport.numberedRows(5, shuffled: true)
         try await Self.withStore { store in
             try await store.replace(rows: rows, lastModified: nil)
             #expect(try await store.rows(after: nil, limit: 0).isEmpty)
@@ -222,7 +180,7 @@ struct SQLiteCatalogStoreTests {
     }
 
     @Test func fullSweepConcatenatesEveryRowInIdOrder() async throws {
-        let rows = Self.numberedRows(7)
+        let rows = CatalogStoreTestSupport.numberedRows(7, shuffled: true)
         try await Self.withStore { store in
             try await store.replace(rows: rows, lastModified: nil)
             var swept: [CatalogRow] = []
@@ -240,7 +198,7 @@ struct SQLiteCatalogStoreTests {
     @Test func idLookupInterleavesWithPagedSweep() async throws {
         // The store releases between pages, so a deep-link lookup resolves
         // mid-sweep rather than blocking behind the whole reindex.
-        let rows = Self.numberedRows(6)
+        let rows = CatalogStoreTestSupport.numberedRows(6, shuffled: true)
         try await Self.withStore { store in
             try await store.replace(rows: rows, lastModified: nil)
             let firstPage = try await store.rows(after: nil, limit: 2)
