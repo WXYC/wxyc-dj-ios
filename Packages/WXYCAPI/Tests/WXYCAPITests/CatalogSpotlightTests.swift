@@ -35,6 +35,12 @@ struct CatalogSpotlightTests {
         #expect(CatalogSpotlight.albumID(from: "album.x") == nil)
         #expect(CatalogSpotlight.albumID(from: "album.12.3") == nil)
         #expect(CatalogSpotlight.albumID(from: "track.12") == nil)
+        // Int(_:) would accept a leading sign or surrounding whitespace; the
+        // parser must reject anything itemIdentifier(_:) never emits.
+        #expect(CatalogSpotlight.albumID(from: "album.-5") == nil)
+        #expect(CatalogSpotlight.albumID(from: "album.+5") == nil)
+        #expect(CatalogSpotlight.albumID(from: "album. 5") == nil)
+        #expect(CatalogSpotlight.albumID(from: "album.5 ") == nil)
     }
 
     @Test func searchableItemMapsCatalogRowFields() throws {
@@ -51,11 +57,14 @@ struct CatalogSpotlightTests {
         #expect(description.contains("Juana Molina"))
         #expect(description.contains(row.callNumber))
         #expect(!row.callNumber.isEmpty)
-        // keywords carry artist, album, and label for recall.
+        // keywords carry artist, album, label, and call number for recall — the
+        // call number must be here (not only in display-only contentDescription)
+        // to be matchable by a shelf-code query.
         let keywords = try #require(item.attributeSet.keywords)
         #expect(keywords.contains("Juana Molina"))
         #expect(keywords.contains("DOGA"))
         #expect(keywords.contains("Sonamos"))
+        #expect(keywords.contains(row.callNumber))
     }
 
     @Test func searchableItemOmitsLabelKeywordWhenNil() throws {
