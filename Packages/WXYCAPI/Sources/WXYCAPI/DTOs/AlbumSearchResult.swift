@@ -60,6 +60,50 @@ public struct AlbumSearchResult: Codable, Sendable, Hashable, Identifiable {
         case matchedVia = "matched_via"
     }
 
+    /// Memberwise initializer. Defined explicitly because the custom
+    /// `init(from:)` in the type body suppresses the synthesized one — needed
+    /// by `CatalogRow.detailFallback`, which builds a header-render stand-in
+    /// from a cloned catalog row (issue #19).
+    public init(
+        id: Int,
+        addDate: Date? = nil,
+        albumTitle: String,
+        artistName: String,
+        codeLetters: String? = nil,
+        codeNumber: Int? = nil,
+        codeArtistNumber: Int? = nil,
+        formatName: String? = nil,
+        genreName: String? = nil,
+        label: String? = nil,
+        labelId: Int? = nil,
+        rotationBin: RotationBin? = nil,
+        rotationId: Int? = nil,
+        plays: Int? = nil,
+        onStreaming: Bool? = nil,
+        albumArtist: String? = nil,
+        artworkURL: URL? = nil,
+        matchedVia: [TrackMatchHint] = []
+    ) {
+        self.id = id
+        self.addDate = addDate
+        self.albumTitle = albumTitle
+        self.artistName = artistName
+        self.codeLetters = codeLetters
+        self.codeNumber = codeNumber
+        self.codeArtistNumber = codeArtistNumber
+        self.formatName = formatName
+        self.genreName = genreName
+        self.label = label
+        self.labelId = labelId
+        self.rotationBin = rotationBin
+        self.rotationId = rotationId
+        self.plays = plays
+        self.onStreaming = onStreaming
+        self.albumArtist = albumArtist
+        self.artworkURL = artworkURL
+        self.matchedVia = matchedVia
+    }
+
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(Int.self, forKey: .id)
