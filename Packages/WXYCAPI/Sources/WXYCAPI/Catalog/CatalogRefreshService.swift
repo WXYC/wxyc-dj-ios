@@ -116,16 +116,25 @@ public actor CatalogRefreshService {
     /// (idempotent — a foreground refresh that already advanced the watermark
     /// makes that re-fetch a cheap `304`).
     ///
-    /// Not single-flighted against ``refresh()``: `poll()` opens no Spotlight
-    /// batch and mutates neither the store nor the index, so it can't race a
-    /// concurrent reindex — it is purely a read (and on its own fresh indexer
-    /// instance, so its watermark read never touches a concurrent reindex's open
-    /// batch).
+    /// `poll()` opens no Spotlight batch and mutates neither the store nor the
+    /// index, so it is not single-flighted with ``refresh()``. But it
+    /// **short-circuits when a refresh is already in flight**: that refresh will
+    /// replace the store and reindex, so the reindex leg has nothing to add, and
+    /// skipping also avoids a second client handle reading the named index while
+    /// the refresh holds an open batch. A refresh that *starts during* a poll is
+    /// rare (the poll runs only in the background app-refresh task, the refresh in
+    /// the foreground or the charging-gated reindex leg) and benign — the worst
+    /// case is a stale watermark read that yields a redundant conditional GET,
+    /// never data corruption.
     ///
     /// **Known cost (tracked as a follow-up).** On a `200` this still pays the
     /// full body download + ~50k-row decode just to return `true`; a body-less
     /// `HEAD`/lightweight probe would avoid it but needs a Backend-Service change.
     public func poll() async throws -> Bool {
+        // A refresh in flight already replaces the store and reindexes; the
+        // background reindex leg would only duplicate it (and a read here would
+        // touch the named index while that refresh's batch is open).
+        if inFlight != nil { return false }
         switch try await conditionalFetch(using: makeIndexer()) {
         case .notModified:
             return false
