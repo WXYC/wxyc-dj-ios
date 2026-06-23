@@ -208,29 +208,52 @@ struct CatalogRefreshServiceTests {
         #expect(indexer.indexedWatermark() == "W")
     }
 
-    // MARK: Fresh indexer per run (in-process retry recovery)
+    // MARK: Fresh indexer per run — crash/in-process-retry recovery
 
-    @Test func eachRunBuildsAFreshIndexer() async throws {
-        // CatalogIndexing's contract: a reindex that throws leaves a dangling Core
-        // Spotlight batch recoverable only on a FRESH index instance. So the
-        // service must build a fresh indexer per run — otherwise an in-process
-        // retry (scene-activation refresh / background reindex leg) would reuse
-        // the poisoned batch and fail until relaunch. Pin that the factory is
-        // invoked once per run.
+    @Test func failedReindexRecoversInProcessWithAFreshIndexer() async throws {
+        // CatalogIndexing's contract: a reindex that throws mid-batch leaves a
+        // dangling Core Spotlight batch recoverable only on a FRESH index instance.
+        // The service builds a fresh indexer per run, so a SINGLE service recovers
+        // on its NEXT refresh() in the SAME process — no relaunch. Model the
+        // daemon's persisted client state (which a failed reindex leaves at "OLD")
+        // by seeding each fresh spy at "OLD": run 1 fails its commit; run 2 gets a
+        // fresh indexer that reads the un-advanced "OLD" and succeeds.
         let (client, session) = try await Self.makeSignedInClient()
-        let store = SpyCatalogStore()
-        let built = OSAllocatedUnfairLock(initialState: 0)
+        let store = SpyCatalogStore()   // one store, persists across runs (one SQLite file in prod)
+        let built = OSAllocatedUnfairLock<[SpyCatalogIndexer]>(initialState: [])
         let service = CatalogRefreshService(client: client, store: store) {
-            built.withLock { $0 += 1 }
-            return SpyCatalogIndexer(watermark: nil)
+            built.withLock { made in
+                let indexer = SpyCatalogIndexer(watermark: "OLD", shouldFail: made.isEmpty)
+                made.append(indexer)
+                return indexer
+            }
         }
 
-        session.enqueue(StubRequestSession.Stub(statusCode: 304))
-        _ = try await service.poll()
-        session.enqueue(StubRequestSession.Stub(statusCode: 304))
-        _ = try await service.refresh()
+        // Run 1 (fresh indexer #1) fails mid-commit.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200, headers: ["Last-Modified": "NEW"], body: Data(Fixtures.catalogNDJSON.utf8)
+        ))
+        await #expect(throws: SpyCatalogIndexer.ReindexFailure.self) {
+            try await service.refresh()
+        }
 
-        #expect(built.withLock { $0 } == 2)   // one fresh indexer for poll(), one for refresh()
+        // Run 2 — SAME service — gets a FRESH indexer (#2) and recovers in-process.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200, headers: ["Last-Modified": "NEW"], body: Data(Fixtures.catalogNDJSON.utf8)
+        ))
+        let outcome = try await service.refresh()
+
+        let indexers = built.withLock { $0 }
+        #expect(indexers.count == 2)                      // a fresh indexer per run, in-process
+        #expect(indexers[0].indexedWatermark() == "OLD")  // #1 failed -> watermark NOT advanced
+        #expect(indexers[1].indexedWatermark() == "NEW")  // #2 (fresh) recovered and committed
+        #expect(indexers[1].reindexCalls.count == 1)      // the retry actually reindexed
+        #expect(outcome == .refreshed(rowCount: 2, removed: 0))
+        // The store was replaced on each run (briefly ahead of the index)...
+        #expect(store.replaceCalls.map(\.lastModified) == ["NEW", "NEW"])
+        // ...and both polls were conditional on the un-advanced "OLD" watermark.
+        #expect(Self.catalogRequests(session).count == 2)
+        #expect(Self.catalogRequests(session).last?.value(forHTTPHeaderField: "If-Modified-Since") == "OLD")
     }
 
     // MARK: Data safety — empty export
@@ -255,55 +278,6 @@ struct CatalogRefreshServiceTests {
         #expect(try await store.count() == 2)
         #expect(indexer.reindexCalls.isEmpty)          // no reindex
         #expect(indexer.indexedWatermark() == "W")     // watermark not advanced
-    }
-
-    // MARK: Crash safety — watermark gated on the index commit
-
-    @Test func failedReindexDoesNotAdvanceWatermarkAndNextLaunchRetries() async throws {
-        let (client, session) = try await Self.makeSignedInClient()
-        // The store persists across launches (one SQLite file in production); model
-        // that by handing the same store to both "launches".
-        let store = SpyCatalogStore()
-
-        // First launch: the reindex fails mid-commit.
-        let indexer1 = SpyCatalogIndexer(watermark: "OLD", shouldFail: true)
-        let service1 = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer1 })
-        session.enqueue(StubRequestSession.Stub(
-            statusCode: 200,
-            headers: ["Last-Modified": "NEW"],
-            body: Data(Fixtures.catalogNDJSON.utf8)
-        ))
-
-        await #expect(throws: SpyCatalogIndexer.ReindexFailure.self) {
-            try await service1.refresh()
-        }
-        // The store was replaced (it is briefly ahead of the index)...
-        #expect(store.replaceCalls.map(\.lastModified) == ["NEW"])
-        // ...but the index commit failed, so its watermark did NOT advance...
-        #expect(indexer1.indexedWatermark() == "OLD")
-        // ...and the failed poll was conditional on the un-advanced "OLD".
-        #expect(Self.catalogRequests(session).last?.value(forHTTPHeaderField: "If-Modified-Since") == "OLD")
-
-        // Next launch: a FRESH index handle (a failed Core Spotlight batch can't be
-        // retried in-process per CatalogIndexing's contract — recovery is a new
-        // CSSearchableIndex or the next process launch) reads the still-"OLD"
-        // committed client state and re-attempts.
-        let indexer2 = SpyCatalogIndexer(watermark: "OLD", shouldFail: false)
-        let service2 = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer2 })
-        session.enqueue(StubRequestSession.Stub(
-            statusCode: 200,
-            headers: ["Last-Modified": "NEW"],
-            body: Data(Fixtures.catalogNDJSON.utf8)
-        ))
-
-        let outcome = try await service2.refresh()
-
-        #expect(outcome == .refreshed(rowCount: 2, removed: 0))
-        #expect(indexer2.reindexCalls.count == 1)        // the retry actually reindexed
-        #expect(indexer2.indexedWatermark() == "NEW")
-        #expect(Self.catalogRequests(session).count == 2)
-        // The retry polled conditionally against the un-advanced "OLD" watermark.
-        #expect(Self.catalogRequests(session).last?.value(forHTTPHeaderField: "If-Modified-Since") == "OLD")
     }
 
     // MARK: End-to-end over the real store + indexer
