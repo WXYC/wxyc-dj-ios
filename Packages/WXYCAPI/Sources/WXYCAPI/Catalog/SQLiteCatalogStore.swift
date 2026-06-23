@@ -91,6 +91,25 @@ public actor SQLiteCatalogStore: CatalogStore {
         return Int(sqlite3_column_int64(stmt, 0))
     }
 
+    public func ids() throws -> Set<Int> {
+        // SELECT the primary key only — never the row BLOB — so the step-4 diff
+        // stays cheap on a tens-of-thousands-row catalog.
+        let stmt = try Self.prepare(db, "SELECT id FROM catalog;")
+        defer { sqlite3_finalize(stmt) }
+        var ids: Set<Int> = []
+        loop: while true {
+            switch sqlite3_step(stmt) {
+            case SQLITE_ROW:
+                ids.insert(Int(sqlite3_column_int64(stmt, 0)))
+            case SQLITE_DONE:
+                break loop
+            default:
+                throw Self.error(db, "step ids")
+            }
+        }
+        return ids
+    }
+
     public func lastModified() throws -> String? {
         let stmt = try Self.prepare(db, "SELECT value FROM meta WHERE key = 'last_modified';")
         defer { sqlite3_finalize(stmt) }

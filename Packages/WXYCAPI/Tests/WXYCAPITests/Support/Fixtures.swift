@@ -12,8 +12,18 @@
 //
 
 import Foundation
+@testable import WXYCAPI
 
 enum Fixtures {
+    /// The two WXYC-representative export rows (Juana Molina id 100, Jessica
+    /// Pratt id 200) decoded from the ``catalogNDJSON`` wire fixture. Shared by
+    /// every suite that needs `[CatalogRow]` so the decode lives in one place.
+    static func catalogRows() throws -> [CatalogRow] {
+        try catalogNDJSON
+            .split(separator: "\n")
+            .map { try JSONCoders.decoder.decode(CatalogRow.self, from: Data($0.utf8)) }
+    }
+
     static let juanaMolinaSearchResult = """
         {
           "id": 100,

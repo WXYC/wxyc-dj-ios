@@ -21,9 +21,7 @@ struct SQLiteCatalogStoreTests {
     /// The two WXYC-representative export rows (Juana Molina id 100, Jessica
     /// Pratt id 200) decoded from the NDJSON wire fixture.
     static func fixtureRows() throws -> [CatalogRow] {
-        try Fixtures.catalogNDJSON
-            .split(separator: "\n")
-            .map { try JSONCoders.decoder.decode(CatalogRow.self, from: Data($0.utf8)) }
+        try Fixtures.catalogRows()
     }
 
     /// Run `body` against a store at a fresh, unique temp path, then close it
@@ -67,6 +65,17 @@ struct SQLiteCatalogStoreTests {
             #expect(try await store.row(id: 200) == rows[1])
             #expect(try await store.row(id: 999) == nil)
             #expect(try await store.count() == 2)
+        }
+    }
+
+    @Test func idsReturnsEveryRowIdAndEmptyForEmptyStore() async throws {
+        let rows = try Self.fixtureRows()
+        try await Self.withStore { store in
+            #expect(try await store.ids().isEmpty)
+            try await store.replace(rows: rows, lastModified: nil)
+            #expect(try await store.ids() == [100, 200])
+            try await store.replace(rows: [rows[1]], lastModified: nil)
+            #expect(try await store.ids() == [200])
         }
     }
 
