@@ -104,10 +104,16 @@ enum CatalogBackgroundTasks {
     /// its own conditional GET (`refresh()`), so a foreground refresh that already
     /// advanced the watermark makes this a cheap `304`.
     private static func handleReindexTask(_ task: BGTask, dependencies: AppDependencies) {
-        nonisolated(unsafe) let task = task
+        // BGTask isn't Sendable and the launch handler runs on a private queue;
+        // carry it into the work task through an explicitly-Sendable box. Sound
+        // because only `work` ever touches the task. Preferred over a
+        // `nonisolated(unsafe)` capture, which Swift 6.2 accepts but the stricter
+        // region-isolation checking in older toolchains (Xcode 26.2, used by CI)
+        // rejects as a 'sending' risk.
+        let box = UncheckedSendableBox(task)
         let work = Task {
             let succeeded = await dependencies.refreshCatalog()
-            task.setTaskCompleted(success: succeeded)
+            box.value.setTaskCompleted(success: succeeded)
         }
         // Best-effort cancellation if iOS reclaims our background time. This is a
         // cooperative signal, not true preemption: refresh()'s pipeline runs in
@@ -117,8 +123,19 @@ enum CatalogBackgroundTasks {
         // atomic and the watermark only advances on a successful Spotlight commit,
         // so an interrupted reindex leaves the prior watermark and the next run
         // (with a fresh indexer) retries.
-        task.expirationHandler = {
+        box.value.expirationHandler = {
             work.cancel()
         }
     }
+}
+
+/// Carries a non-`Sendable` value into a structured-concurrency task whose
+/// closure is checked as `sending`. Sound only when a single task touches the
+/// value (see ``CatalogBackgroundTasks/handleReindexTask(_:dependencies:)``,
+/// where only the `work` task uses the wrapped `BGTask`). Preferred over a
+/// `nonisolated(unsafe)` local capture because it compiles under every Swift 6
+/// toolchain, including the stricter region-isolation checking in Xcode 26.2.
+private struct UncheckedSendableBox<Value>: @unchecked Sendable {
+    let value: Value
+    init(_ value: Value) { self.value = value }
 }
