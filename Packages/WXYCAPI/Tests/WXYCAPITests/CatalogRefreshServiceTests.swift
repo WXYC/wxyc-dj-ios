@@ -13,6 +13,7 @@
 //
 
 import Foundation
+import os
 import Testing
 @testable import WXYCAPI
 
@@ -60,7 +61,7 @@ struct CatalogRefreshServiceTests {
         let watermark = "Mon, 01 Jun 2026 12:00:00 GMT"
         let store = SpyCatalogStore(rows: try Fixtures.catalogRows(), watermark: watermark)
         let indexer = SpyCatalogIndexer(watermark: watermark)
-        let service = CatalogRefreshService(client: client, store: store, indexer: indexer)
+        let service = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer })
         session.enqueue(StubRequestSession.Stub(statusCode: 304))
 
         let outcome = try await service.refresh()
@@ -81,7 +82,7 @@ struct CatalogRefreshServiceTests {
         // Previously cloned {100, 999}; the new export is {100, 200}, so 999 vanished.
         let store = SpyCatalogStore(rows: [Self.row(100), Self.row(999)])
         let indexer = SpyCatalogIndexer(watermark: nil)
-        let service = CatalogRefreshService(client: client, store: store, indexer: indexer)
+        let service = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer })
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200,
             headers: ["Last-Modified": "Tue, 02 Jun 2026 09:30:00 GMT"],
@@ -109,7 +110,7 @@ struct CatalogRefreshServiceTests {
         let (client, session) = try await Self.makeSignedInClient()
         let store = SpyCatalogStore()
         let indexer = SpyCatalogIndexer(watermark: nil)
-        let service = CatalogRefreshService(client: client, store: store, indexer: indexer)
+        let service = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer })
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200,
             headers: ["Last-Modified": "W"],
@@ -131,7 +132,7 @@ struct CatalogRefreshServiceTests {
         let watermark = "Mon, 01 Jun 2026 12:00:00 GMT"
         let store = SpyCatalogStore(rows: try Fixtures.catalogRows(), watermark: watermark)
         let indexer = SpyCatalogIndexer(watermark: watermark)
-        let service = CatalogRefreshService(client: client, store: store, indexer: indexer)
+        let service = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer })
         session.enqueue(StubRequestSession.Stub(statusCode: 304))
 
         let changed = try await service.poll()
@@ -151,7 +152,7 @@ struct CatalogRefreshServiceTests {
         let (client, session) = try await Self.makeSignedInClient()
         let store = SpyCatalogStore(rows: [Self.row(100)], watermark: "OLD")
         let indexer = SpyCatalogIndexer(watermark: "OLD")
-        let service = CatalogRefreshService(client: client, store: store, indexer: indexer)
+        let service = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer })
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200,
             headers: ["Last-Modified": "Tue, 02 Jun 2026 09:30:00 GMT"],
@@ -184,7 +185,7 @@ struct CatalogRefreshServiceTests {
         let client = APIClient(configuration: Self.config, session: session, authService: auth)
         let store = SpyCatalogStore(rows: try Fixtures.catalogRows(), watermark: "W")
         let indexer = SpyCatalogIndexer(watermark: "W")
-        let service = CatalogRefreshService(client: client, store: store, indexer: indexer)
+        let service = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer })
 
         do {
             _ = try await service.refresh()
@@ -207,13 +208,38 @@ struct CatalogRefreshServiceTests {
         #expect(indexer.indexedWatermark() == "W")
     }
 
+    // MARK: Fresh indexer per run (in-process retry recovery)
+
+    @Test func eachRunBuildsAFreshIndexer() async throws {
+        // CatalogIndexing's contract: a reindex that throws leaves a dangling Core
+        // Spotlight batch recoverable only on a FRESH index instance. So the
+        // service must build a fresh indexer per run — otherwise an in-process
+        // retry (scene-activation refresh / background reindex leg) would reuse
+        // the poisoned batch and fail until relaunch. Pin that the factory is
+        // invoked once per run.
+        let (client, session) = try await Self.makeSignedInClient()
+        let store = SpyCatalogStore()
+        let built = OSAllocatedUnfairLock(initialState: 0)
+        let service = CatalogRefreshService(client: client, store: store) {
+            built.withLock { $0 += 1 }
+            return SpyCatalogIndexer(watermark: nil)
+        }
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 304))
+        _ = try await service.poll()
+        session.enqueue(StubRequestSession.Stub(statusCode: 304))
+        _ = try await service.refresh()
+
+        #expect(built.withLock { $0 } == 2)   // one fresh indexer for poll(), one for refresh()
+    }
+
     // MARK: Data safety — empty export
 
     @Test func emptyExportIsSkippedAndDoesNotWipeTheClone() async throws {
         let (client, session) = try await Self.makeSignedInClient()
         let store = SpyCatalogStore(rows: try Fixtures.catalogRows(), watermark: "W")
         let indexer = SpyCatalogIndexer(watermark: "W")
-        let service = CatalogRefreshService(client: client, store: store, indexer: indexer)
+        let service = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer })
         // A 200 carrying an EMPTY body (a backend export hiccup, not a real empty
         // catalog) must not wipe the last-good clone.
         session.enqueue(StubRequestSession.Stub(
@@ -241,7 +267,7 @@ struct CatalogRefreshServiceTests {
 
         // First launch: the reindex fails mid-commit.
         let indexer1 = SpyCatalogIndexer(watermark: "OLD", shouldFail: true)
-        let service1 = CatalogRefreshService(client: client, store: store, indexer: indexer1)
+        let service1 = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer1 })
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200,
             headers: ["Last-Modified": "NEW"],
@@ -263,7 +289,7 @@ struct CatalogRefreshServiceTests {
         // CSSearchableIndex or the next process launch) reads the still-"OLD"
         // committed client state and re-attempts.
         let indexer2 = SpyCatalogIndexer(watermark: "OLD", shouldFail: false)
-        let service2 = CatalogRefreshService(client: client, store: store, indexer: indexer2)
+        let service2 = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer2 })
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200,
             headers: ["Last-Modified": "NEW"],
@@ -296,7 +322,7 @@ struct CatalogRefreshServiceTests {
         let store = try SQLiteCatalogStore(url: url)
         let fake = FakeSearchableIndex()
         let indexer = SpotlightCatalogIndexer(index: fake)
-        let service = CatalogRefreshService(client: client, store: store, indexer: indexer)
+        let service = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer })
 
         // First refresh: 200 populates the store and the index, committing "W".
         session.enqueue(StubRequestSession.Stub(

@@ -95,28 +95,30 @@ enum CatalogBackgroundTasks {
 
     /// Drive one reindex `BGProcessingTask` through the shared refresh service.
     /// The launch handler runs on a private background queue and hands us a
-    /// non-`Sendable` `BGTask`; `nonisolated(unsafe)` lets the structured-
-    /// concurrency tasks below capture it — sound because the system invokes the
-    /// handler and the expiration block serially, and we touch `task` only from
-    /// here. The reindex is idempotent: it re-derives "is there still a 200
-    /// waiting?" from its own conditional GET (`refresh()`), so a foreground
-    /// refresh that already advanced the watermark makes this a cheap `304`.
+    /// non-`Sendable` `BGTask`; `nonisolated(unsafe)` lets the `work` task below
+    /// capture it. That is sound because only `work` ever touches `task` (calls
+    /// `setTaskCompleted`); the expiration block captures only the `Sendable`
+    /// `work`, never `task`. `setTaskCompleted` is therefore called exactly once,
+    /// reporting the refresh's *real* outcome (not whether it was cancelled). The
+    /// reindex is idempotent: it re-derives "is there still a 200 waiting?" from
+    /// its own conditional GET (`refresh()`), so a foreground refresh that already
+    /// advanced the watermark makes this a cheap `304`.
     private static func handleReindexTask(_ task: BGTask, dependencies: AppDependencies) {
         nonisolated(unsafe) let task = task
         let work = Task {
-            await dependencies.refreshCatalog()
+            let succeeded = await dependencies.refreshCatalog()
+            task.setTaskCompleted(success: succeeded)
         }
-        // Cancel the in-flight work if iOS reclaims our background time. (Note:
-        // the refresh's internal store/index transaction is atomic and the
-        // watermark only advances on a successful Spotlight commit, so an
-        // interrupted reindex simply leaves the prior watermark and retries.)
+        // Best-effort cancellation if iOS reclaims our background time. This is a
+        // cooperative signal, not true preemption: refresh()'s pipeline runs in
+        // the service's own single-flighted task and won't observe this cancel
+        // mid-batch, so the work may run to completion (then report) before the
+        // process is suspended. That's safe — the store/index transaction is
+        // atomic and the watermark only advances on a successful Spotlight commit,
+        // so an interrupted reindex leaves the prior watermark and the next run
+        // (with a fresh indexer) retries.
         task.expirationHandler = {
             work.cancel()
-        }
-        // Report completion exactly once, after the work settles.
-        Task {
-            await work.value
-            task.setTaskCompleted(success: !work.isCancelled)
         }
     }
 }

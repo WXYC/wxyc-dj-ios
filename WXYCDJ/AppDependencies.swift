@@ -62,9 +62,15 @@ final class AppDependencies {
         if let catalogStoreURL {
             do {
                 let store = try SQLiteCatalogStore(url: catalogStoreURL)
-                let indexer = SpotlightCatalogIndexer()
                 self.catalogStore = store
-                self.catalogRefreshService = CatalogRefreshService(client: api, store: store, indexer: indexer)
+                // A fresh indexer per run (CatalogRefreshService builds one from
+                // this factory) so an in-process reindex retry never reuses a
+                // poisoned Core Spotlight batch.
+                self.catalogRefreshService = CatalogRefreshService(
+                    client: api,
+                    store: store,
+                    makeIndexer: { SpotlightCatalogIndexer() }
+                )
             } catch {
                 catalogLog.error("Catalog store unavailable at \(catalogStoreURL.path, privacy: .public): \(error.localizedDescription, privacy: .public). Falling back to in-app-only search.")
                 self.catalogStore = nil
@@ -84,26 +90,37 @@ final class AppDependencies {
     /// error banner, never a sign-in prompt. Called from the launch/foreground
     /// `.task`, on scene-activation, and (via the reindex BGTask) in the
     /// background.
-    func refreshCatalog() async {
-        guard let catalogRefreshService else { return }
+    ///
+    /// Returns whether the run was "successful" for `BGTask.setTaskCompleted`:
+    /// `true` on a real refresh/304 **and** on a clean no-session skip (the task
+    /// did its job; we'll retry next cycle), `false` only on a genuine error
+    /// (network/decode) so iOS may reschedule sooner.
+    @discardableResult
+    func refreshCatalog() async -> Bool {
+        guard let catalogRefreshService else { return true }
         do {
             let outcome = try await catalogRefreshService.refresh()
             catalogLog.info("Catalog refresh: \(String(describing: outcome), privacy: .public)")
+            return true
         } catch APIError.notSignedIn {
             catalogLog.debug("Catalog refresh skipped: not signed in")
+            return true
         } catch {
             catalogLog.error("Catalog refresh failed: \(error.localizedDescription, privacy: .public)")
+            return false
         }
     }
 
-    /// The `BGAppRefreshTask` poll leg: re-arm the next poll first (so even a
-    /// thrown poll or a missing session reschedules), then do the cheap
-    /// conditional GET; on a `200` submit the charging-gated reindex
+    /// The `BGAppRefreshTask` poll leg: if there's no catalog store there's
+    /// nothing to poll for and re-arming would schedule wake-ups that can never
+    /// progress, so bail without rescheduling. Otherwise re-arm the next poll
+    /// first (so even a thrown poll or a missing session reschedules), then do the
+    /// cheap conditional GET; on a `200` submit the charging-gated reindex
     /// `BGProcessingTask` rather than reindexing on the ~30 s app-refresh budget.
     /// A missing/expired session is a silent skip + reschedule.
     func handleBackgroundPoll() async {
-        CatalogBackgroundTasks.scheduleNextPoll()
         guard let catalogRefreshService else { return }
+        CatalogBackgroundTasks.scheduleNextPoll()
         do {
             if try await catalogRefreshService.poll() {
                 CatalogBackgroundTasks.scheduleReindex()
@@ -113,6 +130,14 @@ final class AppDependencies {
         } catch {
             catalogLog.error("Background catalog poll failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Arm the background app-refresh poll on scene-background — but only if
+    /// there's a catalog store to refresh, so a device that couldn't open the
+    /// store doesn't schedule wake-ups that structurally can't progress.
+    func scheduleBackgroundRefreshIfAvailable() {
+        guard catalogRefreshService != nil else { return }
+        CatalogBackgroundTasks.scheduleNextPoll()
     }
 
     /// The on-device catalog clone's SQLite file:
