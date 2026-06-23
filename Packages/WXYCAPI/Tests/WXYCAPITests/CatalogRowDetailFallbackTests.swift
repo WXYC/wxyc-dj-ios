@@ -48,27 +48,27 @@ struct CatalogRowDetailFallbackTests {
         #expect(fallback.plays == 34)
     }
 
-    @Test func mapsRotationBinThroughDisplayCohort() throws {
-        let row = try JSONCoders.decoder.decode(
+    @Test func rotationIsNotBridged() throws {
+        // rotationBin is deliberately left nil: AlbumSearchResult's H/M/L/S
+        // cohort enum can't faithfully carry a raw catalog bin (a valid "N"
+        // would collapse to nil and read as out of rotation). Rotation state
+        // for a cloned row comes from CatalogRow.isInRotation / rotationCohort,
+        // not this bridge — so even a clean cohort bin like "H" is not carried.
+        let cohortRow = try JSONCoders.decoder.decode(
             CatalogRow.self,
             from: Data(Fixtures.juanaMolinaCatalogRow.utf8)
         )
-        // "H" is a display cohort -> .heavy.
-        #expect(row.detailFallback.rotationBin == .heavy)
-    }
+        #expect(cohortRow.rotationBin == "H")           // raw row has a bin...
+        #expect(cohortRow.detailFallback.rotationBin == nil)  // ...not bridged
 
-    @Test func nonCohortRotationBinMapsToNil() {
-        // A raw bin outside H/M/L/S (e.g. the server's "N") has no display
-        // cohort, so the bridge nils it rather than inventing one. The detail
-        // view shows authoritative rotation from /library/info anyway.
-        let row = CatalogRow(
+        let nonCohortRow = CatalogRow(
             id: 1, artistName: "Chuquimamani-Condori", albumTitle: "Edits",
             codeLetters: "CHU", codeNumber: 3, codeArtistNumber: 1,
             label: "self-released", genreName: "Electronic", formatName: "LP",
             onStreaming: false, plays: 5, artworkURL: nil,
             rotationBin: "N", rotationKillDate: nil
         )
-        #expect(row.detailFallback.rotationBin == nil)
+        #expect(nonCohortRow.detailFallback.rotationBin == nil)
     }
 
     @Test func nilsSearchOnlyAndDroppedFields() throws {
