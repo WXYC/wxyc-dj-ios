@@ -2,12 +2,11 @@
 //  CatalogStore.swift
 //  WXYCAPI
 //
-//  Protocol for the id-keyed on-device catalog clone (issue #19 step 2): an
-//  O(1) id->row lookup for the Spotlight deep link and an atomic whole-catalog
-//  replace gated by the verbatim Last-Modified watermark. A protocol so the
-//  shared CatalogRefreshService (step 4) can be tested against a spy. The
-//  Spotlight indexer's bulk read interface lands in step 3 (a streamed/paged
-//  SELECT, sized to the CSSearchableIndex batch), not a whole-catalog array.
+//  Protocol for the id-keyed on-device catalog clone (issue #19 steps 2-3): an
+//  O(1) id->row lookup for the Spotlight deep link, an atomic whole-catalog
+//  replace gated by the verbatim Last-Modified watermark, and a keyset-paginated
+//  bulk read (rows(after:limit:)) the Spotlight indexer pages through. A protocol
+//  so the shared CatalogRefreshService (step 4) can be tested against a spy.
 //
 //  Created by Jake on 06/22/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -31,6 +30,16 @@ public protocol CatalogStore: Sendable {
     /// The verbatim `Last-Modified` string from the last `200`, or `nil` if the
     /// store has never been populated (or the server omitted the header).
     func lastModified() async throws -> String?
+
+    /// A page of cloned rows ordered by ascending `id`, for the bulk Spotlight
+    /// reindex (issue #19 step 3). Keyset pagination: returns up to `limit` rows
+    /// whose `id` is greater than `after` (from the first row when `after` is
+    /// `nil`); an empty result means the cursor reached the last row. Each call
+    /// returns a bounded chunk and **releases the store between pages**, so the
+    /// deep-link `row(id:)` lookup interleaves and the reindex never materializes
+    /// the whole (tens-of-thousands-row) catalog at once. Advance the cursor to
+    /// the last returned row's `id` to fetch the next page.
+    func rows(after id: Int?, limit: Int) async throws -> [CatalogRow]
 
     /// Atomically replace the entire catalog and the watermark in one
     /// transaction: on a `200`, the new `rows` wholesale-replace the old set and

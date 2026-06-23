@@ -169,4 +169,85 @@ struct SQLiteCatalogStoreTests {
             #expect(try await store.lastModified() == nil)
         }
     }
+
+    // MARK: rows(after:limit:) — the step-3 keyset bulk read
+
+    /// `count` WXYC-representative rows with ascending ids `1...count`, inserted
+    /// out of order so the test proves the SELECT orders by id, not insert order.
+    static func numberedRows(_ count: Int) -> [CatalogRow] {
+        let names = ["Juana Molina", "Jessica Pratt", "Chuquimamani-Condori"]
+        return (1...count).map { i in
+            CatalogRow(
+                id: i, artistName: names[i % names.count], albumTitle: "Album \(i)",
+                codeLetters: "AAA", codeNumber: i, codeArtistNumber: 1,
+                label: nil, genreName: nil, formatName: nil,
+                onStreaming: nil, plays: nil, artworkURL: nil,
+                rotationBin: nil, rotationKillDate: nil
+            )
+        }.shuffled()
+    }
+
+    @Test func pageFromStartReturnsFirstAscendingRows() async throws {
+        let rows = Self.numberedRows(10)
+        try await Self.withStore { store in
+            try await store.replace(rows: rows, lastModified: nil)
+            let page = try await store.rows(after: nil, limit: 3)
+            #expect(page.map(\.id) == [1, 2, 3])
+        }
+    }
+
+    @Test func pageAfterCursorReturnsNextAscendingRows() async throws {
+        let rows = Self.numberedRows(10)
+        try await Self.withStore { store in
+            try await store.replace(rows: rows, lastModified: nil)
+            let page = try await store.rows(after: 3, limit: 3)
+            #expect(page.map(\.id) == [4, 5, 6])
+        }
+    }
+
+    @Test func pageCursorPastLastRowIsEmpty() async throws {
+        let rows = Self.numberedRows(10)
+        try await Self.withStore { store in
+            try await store.replace(rows: rows, lastModified: nil)
+            #expect(try await store.rows(after: 10, limit: 5).isEmpty)
+        }
+    }
+
+    @Test func nonPositiveLimitReturnsEmpty() async throws {
+        let rows = Self.numberedRows(5)
+        try await Self.withStore { store in
+            try await store.replace(rows: rows, lastModified: nil)
+            #expect(try await store.rows(after: nil, limit: 0).isEmpty)
+        }
+    }
+
+    @Test func fullSweepConcatenatesEveryRowInIdOrder() async throws {
+        let rows = Self.numberedRows(7)
+        try await Self.withStore { store in
+            try await store.replace(rows: rows, lastModified: nil)
+            var swept: [CatalogRow] = []
+            var cursor: Int? = nil
+            while true {
+                let page = try await store.rows(after: cursor, limit: 2)
+                if page.isEmpty { break }
+                swept.append(contentsOf: page)
+                cursor = page.last?.id
+            }
+            #expect(swept.map(\.id) == Array(1...7))
+        }
+    }
+
+    @Test func idLookupInterleavesWithPagedSweep() async throws {
+        // The store releases between pages, so a deep-link lookup resolves
+        // mid-sweep rather than blocking behind the whole reindex.
+        let rows = Self.numberedRows(6)
+        try await Self.withStore { store in
+            try await store.replace(rows: rows, lastModified: nil)
+            let firstPage = try await store.rows(after: nil, limit: 2)
+            #expect(firstPage.map(\.id) == [1, 2])
+            #expect(try await store.row(id: 5)?.id == 5)
+            let nextPage = try await store.rows(after: firstPage.last?.id, limit: 2)
+            #expect(nextPage.map(\.id) == [3, 4])
+        }
+    }
 }

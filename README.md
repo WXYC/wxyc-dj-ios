@@ -27,7 +27,7 @@ WXYCDJ/                          # App target sources
   Bin/                           # BinView + VM
 Packages/WXYCAPI/                # Local Swift package
   Sources/WXYCAPI/               # DTOs, APIClient, AuthService, Keychain
-  Tests/WXYCAPITests/            # Swift Testing suite (20 tests)
+  Tests/WXYCAPITests/            # Swift Testing suite (host swift test)
 project.yml                      # xcodegen spec
 ```
 
@@ -75,6 +75,7 @@ All endpoints live in Backend-Service (`apps/backend/routes/`) except the auth s
 | Add to bin | POST | `/djs/bin` | JWT |
 | Remove from bin | DELETE | `/djs/bin?album_id=` | JWT |
 | Album metadata (LML) | GET | `/proxy/metadata/album?artistName=&releaseTitle=` | JWT |
+| Bulk catalog export | GET | `/library/catalog` (conditional GET, gzipped NDJSON) | JWT |
 
 The bin endpoints derive the DJ from the JWT's `sub` claim, so the client never sends `dj_id`. The JWT is short-lived; `AuthService.currentJWT()` refreshes via `/auth/token` automatically and `APIClient` retries once on a 401.
 
@@ -85,6 +86,7 @@ The bin endpoints derive the DJ from the JWT's `sub` claim, so the client never 
 - **Token storage**: `KeychainTokenStorage` for production, `InMemoryTokenStorage` for tests; both implement `TokenStorage`.
 - **Debounced search**: 300 ms via `Task.sleep(for:)`, prior task cancelled on every keystroke. Min query length is 2 chars (matches dj-site).
 - **Date decoding**: ISO 8601 with or without fractional seconds, via a custom `JSONDecoder` strategy in `JSONCoders.swift`.
+- **On-device catalog clone + Spotlight (in progress, [#19](https://github.com/WXYC/wxyc-dj-ios/issues/19))**: `WXYCAPI/Catalog/` holds an id-keyed `SQLiteCatalogStore` cloned from the conditional-GET `/library/catalog` export and a `SpotlightCatalogIndexer` that mirrors it into Core Spotlight (`domainIdentifier "catalog"`, `"album.<id>"` keys) for home-screen search. The driving refresh service, background tasks, and the deep-link surface land in later steps.
 
 ## Conventions
 
