@@ -86,7 +86,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on every PR and push to `main`.
 ```bash
 swift test --package-path Packages/WXYCAPI
 
-# Pick any booted iPhone simulator; the workflow pre-boots iPhone 16 Pro.
+# Pick any booted iPhone simulator; the workflow pre-boots the first available modern iPhone (preferring iPhone 16 Pro).
 SIM_ID=$(xcrun simctl list devices available | grep -m1 'iPhone 1[67].*Booted' | grep -oE '\([A-F0-9-]{36}\)' | tr -d '()')
 xcodebuild test \
   -project WXYCDJ.xcodeproj \

@@ -50,15 +50,27 @@ jobs:
       - name: Run unit tests (WXYCAPI package)
         run: swift test --package-path Packages/WXYCAPI
 
-      - name: Pre-boot iPhone 16 Pro simulator
+      - name: Pre-boot iPhone simulator
         # Boot a simulator explicitly so xcodebuild test doesn't race CoreSimulator's
-        # implicit boot on macos-latest runners under load. Pattern copied from wxyc-ios-64.
+        # implicit boot on macos-latest runners under load. macos-latest is a moving
+        # image whose installed simulator set varies run-to-run, so resolve the first
+        # available modern iPhone from a preference list rather than pinning one exact
+        # model; only fail (loudly) when no iPhone simulator exists at all (issue #26).
         id: simulator
         run: |
-          DEVICE_ID=$(xcrun simctl list devices available | grep -m1 "iPhone 16 Pro " | grep -oE '\([A-F0-9-]{36}\)' | tr -d '()')
+          AVAILABLE=$(xcrun simctl list devices available)
+          DEVICE_ID=""
+          for MODEL in "iPhone 16 Pro" "iPhone 17 Pro" "iPhone 16" "iPhone 17" "iPhone 18 Pro" "iPhone 18"; do
+            # `|| true` keeps a no-match from aborting the step under `set -eo pipefail`.
+            DEVICE_ID=$(printf '%s\n' "$AVAILABLE" | grep -m1 "$MODEL " | grep -oE '\([A-F0-9-]{36}\)' | tr -d '()' || true)
+            if [ -n "$DEVICE_ID" ]; then
+              echo "Selected simulator: $MODEL ($DEVICE_ID)"
+              break
+            fi
+          done
           if [ -z "$DEVICE_ID" ]; then
-            echo "No iPhone 16 Pro simulator available" >&2
-            xcrun simctl list devices available
+            echo "No iPhone simulator available" >&2
+            printf '%s\n' "$AVAILABLE"
             exit 1
           fi
           xcrun simctl boot "$DEVICE_ID" || true
