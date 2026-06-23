@@ -16,15 +16,22 @@ public extension CatalogRow {
     /// An `AlbumSearchResult` stand-in built from this cloned row, for the
     /// instant header render of `AlbumDetailView` (which takes an
     /// `AlbumSearchResult?` `fallback`). The shared catalog fields map straight
-    /// across; `rotationBin` is projected through ``rotationCohort`` so only a
-    /// display cohort (`H`/`M`/`L`/`S`) survives — a raw `"N"` becomes `nil`,
-    /// which is fine because the detail view re-fetches authoritative rotation
-    /// from `/library/info`. Fields the export projection never carries, or that
-    /// exist only to decorate search results (`addDate`, `labelId`, `rotationId`,
-    /// `albumArtist`, `matchedVia`), are `nil`/`[]`.
+    /// across — the header reads title, artist, artwork, and label, with the
+    /// call-number legs and other lossless fields carried along for a richer
+    /// instant render.
     ///
-    /// This is lossless **for the header render**, not a full round-trip: the
-    /// detail view's authoritative shelf data still comes from `/library/info`.
+    /// `rotationBin` is deliberately **not** bridged (left `nil`):
+    /// `AlbumSearchResult.rotationBin` is a `H`/`M`/`L`/`S` cohort enum and
+    /// cannot faithfully represent a raw catalog bin — it would collapse a valid
+    /// `"N"` (still in rotation per the server predicate) to `nil` and read as
+    /// out of rotation. Rotation state for a cloned row comes from
+    /// ``isInRotation(asOf:timeZone:)`` / ``rotationCohort`` on the `CatalogRow`
+    /// itself, not from this bridge. Fields the export projection never carries,
+    /// or that exist only to decorate search results (`addDate`, `labelId`,
+    /// `rotationId`, `albumArtist`, `matchedVia`), are likewise `nil`/`[]`.
+    ///
+    /// Lossless **for the header render**, not a full round-trip: the detail
+    /// view's authoritative shelf + rotation data still come from `/library/info`.
     var detailFallback: AlbumSearchResult {
         AlbumSearchResult(
             id: id,
@@ -38,7 +45,7 @@ public extension CatalogRow {
             genreName: genreName,
             label: label,
             labelId: nil,
-            rotationBin: rotationCohort,
+            rotationBin: nil,
             rotationId: nil,
             plays: plays,
             onStreaming: onStreaming,

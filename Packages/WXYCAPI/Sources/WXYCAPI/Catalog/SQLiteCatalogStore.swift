@@ -60,9 +60,9 @@ public actor SQLiteCatalogStore: CatalogStore {
         }
         do {
             try Self.exec(handle, "CREATE TABLE IF NOT EXISTS catalog (id INTEGER PRIMARY KEY, row BLOB NOT NULL);")
-            // value is NOT NULL: the watermark is either a present non-null
-            // string or its row is DELETEd (see setWatermark), so the schema
-            // enforces the invariant lastModified()'s nil-means-absent read relies on.
+            // value is NOT NULL because the store never writes a NULL watermark:
+            // setWatermark inserts a present non-null string or DELETEs the row.
+            // (lastModified() still tolerates a NULL column defensively.)
             try Self.exec(handle, "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
         } catch {
             sqlite3_close(handle)
