@@ -40,9 +40,13 @@ public protocol CatalogIndexing: Sendable {
     /// On a thrown error the Core Spotlight batch is left unended (the framework
     /// has no cancel): the partial upserts persist but the watermark does not
     /// advance, so the next reindex re-runs. Because Core Spotlight forbids a
-    /// second open batch before the prior one ends, step 4 must retry on a fresh
-    /// index instance (or the next process launch), not by re-calling `reindex`
-    /// on the same failed instance in-process.
+    /// second open batch before the prior one ends, step 4 must retry on a
+    /// freshly-constructed `CSSearchableIndex(name:)` (or the next process
+    /// launch), not by re-calling `reindex` on the same failed instance
+    /// in-process. A new handle to `CSSearchableIndex.default()` would *not*
+    /// clear the dangling batch — it is the shared system index, on which the
+    /// batch + client-state API is unsupported anyway, so the indexer must be
+    /// driven by a client-owned named index.
     ///
     /// `removedIDs` is supplied by the caller (step 4 diffs the new export
     /// against the previously-indexed id set); this step's tests supply it.

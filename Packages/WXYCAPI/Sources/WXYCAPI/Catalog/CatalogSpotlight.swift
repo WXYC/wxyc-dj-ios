@@ -38,13 +38,23 @@ public enum CatalogSpotlight {
     /// step 7's `CSSearchableItemActionType` continuation uses it to route a tap.
     public static func albumID(from identifier: String) -> Int? {
         guard identifier.hasPrefix(itemIdentifierPrefix) else { return nil }
-        return Int(identifier.dropFirst(itemIdentifierPrefix.count))
+        let digits = identifier.dropFirst(itemIdentifierPrefix.count)
+        // Require non-empty ASCII digits only. `Int(_:)` alone also accepts a
+        // leading "+"/"-" (e.g. "album.-5" -> -5), which `itemIdentifier(_:)`
+        // never emits — so this stays the exact inverse and rejects a malformed
+        // identifier rather than routing a tap to a bogus (negative) id.
+        guard !digits.isEmpty, digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
+        return Int(digits)
     }
 
-    /// The `CSSearchableItem` mirroring `row`: `title` = album, `contentDescription`
-    /// = artist (plus the shelf call number when present), with `artist`/`album`/
-    /// `keywords` set so home-screen search matches on artist, album, label, or
-    /// call number. Pure — builds a value, talks to no index.
+    /// The `CSSearchableItem` mirroring `row`: `title` = album (the field Spotlight
+    /// reliably matches free-text queries against), `contentDescription` = artist
+    /// (plus the shelf call number when present) as the human-readable subtitle,
+    /// and `keywords` = artist, album, label, and call number so a query on any of
+    /// those can match. The searchable terms live in `title`/`keywords` precisely
+    /// because `contentDescription` is display-only — Core Spotlight does not match
+    /// queries against it — so a call number kept only there would be unfindable.
+    /// Pure — builds a value, talks to no index.
     public static func searchableItem(for row: CatalogRow) -> CSSearchableItem {
         let attributes = CSSearchableItemAttributeSet(contentType: .content)
         attributes.title = row.albumTitle
@@ -54,7 +64,10 @@ public enum CatalogSpotlight {
             : "\(row.artistName) · \(callNumber)"
         attributes.artist = row.artistName
         attributes.album = row.albumTitle
-        attributes.keywords = [row.artistName, row.albumTitle, row.label]
+        // Call number is included here so a shelf-code query matches — it is
+        // otherwise only in the display-only `contentDescription`. Empty/nil
+        // fields are dropped.
+        attributes.keywords = [row.artistName, row.albumTitle, row.label, callNumber]
             .compactMap { $0 }
             .filter { !$0.isEmpty }
         return CSSearchableItem(

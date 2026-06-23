@@ -43,7 +43,11 @@ public protocol SearchableIndexing: Sendable {
     func lastClientState() async throws -> Data?
 }
 
-/// The production conformer over a real `CSSearchableIndex` (e.g. `.default()`).
+/// The production conformer over a real `CSSearchableIndex`. Construct it with a
+/// client-owned `CSSearchableIndex(name:)`, **not** `CSSearchableIndex.default()`:
+/// the batch + client-state API this seam drives (`beginBatch` /
+/// `endBatch(withClientState:)` / `fetchLastClientState`) is unsupported on the
+/// shared default index.
 ///
 /// `@unchecked Sendable`: `CSSearchableIndex` is neither `Sendable` nor
 /// thread-safe in batch mode, but the catalog indexer drives exactly one
