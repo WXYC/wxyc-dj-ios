@@ -4,8 +4,10 @@
 //
 //  Exercises the production endpoints with stubbed responses: search
 //  composes the right query string, /library/info hits the album_id route,
-//  POST /djs/bin sends album_id+track_title, and a one-shot 401 forces a
-//  JWT refresh and a single retry.
+//  POST /djs/bin sends album_id+track_title, a one-shot 401 forces a
+//  JWT refresh and a single retry, and GET /library/catalog round-trips the
+//  conditional-GET NDJSON export (If-Modified-Since out, Last-Modified in, 304
+//  as a not-modified sentinel).
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -138,5 +140,111 @@ struct APIClientTests {
 
     private static func isLibraryPath(_ path: String) -> Bool {
         path == "/library" || path == "/library/"
+    }
+
+    // MARK: - GET /library/catalog (conditional-GET NDJSON export, issue #19)
+
+    @Test func catalogDecodesNdjsonRowsCapturesLastModifiedAndSendsIfModifiedSince() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        let priorWatermark = "Sun, 21 Jun 2026 00:00:00 GMT"
+        let newWatermark = "Mon, 22 Jun 2026 17:00:00 GMT"
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["Last-Modified": newWatermark, "Content-Type": "application/x-ndjson"],
+            body: Data(Fixtures.catalogNDJSON.utf8)
+        ))
+
+        let result = try await client.catalog(ifModifiedSince: priorWatermark)
+
+        guard case let .modified(rows, lastModified) = result else {
+            Issue.record("expected .modified, got \(result)")
+            return
+        }
+        #expect(rows.count == 2)
+        #expect(rows.first?.id == 100)
+        #expect(rows.first?.artistName == "Juana Molina")
+        #expect(rows.first?.rotationKillDate == "2026-07-01")
+        // Row 2's optionals are null on the wire — the lenient decode keeps the row.
+        #expect(rows.last?.id == 200)
+        #expect(rows.last?.rotationBin == nil)
+        #expect(rows.last?.artworkURL == nil)
+        // The new watermark is captured verbatim, not round-tripped through Date.
+        #expect(lastModified == newWatermark)
+
+        let request = try #require(session.recordedRequests.last)
+        #expect(request.url?.path == "/library/catalog")
+        #expect(request.httpMethod == "GET")
+        #expect(request.value(forHTTPHeaderField: "If-Modified-Since") == priorWatermark)
+    }
+
+    @Test func catalogNotModifiedReturnsSentinelNotError() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        // 304: the middleware short-circuits with no body and no Last-Modified.
+        session.enqueue(StubRequestSession.Stub(statusCode: 304))
+
+        let result = try await client.catalog(ifModifiedSince: "Sun, 21 Jun 2026 00:00:00 GMT")
+
+        #expect(result == .notModified)
+    }
+
+    @Test func catalogFirstFetchOmitsIfModifiedSinceWhenWatermarkIsNil() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["Last-Modified": "Mon, 22 Jun 2026 17:00:00 GMT"],
+            body: Data(Fixtures.catalogNDJSON.utf8)
+        ))
+
+        _ = try await client.catalog(ifModifiedSince: nil)
+
+        let request = try #require(session.recordedRequests.last)
+        #expect(request.value(forHTTPHeaderField: "If-Modified-Since") == nil)
+    }
+
+    @Test func catalogEmptyBodyDecodesToZeroRows() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        // serializeCatalogNdjson([]) === "" — an empty catalog is a 200 with an
+        // empty body, which must decode to zero rows rather than throw.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["Last-Modified": "Mon, 22 Jun 2026 17:00:00 GMT"],
+            body: Data()
+        ))
+
+        let result = try await client.catalog(ifModifiedSince: nil)
+
+        guard case let .modified(rows, _) = result else {
+            Issue.record("expected .modified, got \(result)")
+            return
+        }
+        #expect(rows.isEmpty)
+    }
+
+    @Test func catalogUnauthorizedRefreshesAndRetriesWithConditionalHeader() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        let watermark = "Sun, 21 Jun 2026 00:00:00 GMT"
+        session.enqueue(StubRequestSession.Stub(statusCode: 401, body: Data()))
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["Last-Modified": "Mon, 22 Jun 2026 17:00:00 GMT"],
+            body: Data(Fixtures.catalogNDJSON.utf8)
+        ))
+
+        let result = try await client.catalog(ifModifiedSince: watermark)
+
+        guard case let .modified(rows, _) = result else {
+            Issue.record("expected .modified after retry, got \(result)")
+            return
+        }
+        #expect(rows.count == 2)
+        // restoreSession + 401 + refresh + retry = 4 requests
+        #expect(session.recordedRequests.count == 4)
+        #expect(session.recordedRequests[2].url?.path == "/auth/token")
+        // The retried catalog request still carries the conditional header.
+        #expect(session.recordedRequests.last?.value(forHTTPHeaderField: "If-Modified-Since") == watermark)
     }
 }
