@@ -72,3 +72,49 @@ struct AppDependenciesTests {
         #expect(config.apiBaseURL.absoluteString == "http://localhost:8080")
     }
 }
+
+/// The catalog clone / Spotlight refresh wiring (issue #19 step 5): where the
+/// SQLite clone lives, that an openable store wires a refresh service, and that
+/// a failure to locate the store degrades to inert catalog features rather than
+/// crashing the composition root.
+@Suite("AppDependencies.catalogWiring")
+@MainActor
+struct AppDependenciesCatalogWiringTests {
+    @Test func defaultStoreURLLivesUnderApplicationSupport() throws {
+        let appSupport = try FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+        )
+        let url = try #require(AppDependencies.defaultCatalogStoreURL())
+
+        #expect(url.lastPathComponent == "catalog.sqlite")
+        #expect(url.pathComponents.contains("Catalog"))
+        // Under Application Support (regenerable app-managed data, not user Documents).
+        #expect(url.path(percentEncoded: false).hasPrefix(appSupport.path(percentEncoded: false)))
+    }
+
+    @Test func openableStoreWiresStoreAndRefreshService() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "deps-wiring-\(UUID().uuidString).sqlite")
+        defer {
+            let base = url.path(percentEncoded: false)
+            try? FileManager.default.removeItem(at: url)
+            for suffix in ["-journal", "-wal", "-shm"] {
+                try? FileManager.default.removeItem(at: URL(filePath: base + suffix))
+            }
+        }
+
+        let deps = AppDependencies(catalogStoreURL: url)
+
+        #expect(deps.catalogStore != nil)
+        #expect(deps.catalogRefreshService != nil)
+    }
+
+    @Test func nilStoreURLLeavesCatalogFeaturesInert() {
+        // No path to open -> the catalog clone and its refresh service stay nil,
+        // and the app falls back to in-app-only search instead of crashing.
+        let deps = AppDependencies(catalogStoreURL: nil)
+
+        #expect(deps.catalogStore == nil)
+        #expect(deps.catalogRefreshService == nil)
+    }
+}

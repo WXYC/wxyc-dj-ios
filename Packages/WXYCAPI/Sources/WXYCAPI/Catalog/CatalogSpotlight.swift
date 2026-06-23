@@ -24,6 +24,13 @@ public enum CatalogSpotlight {
     /// non-sensitive, so this domain needs no sign-out cleanup (ADR-0005).
     public static let domainIdentifier = "catalog"
 
+    /// The name of the client-owned `CSSearchableIndex` the catalog is mirrored
+    /// into (issue #19 step 5). A **named** index, not `CSSearchableIndex.default()`:
+    /// the `beginBatch` / `endBatch(withClientState:)` / `fetchLastClientState`
+    /// API the indexer drives is unsupported on the shared default index. Items
+    /// indexed into a named index still surface in home-screen search.
+    public static let indexName = "org.wxyc.dj.catalog"
+
     private static let itemIdentifierPrefix = "album."
 
     /// The stable `uniqueIdentifier` for an album row — `"album.<id>"`. Stable

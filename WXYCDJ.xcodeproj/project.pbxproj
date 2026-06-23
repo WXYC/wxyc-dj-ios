@@ -15,11 +15,11 @@
 		33D06D6A22AA7D12BE080CA8 /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2EA536C610B62875284DBC /* MainView.swift */; };
 		3701CA6BAB4578B4A26EAF5D /* BinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AC54CD81B8E16E4B0754D16 /* BinView.swift */; };
 		3EF4159CBD4FEB6E808B311D /* WXYCAPI in Frameworks */ = {isa = PBXBuildFile; productRef = D9511138D2A3FB7A0F39D282 /* WXYCAPI */; };
+		4971C44699E28C3483D4F264 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7745B51EB2BF815A8B960F3F /* AppDelegate.swift */; };
 		5890F98AB60C5BF3043C386F /* AppDependenciesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08B568981D92EC8060CDFD01 /* AppDependenciesTests.swift */; };
 		753572DD46DEE31D8A3F2CDB /* SearchResultRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ECD186BFE3631C6C27416AE /* SearchResultRow.swift */; };
 		759C5888FC7CF1D709B5F953 /* WXYCDJApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D62BB1A222E85317724557C /* WXYCDJApp.swift */; };
 		75C46202B5A836CB31D649FE /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3C3F1A8A8E2B9449C84894 /* RootView.swift */; };
-		7F0331A2ABDB143FB8300E1A /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 71F85B4C8B8BE6B63A031436 /* Preview Assets.xcassets */; };
 		87657943589225BAA0E65A7B /* StubRequestSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85944AD2D64ED468BE70FB80 /* StubRequestSession.swift */; };
 		A8D1D090E2B450A27FFD508F /* WXYCAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 89D30A6942DD94B4BDD547A2 /* WXYCAPI */; };
 		AAF320BD598E531F6EBA5954 /* AppDependencies.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6225BA88FCDBB74E198F0388 /* AppDependencies.swift */; };
@@ -29,6 +29,7 @@
 		D7683BE5C5C0E395CC4122E8 /* LoginViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 919B7DF6ECD14279DA5ED0D2 /* LoginViewModelTests.swift */; };
 		EE55F522C6025321F2064FEF /* LoginViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0062FB8AD63F74D7FE9C64A7 /* LoginViewModel.swift */; };
 		F3CD0CC95D42497D03CE47DC /* TrackMatchBadgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCD4C382216044EF71AA87 /* TrackMatchBadgeTests.swift */; };
+		F4BB3A668B1D9AFFF6997A14 /* CatalogBackgroundTasks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51B5512AA3CE4A98785BFE44 /* CatalogBackgroundTasks.swift */; };
 		FCE1778865594AAAB241D7B0 /* AlbumDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE45EAFB43A539EC66615E15 /* AlbumDetailView.swift */; };
 		FE66AC126ECF6B037DCDA4DE /* SignedInClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8037CAA3BF1777EA3F2B050C /* SignedInClient.swift */; };
 		FE6E7984C8732020BBCB4850 /* BinViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48A7FCC8FFAC9479948ABE16 /* BinViewModel.swift */; };
@@ -49,13 +50,15 @@
 		08B568981D92EC8060CDFD01 /* AppDependenciesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDependenciesTests.swift; sourceTree = "<group>"; };
 		0D7C2891032C948BCCAB8104 /* WXYCDJ.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = WXYCDJ.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		30DE4EC11A66379C3F9D35AE /* TrackMatchBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackMatchBadge.swift; sourceTree = "<group>"; };
+		3177CDD8FE323B5294083D52 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		3D62BB1A222E85317724557C /* WXYCDJApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WXYCDJApp.swift; sourceTree = "<group>"; };
 		48A7FCC8FFAC9479948ABE16 /* BinViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BinViewModel.swift; sourceTree = "<group>"; };
+		51B5512AA3CE4A98785BFE44 /* CatalogBackgroundTasks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogBackgroundTasks.swift; sourceTree = "<group>"; };
 		56A9F5B3F64702BFFAE2B4B5 /* WXYCDJ.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = WXYCDJ.entitlements; sourceTree = "<group>"; };
 		6225BA88FCDBB74E198F0388 /* AppDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDependencies.swift; sourceTree = "<group>"; };
 		6AC54CD81B8E16E4B0754D16 /* BinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BinView.swift; sourceTree = "<group>"; };
 		6ECD186BFE3631C6C27416AE /* SearchResultRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResultRow.swift; sourceTree = "<group>"; };
-		71F85B4C8B8BE6B63A031436 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		7745B51EB2BF815A8B960F3F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		8037CAA3BF1777EA3F2B050C /* SignedInClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignedInClient.swift; sourceTree = "<group>"; };
 		85944AD2D64ED468BE70FB80 /* StubRequestSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubRequestSession.swift; sourceTree = "<group>"; };
 		919B7DF6ECD14279DA5ED0D2 /* LoginViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginViewModelTests.swift; sourceTree = "<group>"; };
@@ -171,16 +174,18 @@
 		A5E464B44FD0B1CFBAF6A6A6 /* WXYCDJ */ = {
 			isa = PBXGroup;
 			children = (
+				7745B51EB2BF815A8B960F3F /* AppDelegate.swift */,
 				6225BA88FCDBB74E198F0388 /* AppDependencies.swift */,
 				C9FA5B67202EDF0E87ADC86A /* Assets.xcassets */,
+				3177CDD8FE323B5294083D52 /* Info.plist */,
 				BF2EA536C610B62875284DBC /* MainView.swift */,
 				ED3C3F1A8A8E2B9449C84894 /* RootView.swift */,
 				56A9F5B3F64702BFFAE2B4B5 /* WXYCDJ.entitlements */,
 				3D62BB1A222E85317724557C /* WXYCDJApp.swift */,
 				588B2D1835695F4A2A6474F3 /* Auth */,
 				44E169A4BF78262702B4142B /* Bin */,
+				E1EC06BF517B76C203321D4F /* Catalog */,
 				EA016031AECC3E5F528C5898 /* Detail */,
-				EC9D106FEFB0ECA0F178FFF6 /* Preview Content */,
 				DA9E47BE7DD04FB123E92736 /* Search */,
 			);
 			path = WXYCDJ;
@@ -215,20 +220,20 @@
 			path = Search;
 			sourceTree = "<group>";
 		};
+		E1EC06BF517B76C203321D4F /* Catalog */ = {
+			isa = PBXGroup;
+			children = (
+				51B5512AA3CE4A98785BFE44 /* CatalogBackgroundTasks.swift */,
+			);
+			path = Catalog;
+			sourceTree = "<group>";
+		};
 		EA016031AECC3E5F528C5898 /* Detail */ = {
 			isa = PBXGroup;
 			children = (
 				DE45EAFB43A539EC66615E15 /* AlbumDetailView.swift */,
 			);
 			path = Detail;
-			sourceTree = "<group>";
-		};
-		EC9D106FEFB0ECA0F178FFF6 /* Preview Content */ = {
-			isa = PBXGroup;
-			children = (
-				71F85B4C8B8BE6B63A031436 /* Preview Assets.xcassets */,
-			);
-			path = "Preview Content";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -322,7 +327,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				CE480C510E594A1E231129FC /* Assets.xcassets in Resources */,
-				7F0331A2ABDB143FB8300E1A /* Preview Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -349,9 +353,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				FCE1778865594AAAB241D7B0 /* AlbumDetailView.swift in Sources */,
+				4971C44699E28C3483D4F264 /* AppDelegate.swift in Sources */,
 				AAF320BD598E531F6EBA5954 /* AppDependencies.swift in Sources */,
 				3701CA6BAB4578B4A26EAF5D /* BinView.swift in Sources */,
 				FE6E7984C8732020BBCB4850 /* BinViewModel.swift in Sources */,
+				F4BB3A668B1D9AFFF6997A14 /* CatalogBackgroundTasks.swift in Sources */,
 				1D47643DA06B8BB7123F9AF0 /* LoginView.swift in Sources */,
 				EE55F522C6025321F2064FEF /* LoginViewModel.swift in Sources */,
 				33D06D6A22AA7D12BE080CA8 /* MainView.swift in Sources */,
@@ -381,10 +387,8 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = WXYCDJ/WXYCDJ.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				INFOPLIST_KEY_CFBundleDisplayName = "WXYC DJ";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WXYCDJ/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -492,10 +496,8 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = WXYCDJ/WXYCDJ.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				INFOPLIST_KEY_CFBundleDisplayName = "WXYC DJ";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WXYCDJ/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

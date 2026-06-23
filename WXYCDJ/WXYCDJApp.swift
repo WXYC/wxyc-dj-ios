@@ -2,8 +2,10 @@
 //  WXYCDJApp.swift
 //  WXYCDJ
 //
-//  App entry point. Constructs AppDependencies (AuthService + APIClient)
-//  once at launch and hands them to RootView via the environment.
+//  App entry point. A minimal AppDelegate owns the single AppDependencies
+//  (AuthService + APIClient + catalog clone/refresh) and registers the reindex
+//  BGProcessingTask; RootView reads them from the environment. Catalog refresh
+//  runs on launch/foreground (primary) and via background tasks (best-effort).
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -14,16 +16,44 @@ import WXYCAPI
 
 @main
 struct WXYCDJApp: App {
-    @State private var dependencies = AppDependencies()
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
-        WindowGroup {
+        // Capture the shared composition root on the main actor so the off-main
+        // .backgroundTask closure can hold it (AppDependencies is @MainActor, so
+        // Sendable). One instance, shared with the AppDelegate's BGTask handler.
+        let dependencies = appDelegate.dependencies
+
+        return WindowGroup {
             RootView()
                 .environment(dependencies)
                 .environment(dependencies.authService)
                 .task {
+                    // Foreground-primary refresh: restore the session, then clone
+                    // the catalog (a no-op skip until signed in).
                     await dependencies.authService.restoreSession()
+                    await dependencies.refreshCatalog()
                 }
+                .onChange(of: scenePhase) { _, phase in
+                    switch phase {
+                    case .active:
+                        // Re-entry from background: top up the clone.
+                        Task { await dependencies.refreshCatalog() }
+                    case .background:
+                        // Arm the background poll for while we're away; it
+                        // re-arms itself thereafter.
+                        CatalogBackgroundTasks.scheduleNextPoll()
+                    default:
+                        break
+                    }
+                }
+        }
+        // Poll leg (BGAppRefreshTask). SwiftUI registers the handler; the closure
+        // runs off the main actor. It re-arms, polls conditionally, and on a 200
+        // submits the charging-gated reindex BGProcessingTask.
+        .backgroundTask(.appRefresh(CatalogBackgroundTasks.pollIdentifier)) {
+            await dependencies.handleBackgroundPoll()
         }
     }
 }
