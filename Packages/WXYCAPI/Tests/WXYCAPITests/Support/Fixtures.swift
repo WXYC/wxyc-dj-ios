@@ -53,6 +53,19 @@ enum Fixtures {
         }
         """
 
+    /// Two catalog rows as compact, single-line NDJSON — the exact
+    /// `GET /library/catalog` wire shape (one `CatalogExportRow` per line,
+    /// `\n`-joined, no trailing newline; see `serializeCatalogNdjson`).
+    /// Deliberately NOT built from `juanaMolinaCatalogRow`, which is
+    /// pretty-printed across lines and would be invalid as an NDJSON record.
+    /// Row 1 (Juana Molina) carries a future kill date + every field populated;
+    /// row 2 (Jessica Pratt) nulls the optionals so the lenient decode path is
+    /// exercised too.
+    static let catalogNDJSON = [
+        #"{"id":100,"artist_name":"Juana Molina","album_title":"DOGA","code_letters":"MOL","code_number":12,"code_artist_number":1,"label":"Sonamos","genre_name":"Rock","format_name":"CD","on_streaming":true,"plays":34,"artwork_url":"https://img.discogs.com/doga.jpg","rotation_bin":"H","rotation_kill_date":"2026-07-01"}"#,
+        #"{"id":200,"artist_name":"Jessica Pratt","album_title":"On Your Own Love Again","code_letters":"PRA","code_number":5,"code_artist_number":1,"label":"Drag City","genre_name":"Rock","format_name":"LP","on_streaming":false,"plays":12,"artwork_url":null,"rotation_bin":null,"rotation_kill_date":null}"#,
+    ].joined(separator: "\n")
+
     static let albumInfoJSON = """
         {
           "id": 100,

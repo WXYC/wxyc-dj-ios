@@ -4,9 +4,10 @@
 //
 //  Thin URLSession wrapper that hits Backend-Service routes. Calls
 //  AuthService.currentJWT() to attach a Bearer token, retries once on a 401
-//  (which forces a JWT refresh), and exposes typed methods for the four
-//  endpoints the DJ tool consumes: library search, /library/info, GET/POST/
-//  DELETE /djs/bin.
+//  (which forces a JWT refresh), and exposes typed methods for the endpoints
+//  the DJ tool consumes: library search, /library/info, /proxy/metadata/album,
+//  GET/POST/DELETE /djs/bin, and the conditional-GET /library/catalog bulk
+//  export (issue #19).
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -30,6 +31,20 @@ public enum APIError: Error, Sendable {
         case .network(let m): "Network error: \(m)"
         }
     }
+}
+
+/// Outcome of a conditional `GET /library/catalog`. Either the catalog is
+/// unchanged since the supplied watermark (a cheap `304`), or the server
+/// returned the full body plus a fresh `Last-Modified` watermark to persist.
+public enum CatalogFetchResult: Equatable, Sendable {
+    /// `304 Not Modified` — the catalog has not changed since the
+    /// `If-Modified-Since` watermark. No rows, no re-index; keep the stored clone.
+    case notModified
+    /// `200 OK` — the full catalog. `rows` is the freshly-decoded export;
+    /// `lastModified` is the server's new `Last-Modified` HTTP-date string to
+    /// store verbatim and echo back next time (`nil` only if the server omitted
+    /// the header).
+    case modified(rows: [CatalogRow], lastModified: String?)
 }
 
 public final class APIClient: Sendable {
@@ -70,6 +85,46 @@ public final class APIClient: Sendable {
             items.append(URLQueryItem(name: "trackTitle", value: trackTitle))
         }
         return try await getJSON("/proxy/metadata/album", query: items)
+    }
+
+    /// GET /library/catalog — the full catalog bulk export (BS#1468) the
+    /// on-device Spotlight clone mirrors. Conditional GET: pass the
+    /// `Last-Modified` string from the previous successful fetch as
+    /// `ifModifiedSince` and the server replies `.notModified` (HTTP `304`)
+    /// until the catalog actually changes (~daily); otherwise `.modified` with
+    /// the decoded rows and the new `Last-Modified` watermark to persist.
+    ///
+    /// The body is gzipped NDJSON — one ``CatalogRow`` per line, **not** a JSON
+    /// array; `URLSession` inflates the gzip transparently (don't set
+    /// `Accept-Encoding` by hand). Echo `ifModifiedSince` verbatim — it's the
+    /// server's HTTP-date string; never round-trip it through `Date`. Preserves
+    /// the standard `401` → JWT-refresh → single-retry behavior.
+    public func catalog(ifModifiedSince: String? = nil) async throws -> CatalogFetchResult {
+        var headers: [String: String] = [:]
+        if let ifModifiedSince, !ifModifiedSince.isEmpty {
+            headers["If-Modified-Since"] = ifModifiedSince
+        }
+        let (data, http) = try await perform(
+            path: "/library/catalog",
+            method: "GET",
+            query: [],
+            body: nil,
+            extraHeaders: headers
+        )
+        switch http.statusCode {
+        case 304:
+            return .notModified
+        case 200..<300:
+            return .modified(
+                rows: try decodeNDJSON(data),
+                lastModified: http.value(forHTTPHeaderField: "Last-Modified")
+            )
+        case 401:
+            throw APIError.unauthorized
+        default:
+            let message = (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data))?.message
+            throw APIError.http(status: http.statusCode, message: message)
+        }
     }
 
     public func getBin() async throws -> DJBinResponse {
@@ -125,23 +180,73 @@ public final class APIClient: Sendable {
         path.map { $0.stringValue }.joined(separator: ".")
     }
 
-    private func sendRaw(path: String, method: String, query: [URLQueryItem], body: Data?, isRetry: Bool = false) async throws -> Data {
-        let token = try await currentJWT()
-        let request = try buildRequest(path: path, method: method, query: query, body: body, token: token)
-        let (data, response) = try await fire(request)
-        guard let http = response as? HTTPURLResponse else {
-            throw APIError.network("Non-HTTP response")
+    /// Decode an inflated NDJSON body — one ``CatalogRow`` per line,
+    /// `\n`-separated with no trailing newline (the `GET /library/catalog` wire
+    /// shape; see `catalog-export.service.ts` `serializeCatalogNdjson`). It is
+    /// **not** a JSON array, so it can't go through `JSONDecoder` in one shot.
+    /// An empty body (the server's empty-catalog form) yields zero rows. A
+    /// structurally malformed line fails the whole fetch with a line-numbered
+    /// `.decoding` error — the caller then keeps its last-good clone rather than
+    /// indexing a torn catalog. (Per-field dirt — a bad `artwork_url`, an
+    /// unknown `rotation_bin` — is already tolerated inside ``CatalogRow``.)
+    private func decodeNDJSON(_ data: Data) throws -> [CatalogRow] {
+        var rows: [CatalogRow] = []
+        var lineNumber = 0
+        for line in data.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: true) {
+            lineNumber += 1
+            do {
+                rows.append(try JSONCoders.decoder.decode(CatalogRow.self, from: Data(line)))
+            } catch let error as DecodingError {
+                throw APIError.decoding(detail: "NDJSON line \(lineNumber): \(Self.describe(error))")
+            }
         }
-        if http.statusCode == 401, !isRetry {
-            await authService.invalidateJWT()
-            return try await sendRaw(path: path, method: method, query: query, body: body, isRetry: true)
-        }
+        return rows
+    }
+
+    /// 2xx-only transport: returns the body for a successful response or throws
+    /// `.http`/`.unauthorized`. Thin policy layer over ``perform(path:method:query:body:extraHeaders:isRetry:)``.
+    private func sendRaw(path: String, method: String, query: [URLQueryItem], body: Data?) async throws -> Data {
+        let (data, http) = try await perform(path: path, method: method, query: query, body: body)
         guard (200..<300).contains(http.statusCode) else {
             let message = (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data))?.message
             if http.statusCode == 401 { throw APIError.unauthorized }
             throw APIError.http(status: http.statusCode, message: message)
         }
         return data
+    }
+
+    /// Transport core shared by every typed method: attaches the bearer token,
+    /// fires the request, and applies the one-shot `401` → `invalidateJWT` →
+    /// retry. Returns the raw `(Data, HTTPURLResponse)` **without** imposing a
+    /// status-code policy, so each caller decides which codes are acceptable —
+    /// ``sendRaw(path:method:query:body:)`` requires 2xx; ``catalog(ifModifiedSince:)``
+    /// additionally accepts `304`. `extraHeaders` carries request headers the
+    /// typed signature doesn't model (e.g. `If-Modified-Since`).
+    private func perform(
+        path: String,
+        method: String,
+        query: [URLQueryItem],
+        body: Data?,
+        extraHeaders: [String: String] = [:],
+        isRetry: Bool = false
+    ) async throws -> (Data, HTTPURLResponse) {
+        let token = try await currentJWT()
+        var request = try buildRequest(path: path, method: method, query: query, body: body, token: token)
+        for (field, value) in extraHeaders {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
+        let (data, response) = try await fire(request)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.network("Non-HTTP response")
+        }
+        if http.statusCode == 401, !isRetry {
+            await authService.invalidateJWT()
+            return try await perform(
+                path: path, method: method, query: query, body: body,
+                extraHeaders: extraHeaders, isRetry: true
+            )
+        }
+        return (data, http)
     }
 
     private func buildRequest(path: String, method: String, query: [URLQueryItem], body: Data?, token: String) throws -> URLRequest {
