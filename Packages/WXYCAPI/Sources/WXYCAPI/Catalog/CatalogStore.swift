@@ -27,6 +27,13 @@ public protocol CatalogStore: Sendable {
     /// Number of cloned rows.
     func count() async throws -> Int
 
+    /// The id set of every cloned row. The cheap diff primitive
+    /// ``CatalogRefreshService`` (issue #19 step 4) subtracts the new export from
+    /// to find the ids that vanished, which it hands to the indexer for targeted
+    /// Spotlight deletes. Reads ids only — **no row-BLOB decode** — so it stays
+    /// cheap on a tens-of-thousands-row catalog.
+    func ids() async throws -> Set<Int>
+
     /// The verbatim `Last-Modified` string from the last `200`, or `nil` if the
     /// store has never been populated (or the server omitted the header).
     func lastModified() async throws -> String?
