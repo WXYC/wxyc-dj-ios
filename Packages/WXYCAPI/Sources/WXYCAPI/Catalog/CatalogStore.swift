@@ -3,10 +3,11 @@
 //  WXYCAPI
 //
 //  Protocol for the id-keyed on-device catalog clone (issue #19 step 2): an
-//  O(1) id->row lookup for the Spotlight deep link, the full row set for the
-//  Spotlight indexer, and an atomic whole-catalog replace gated by the verbatim
-//  Last-Modified watermark. A protocol so the shared CatalogRefreshService
-//  (step 4) can be tested against a spy.
+//  O(1) id->row lookup for the Spotlight deep link and an atomic whole-catalog
+//  replace gated by the verbatim Last-Modified watermark. A protocol so the
+//  shared CatalogRefreshService (step 4) can be tested against a spy. The
+//  Spotlight indexer's bulk read interface lands in step 3 (a streamed/paged
+//  SELECT, sized to the CSSearchableIndex batch), not a whole-catalog array.
 //
 //  Created by Jake on 06/22/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -23,9 +24,6 @@ import Foundation
 public protocol CatalogStore: Sendable {
     /// The cloned row for `id`, or `nil` if absent. O(1) for the deep-link path.
     func row(id: Int) async throws -> CatalogRow?
-
-    /// Every cloned row, ascending by id. Used to (re)build the Spotlight index.
-    func allRows() async throws -> [CatalogRow]
 
     /// Number of cloned rows.
     func count() async throws -> Int

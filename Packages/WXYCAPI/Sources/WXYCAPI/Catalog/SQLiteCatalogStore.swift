@@ -60,7 +60,10 @@ public actor SQLiteCatalogStore: CatalogStore {
         }
         do {
             try Self.exec(handle, "CREATE TABLE IF NOT EXISTS catalog (id INTEGER PRIMARY KEY, row BLOB NOT NULL);")
-            try Self.exec(handle, "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);")
+            // value is NOT NULL: the watermark is either a present non-null
+            // string or its row is DELETEd (see setWatermark), so the schema
+            // enforces the invariant lastModified()'s nil-means-absent read relies on.
+            try Self.exec(handle, "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
         } catch {
             sqlite3_close(handle)
             throw error
@@ -79,23 +82,6 @@ public actor SQLiteCatalogStore: CatalogStore {
         case SQLITE_DONE: return nil
         default: throw Self.error(db, "step select")
         }
-    }
-
-    public func allRows() throws -> [CatalogRow] {
-        let stmt = try Self.prepare(db, "SELECT row FROM catalog ORDER BY id;")
-        defer { sqlite3_finalize(stmt) }
-        var rows: [CatalogRow] = []
-        loop: while true {
-            switch sqlite3_step(stmt) {
-            case SQLITE_ROW:
-                if let row = try Self.decodeRow(stmt) { rows.append(row) }
-            case SQLITE_DONE:
-                break loop
-            default:
-                throw Self.error(db, "step selectAll")
-            }
-        }
-        return rows
     }
 
     public func count() throws -> Int {
@@ -162,10 +148,10 @@ public actor SQLiteCatalogStore: CatalogStore {
 
     /// `SQLITE_TRANSIENT` — tells SQLite to copy the bound bytes, so the Swift
     /// `Data`/`String` can be freed when the bind call returns. Not exported by
-    /// the SQLite3 module overlay, so it's reconstructed here.
-    private static var transientDestructor: sqlite3_destructor_type {
+    /// the SQLite3 module overlay, so it's reconstructed here. A C function
+    /// pointer is `Sendable`, so this is a plain `static let` constant.
+    private static let transientDestructor: sqlite3_destructor_type =
         unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-    }
 
     private static func prepare(_ db: OpaquePointer, _ sql: String) throws -> OpaquePointer {
         var stmt: OpaquePointer?
