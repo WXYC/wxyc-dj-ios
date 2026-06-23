@@ -84,6 +84,30 @@ public actor CatalogRefreshService {
         return try await task.value
     }
 
+    /// A cheap conditional probe for the background app-refresh leg (issue #19
+    /// step 5): does the `catalog(ifModifiedSince:)` GET against the index's
+    /// committed watermark and reports whether the catalog moved, **without**
+    /// replacing the store or reindexing. The `BGAppRefreshTask` poll leg uses
+    /// this to decide whether to submit the charging-gated reindex
+    /// `BGProcessingTask`, keeping the multi-MB download + ~50k-row decode +
+    /// Spotlight reindex off the ~30 s app-refresh budget. On a `200` the
+    /// downloaded body is discarded; the reindex leg re-fetches via ``refresh()``
+    /// (idempotent — a foreground refresh that already advanced the watermark
+    /// makes that re-fetch a cheap `304`).
+    ///
+    /// Not single-flighted against ``refresh()``: `poll()` opens no Spotlight
+    /// batch and mutates neither the store nor the index, so it can't race a
+    /// concurrent reindex — it is purely a read.
+    public func poll() async throws -> Bool {
+        let watermark = try await indexer.indexedWatermark()
+        switch try await client.catalog(ifModifiedSince: watermark) {
+        case .notModified:
+            return false
+        case .modified:
+            return true
+        }
+    }
+
     private func performRefresh() async throws -> Outcome {
         // Free the slot when THIS run ends (success, throw, or cancellation),
         // keyed to the run's own lifetime rather than the caller's frame.

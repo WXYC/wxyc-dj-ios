@@ -11,6 +11,7 @@
 //  Copyright © 2026 WXYC. All rights reserved.
 //
 
+import CoreSpotlight
 import Foundation
 
 /// Mirrors the on-device catalog clone into Core Spotlight via the
@@ -30,6 +31,15 @@ public struct SpotlightCatalogIndexer: CatalogIndexing {
         precondition(chunkSize > 0, "chunkSize must be positive")
         self.index = index
         self.chunkSize = chunkSize
+    }
+
+    /// Convenience: build an indexer over the live, client-owned
+    /// `CSSearchableIndex(name:)` (issue #19 step 5 wiring). Keeps the
+    /// `CSSearchableIndex` construction here in `WXYCAPI` alongside
+    /// ``RealSearchableIndex`` so the app's composition root needn't import
+    /// CoreSpotlight just to wire the index. Defaults to ``CatalogSpotlight/indexName``.
+    public init(indexName: String = CatalogSpotlight.indexName, chunkSize: Int = 5_000) {
+        self.init(index: RealSearchableIndex(CSSearchableIndex(name: indexName)), chunkSize: chunkSize)
     }
 
     public func indexedWatermark() async throws -> String? {

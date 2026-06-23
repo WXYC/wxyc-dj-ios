@@ -124,6 +124,89 @@ struct CatalogRefreshServiceTests {
         ])
     }
 
+    // MARK: poll() — the cheap background app-refresh probe
+
+    @Test func pollOn304ReturnsFalseAndTouchesNeitherStoreNorIndex() async throws {
+        let (client, session) = try await Self.makeSignedInClient()
+        let watermark = "Mon, 01 Jun 2026 12:00:00 GMT"
+        let store = SpyCatalogStore(rows: try Fixtures.catalogRows(), watermark: watermark)
+        let indexer = SpyCatalogIndexer(watermark: watermark)
+        let service = CatalogRefreshService(client: client, store: store, indexer: indexer)
+        session.enqueue(StubRequestSession.Stub(statusCode: 304))
+
+        let changed = try await service.poll()
+
+        #expect(changed == false)
+        // A poll is read-only: it never replaces the store or reindexes (that is
+        // the reindex leg's job, deferred to a charging-gated processing task).
+        #expect(store.replaceCalls.isEmpty)
+        #expect(indexer.reindexCalls.isEmpty)
+        #expect(indexer.indexedWatermark() == watermark)   // not advanced
+        // Polled conditionally against the index's committed watermark.
+        let request = try #require(Self.catalogRequests(session).last)
+        #expect(request.value(forHTTPHeaderField: "If-Modified-Since") == watermark)
+    }
+
+    @Test func pollOn200ReturnsTrueWithoutReplacingStoreOrReindexing() async throws {
+        let (client, session) = try await Self.makeSignedInClient()
+        let store = SpyCatalogStore(rows: [Self.row(100)], watermark: "OLD")
+        let indexer = SpyCatalogIndexer(watermark: "OLD")
+        let service = CatalogRefreshService(client: client, store: store, indexer: indexer)
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["Last-Modified": "Tue, 02 Jun 2026 09:30:00 GMT"],
+            body: Data(Fixtures.catalogNDJSON.utf8)
+        ))
+
+        let changed = try await service.poll()
+
+        // A 200 means the catalog moved — the caller (the BGAppRefreshTask leg)
+        // submits the reindex processing task — but the poll itself does no heavy
+        // work: the store is untouched and the index watermark does not advance.
+        #expect(changed == true)
+        #expect(store.replaceCalls.isEmpty)
+        #expect(indexer.reindexCalls.isEmpty)
+        #expect(indexer.indexedWatermark() == "OLD")
+        let request = try #require(Self.catalogRequests(session).last)
+        #expect(request.value(forHTTPHeaderField: "If-Modified-Since") == "OLD")
+    }
+
+    // MARK: No session — the silent-skip boundary the background handlers rely on
+
+    @Test func refreshAndPollWithNoSessionThrowNotSignedInAndTouchNothing() async throws {
+        // A client with no stored session: currentJWT() throws
+        // AuthError.notSignedIn, which APIClient maps to APIError.notSignedIn.
+        // This is the boundary AppDependencies.refreshCatalog()/handleBackgroundPoll()
+        // catch to skip silently (never a sign-in prompt) — issue #19 step 5.
+        let session = StubRequestSession()
+        let auth = AuthService(configuration: Self.config, storage: InMemoryTokenStorage(), session: session)
+        await auth.restoreSession()   // no token -> .signedOut
+        let client = APIClient(configuration: Self.config, session: session, authService: auth)
+        let store = SpyCatalogStore(rows: try Fixtures.catalogRows(), watermark: "W")
+        let indexer = SpyCatalogIndexer(watermark: "W")
+        let service = CatalogRefreshService(client: client, store: store, indexer: indexer)
+
+        do {
+            _ = try await service.refresh()
+            Issue.record("expected refresh() to throw without a session")
+        } catch APIError.notSignedIn {
+            // expected
+        }
+        do {
+            _ = try await service.poll()
+            Issue.record("expected poll() to throw without a session")
+        } catch APIError.notSignedIn {
+            // expected
+        }
+
+        // currentJWT() short-circuits before any network call, and the clone is
+        // untouched — so the handlers' catch is a true no-op skip.
+        #expect(Self.catalogRequests(session).isEmpty)
+        #expect(store.replaceCalls.isEmpty)
+        #expect(indexer.reindexCalls.isEmpty)
+        #expect(indexer.indexedWatermark() == "W")
+    }
+
     // MARK: Data safety — empty export
 
     @Test func emptyExportIsSkippedAndDoesNotWipeTheClone() async throws {
