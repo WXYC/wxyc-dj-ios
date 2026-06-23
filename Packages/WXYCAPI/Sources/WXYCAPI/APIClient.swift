@@ -114,16 +114,17 @@ public final class APIClient: Sendable {
         switch http.statusCode {
         case 304:
             return .notModified
-        case 200..<300:
+        case 200:
             return .modified(
-                rows: try decodeNDJSON(data),
+                rows: try Self.decodeNDJSON(data),
                 lastModified: http.value(forHTTPHeaderField: "Last-Modified")
             )
-        case 401:
-            throw APIError.unauthorized
         default:
-            let message = (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data))?.message
-            throw APIError.http(status: http.statusCode, message: message)
+            // Only `200` (full body) and `304` (not modified) are part of the
+            // contract; anything else — including a stray non-200 2xx — is an
+            // error, NOT an empty catalog. Matching `200..<300` here would let a
+            // `204 No Content` decode to zero rows and wipe the on-device clone.
+            throw Self.httpError(status: http.statusCode, body: data)
         }
     }
 
@@ -181,26 +182,50 @@ public final class APIClient: Sendable {
     }
 
     /// Decode an inflated NDJSON body — one ``CatalogRow`` per line,
-    /// `\n`-separated with no trailing newline (the `GET /library/catalog` wire
-    /// shape; see `catalog-export.service.ts` `serializeCatalogNdjson`). It is
-    /// **not** a JSON array, so it can't go through `JSONDecoder` in one shot.
-    /// An empty body (the server's empty-catalog form) yields zero rows. A
-    /// structurally malformed line fails the whole fetch with a line-numbered
-    /// `.decoding` error — the caller then keeps its last-good clone rather than
-    /// indexing a torn catalog. (Per-field dirt — a bad `artwork_url`, an
-    /// unknown `rotation_bin` — is already tolerated inside ``CatalogRow``.)
-    private func decodeNDJSON(_ data: Data) throws -> [CatalogRow] {
+    /// `\n`-separated (the `GET /library/catalog` wire shape; see
+    /// `catalog-export.service.ts` `serializeCatalogNdjson`). It is **not** a
+    /// JSON array, so it can't go through `JSONDecoder` in one shot. Blank and
+    /// whitespace-only lines are skipped — a trailing newline, a blank
+    /// separator, or a lone `\r` under CRLF aren't records, and `JSONDecoder`
+    /// rejects a whitespace-only buffer as `dataCorrupted`; an empty body is
+    /// therefore zero rows. A line with real content that fails to decode fails
+    /// the whole fetch with a (physical-)line-numbered `.decoding` error, so the
+    /// caller keeps its last-good clone rather than indexing a torn catalog.
+    /// (Per-field dirt — a bad `artwork_url`, an unknown `rotation_bin` — is
+    /// already tolerated inside ``CatalogRow``.) Pure transform — no instance
+    /// state.
+    private static func decodeNDJSON(_ data: Data) throws -> [CatalogRow] {
         var rows: [CatalogRow] = []
-        var lineNumber = 0
-        for line in data.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: true) {
-            lineNumber += 1
+        // Keep empty subsequences so the reported line number is the physical
+        // line position, then skip blank/whitespace-only lines explicitly.
+        let lines = data.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false)
+        for (index, line) in lines.enumerated() {
+            if line.allSatisfy(isJSONWhitespace) { continue }
             do {
                 rows.append(try JSONCoders.decoder.decode(CatalogRow.self, from: Data(line)))
             } catch let error as DecodingError {
-                throw APIError.decoding(detail: "NDJSON line \(lineNumber): \(Self.describe(error))")
+                throw APIError.decoding(detail: "NDJSON line \(index + 1): \(describe(error))")
             }
         }
         return rows
+    }
+
+    /// The JSON grammar's insignificant-whitespace bytes (space, tab, LF, CR;
+    /// RFC 8259 §2). Used to skip blank NDJSON separator lines instead of
+    /// handing them to `JSONDecoder`, which rejects a whitespace-only buffer.
+    private static func isJSONWhitespace(_ byte: UInt8) -> Bool {
+        byte == 0x20 || byte == 0x09 || byte == 0x0A || byte == 0x0D
+    }
+
+    /// Map a non-success HTTP response to an `APIError`, decoding the server's
+    /// `APIErrorResponse` message body when present. Shared by the 2xx-only
+    /// ``sendRaw(path:method:query:body:)`` guard and ``catalog(ifModifiedSince:)``'s
+    /// error arm so the error-body extraction (and the `401` → `.unauthorized`
+    /// mapping) lives in one place.
+    private static func httpError(status: Int, body: Data) -> APIError {
+        if status == 401 { return .unauthorized }
+        let message = (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: body))?.message
+        return .http(status: status, message: message)
     }
 
     /// 2xx-only transport: returns the body for a successful response or throws
@@ -208,9 +233,7 @@ public final class APIClient: Sendable {
     private func sendRaw(path: String, method: String, query: [URLQueryItem], body: Data?) async throws -> Data {
         let (data, http) = try await perform(path: path, method: method, query: query, body: body)
         guard (200..<300).contains(http.statusCode) else {
-            let message = (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data))?.message
-            if http.statusCode == 401 { throw APIError.unauthorized }
-            throw APIError.http(status: http.statusCode, message: message)
+            throw Self.httpError(status: http.statusCode, body: data)
         }
         return data
     }

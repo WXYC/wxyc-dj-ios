@@ -247,4 +247,122 @@ struct APIClientTests {
         // The retried catalog request still carries the conditional header.
         #expect(session.recordedRequests.last?.value(forHTTPHeaderField: "If-Modified-Since") == watermark)
     }
+
+    @Test func catalogSkipsBlankAndWhitespaceLines() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        // A leading blank line, a whitespace-only separator, and a trailing
+        // newline are not records — they must be skipped, not decoded, so every
+        // real row survives. (serializeCatalogNdjson never emits these, but the
+        // parser must not fail the whole fetch if any intermediary introduces one.)
+        let body = "\n" + Fixtures.catalogNDJSON.replacingOccurrences(of: "\n", with: "\n \n") + "\n"
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(body.utf8)))
+
+        let result = try await client.catalog(ifModifiedSince: nil)
+
+        guard case let .modified(rows, _) = result else {
+            Issue.record("expected .modified, got \(result)")
+            return
+        }
+        #expect(rows.count == 2)
+        #expect(rows.first?.id == 100)
+        #expect(rows.last?.id == 200)
+    }
+
+    @Test func catalogToleratesCRLFLineEndings() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        // Defensive: if any intermediary normalizes endings to CRLF, splitting on
+        // \n leaves a trailing lone \r per line (and a lone \r as the final
+        // chunk) — none of which may fail the fetch.
+        let body = Fixtures.catalogNDJSON.replacingOccurrences(of: "\n", with: "\r\n") + "\r\n"
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(body.utf8)))
+
+        let result = try await client.catalog(ifModifiedSince: nil)
+
+        guard case let .modified(rows, _) = result else {
+            Issue.record("expected .modified, got \(result)")
+            return
+        }
+        #expect(rows.count == 2)
+    }
+
+    @Test func catalogMalformedLineThrowsDecodingError() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        // A line with real content that isn't valid JSON fails the whole fetch
+        // (the caller keeps its last-good clone) — distinct from a blank line,
+        // which is skipped. The malformed record is the 3rd physical line.
+        let body = "\(Fixtures.catalogNDJSON)\n{not valid json"
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(body.utf8)))
+
+        do {
+            _ = try await client.catalog(ifModifiedSince: nil)
+            Issue.record("expected catalog() to throw on a malformed NDJSON line")
+        } catch APIError.decoding(let detail) {
+            #expect(detail.contains("NDJSON line 3"))
+        }
+    }
+
+    @Test func catalogServerErrorSurfacesAsHTTPError() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 500,
+            body: Data(#"{"message":"boom"}"#.utf8)
+        ))
+
+        do {
+            _ = try await client.catalog(ifModifiedSince: nil)
+            Issue.record("expected catalog() to throw on a 500")
+        } catch APIError.http(let status, let message) {
+            #expect(status == 500)
+            #expect(message == "boom")
+        }
+    }
+
+    @Test func catalogNon200SuccessIsNotTreatedAsEmptyCatalog() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        // A non-200 2xx (e.g. 204) must surface as an error rather than decode to
+        // zero rows — treating it as an empty catalog would wipe the on-device clone.
+        session.enqueue(StubRequestSession.Stub(statusCode: 204))
+
+        do {
+            _ = try await client.catalog(ifModifiedSince: nil)
+            Issue.record("expected catalog() to throw on a 204")
+        } catch APIError.http(let status, _) {
+            #expect(status == 204)
+        }
+    }
+
+    @Test func catalogEmptyStringWatermarkOmitsIfModifiedSince() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["Last-Modified": "Mon, 22 Jun 2026 17:00:00 GMT"],
+            body: Data(Fixtures.catalogNDJSON.utf8)
+        ))
+
+        // An empty string is a cleared/absent watermark — it must not emit a
+        // malformed `If-Modified-Since: ` header.
+        _ = try await client.catalog(ifModifiedSince: "")
+
+        let request = try #require(session.recordedRequests.last)
+        #expect(request.value(forHTTPHeaderField: "If-Modified-Since") == nil)
+    }
+
+    @Test func catalogModifiedWithoutLastModifiedHeaderYieldsNilWatermark() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        // A 200 with no Last-Modified header yields lastModified == nil (the
+        // documented contract) rather than a synthesized/default watermark.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.catalogNDJSON.utf8)
+        ))
+
+        let result = try await client.catalog(ifModifiedSince: "Sun, 21 Jun 2026 00:00:00 GMT")
+
+        guard case let .modified(rows, lastModified) = result else {
+            Issue.record("expected .modified, got \(result)")
+            return
+        }
+        #expect(rows.count == 2)
+        #expect(lastModified == nil)
+    }
 }
