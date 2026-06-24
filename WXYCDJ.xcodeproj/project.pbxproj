@@ -27,7 +27,9 @@
 		C03AB4DC4B72F41F6135A84C /* SearchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD38B1719410E4392D6E05CB /* SearchViewModel.swift */; };
 		CE480C510E594A1E231129FC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C9FA5B67202EDF0E87ADC86A /* Assets.xcassets */; };
 		D7683BE5C5C0E395CC4122E8 /* LoginViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 919B7DF6ECD14279DA5ED0D2 /* LoginViewModelTests.swift */; };
+		DD5133F0A74A1B9B1FC5CD4F /* AlbumRouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E5BB2C6A6D78D45FBE8B7E8 /* AlbumRouteTests.swift */; };
 		EE55F522C6025321F2064FEF /* LoginViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0062FB8AD63F74D7FE9C64A7 /* LoginViewModel.swift */; };
+		F10F541DAFA4135A2AFAA963 /* AlbumRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E636FEAF9C268D4455F6BF /* AlbumRoute.swift */; };
 		F3CD0CC95D42497D03CE47DC /* TrackMatchBadgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCD4C382216044EF71AA87 /* TrackMatchBadgeTests.swift */; };
 		F4BB3A668B1D9AFFF6997A14 /* CatalogBackgroundTasks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51B5512AA3CE4A98785BFE44 /* CatalogBackgroundTasks.swift */; };
 		FCE1778865594AAAB241D7B0 /* AlbumDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE45EAFB43A539EC66615E15 /* AlbumDetailView.swift */; };
@@ -49,6 +51,7 @@
 		0062FB8AD63F74D7FE9C64A7 /* LoginViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginViewModel.swift; sourceTree = "<group>"; };
 		08B568981D92EC8060CDFD01 /* AppDependenciesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDependenciesTests.swift; sourceTree = "<group>"; };
 		0D7C2891032C948BCCAB8104 /* WXYCDJ.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = WXYCDJ.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		21E636FEAF9C268D4455F6BF /* AlbumRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumRoute.swift; sourceTree = "<group>"; };
 		30DE4EC11A66379C3F9D35AE /* TrackMatchBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackMatchBadge.swift; sourceTree = "<group>"; };
 		3177CDD8FE323B5294083D52 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		3D62BB1A222E85317724557C /* WXYCDJApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WXYCDJApp.swift; sourceTree = "<group>"; };
@@ -61,6 +64,7 @@
 		7745B51EB2BF815A8B960F3F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		8037CAA3BF1777EA3F2B050C /* SignedInClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignedInClient.swift; sourceTree = "<group>"; };
 		85944AD2D64ED468BE70FB80 /* StubRequestSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubRequestSession.swift; sourceTree = "<group>"; };
+		8E5BB2C6A6D78D45FBE8B7E8 /* AlbumRouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumRouteTests.swift; sourceTree = "<group>"; };
 		919B7DF6ECD14279DA5ED0D2 /* LoginViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginViewModelTests.swift; sourceTree = "<group>"; };
 		9C17E03F68F1EE553DDECF35 /* Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixtures.swift; sourceTree = "<group>"; };
 		A89CC0792607B9863ABAEC7E /* WXYCDJTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = WXYCDJTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -162,6 +166,7 @@
 		9C7E2C27E29874779C74FFEA /* WXYCDJTests */ = {
 			isa = PBXGroup;
 			children = (
+				8E5BB2C6A6D78D45FBE8B7E8 /* AlbumRouteTests.swift */,
 				08B568981D92EC8060CDFD01 /* AppDependenciesTests.swift */,
 				82DCC10710E5C28AC5F3E81F /* Auth */,
 				6E365C89E935BFAED36CF283 /* Bin */,
@@ -174,6 +179,7 @@
 		A5E464B44FD0B1CFBAF6A6A6 /* WXYCDJ */ = {
 			isa = PBXGroup;
 			children = (
+				21E636FEAF9C268D4455F6BF /* AlbumRoute.swift */,
 				7745B51EB2BF815A8B960F3F /* AppDelegate.swift */,
 				6225BA88FCDBB74E198F0388 /* AppDependencies.swift */,
 				C9FA5B67202EDF0E87ADC86A /* Assets.xcassets */,
@@ -337,6 +343,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DD5133F0A74A1B9B1FC5CD4F /* AlbumRouteTests.swift in Sources */,
 				5890F98AB60C5BF3043C386F /* AppDependenciesTests.swift in Sources */,
 				03F3E3A822BE477EA3B592F2 /* BinViewModelTests.swift in Sources */,
 				206AE6A2C11520297BE28845 /* Fixtures.swift in Sources */,
@@ -353,6 +360,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				FCE1778865594AAAB241D7B0 /* AlbumDetailView.swift in Sources */,
+				F10F541DAFA4135A2AFAA963 /* AlbumRoute.swift in Sources */,
 				4971C44699E28C3483D4F264 /* AppDelegate.swift in Sources */,
 				AAF320BD598E531F6EBA5954 /* AppDependencies.swift in Sources */,
 				3701CA6BAB4578B4A26EAF5D /* BinView.swift in Sources */,
