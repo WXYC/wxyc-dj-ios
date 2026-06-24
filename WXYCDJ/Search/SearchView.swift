@@ -30,6 +30,15 @@ struct SearchView: View {
                 ProgressView()
             }
         }
+        // One destination, hoisted onto the always-mounted Group so it's
+        // registered in every view state (idle/searching/empty/error/results),
+        // not just .results. A state-nested destination is unreachable for a
+        // programmatic push and trips the "no matching navigationDestination"
+        // warning; keying on AlbumRoute also lets the in-app tap and the
+        // deep-link push (step 7) share one destination. (issue #19 step 6)
+        .navigationDestination(for: AlbumRoute.self) { route in
+            AlbumDetailView(albumId: route.id, fallback: route.fallback)
+        }
         .navigationTitle("Library")
         .searchable(text: $searchText, prompt: "Artist or album")
         .toolbar { signOutMenu }
@@ -73,16 +82,15 @@ struct SearchView: View {
                                    description: Text(message))
         case .results:
             List(viewModel.results) { row in
-                NavigationLink(value: row) {
+                // Carry the live row as the route's fallback so the detail
+                // header renders instantly while /library/info + LML load.
+                NavigationLink(value: AlbumRoute(id: row.id, fallback: row)) {
                     SearchResultRow(row: row) {
                         Task { _ = await viewModel.addToBin(row) }
                     }
                 }
             }
             .listStyle(.plain)
-            .navigationDestination(for: AlbumSearchResult.self) { row in
-                AlbumDetailView(albumId: row.id, fallback: row)
-            }
         }
     }
 }

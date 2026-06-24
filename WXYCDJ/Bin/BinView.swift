@@ -24,6 +24,13 @@ struct BinView: View {
                 ProgressView()
             }
         }
+        // Hoisted onto the always-mounted Group (was nested in the non-empty
+        // `default` case), keyed on the shared AlbumRoute. A bin row carries no
+        // catalog clone, so fallback is nil — AlbumDetailView resolves the row
+        // by awaiting /library/info. (issue #19 step 6)
+        .navigationDestination(for: AlbumRoute.self) { route in
+            AlbumDetailView(albumId: route.id, fallback: route.fallback)
+        }
         .navigationTitle("My Bin")
         .onAppear {
             if viewModel == nil {
@@ -49,7 +56,7 @@ struct BinView: View {
         default:
             List {
                 ForEach(viewModel.entries) { entry in
-                    NavigationLink(value: entry) {
+                    NavigationLink(value: AlbumRoute(id: entry.albumId, fallback: nil)) {
                         BinRow(entry: entry)
                     }
                     .swipeActions {
@@ -61,9 +68,6 @@ struct BinView: View {
             }
             .listStyle(.plain)
             .refreshable { await viewModel.refresh() }
-            .navigationDestination(for: BinEntry.self) { entry in
-                AlbumDetailView(albumId: entry.albumId, fallback: nil)
-            }
             // The list itself stays mounted on a remove failure (state stays
             // .loaded), so the error has to surface in a non-destructive way.
             // Tap-to-dismiss alert is enough; the row is still there to retry.
