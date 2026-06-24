@@ -175,32 +175,58 @@ final class AppDependencies {
         await present(albumID: albumID)
     }
 
-    /// Replay a parked deep link once auth resolves to `.signedIn`. A no-op when
-    /// not signed in or when nothing is parked, so RootView can call it on every
-    /// auth-state change. On the flip to signed-in it resolves the parked id into
-    /// ``Router/deepLink`` (clone lookup for the `fallback`).
-    func drainPendingDeepLink(isSignedIn: Bool) async {
-        guard isSignedIn, let albumID = router.pending else { return }
-        // Capture-and-clear synchronously: the resolve below suspends, and
-        // clearing now stops a second drain from re-reading the same park.
+    /// Reconcile the deep-link surface with an auth-state transition — RootView
+    /// calls this from `.onChange(of: auth.state)`, passing the old and new
+    /// signed-in flags. Three cases:
+    ///
+    /// - **Now signed in** (cold-launch resolve, or a fresh sign-in): replay a
+    ///   parked id into ``Router/deepLink``.
+    /// - **Genuine sign-out** (was signed in, now isn't): tear down — dismiss any
+    ///   presented cover and drop any park via ``invalidateDeepLink()`` — so a
+    ///   deep-link detail can't strand over `LoginView` issuing 401s.
+    /// - **Still signed out** (cold-launch `.unknown` → `.signedOut`, no
+    ///   session): do nothing, so a tap parked before sign-in survives for a
+    ///   later manual sign-in to replay.
+    func handleAuthChange(wasSignedIn: Bool, isSignedIn: Bool) async {
+        if isSignedIn {
+            guard let albumID = router.pending else { return }
+            // Capture-and-clear synchronously: the resolve below suspends, and
+            // clearing now stops a second replay from re-reading the same park.
+            router.pending = nil
+            await present(albumID: albumID)
+        } else if wasSignedIn {
+            invalidateDeepLink()
+        }
+    }
+
+    /// Tear down the deep-link surface on sign-out: dismiss the cover, drop any
+    /// park, and bump ``presentationToken`` so an in-flight ``present(albumID:)``
+    /// — one whose `resolveRoute` was still suspended when sign-out landed —
+    /// bows out instead of re-presenting an album over `LoginView`.
+    private func invalidateDeepLink() {
+        presentationToken += 1
+        router.deepLink = nil
         router.pending = nil
-        await present(albumID: albumID)
     }
 
     /// Resolve `albumID` to a route and present it — the single resolve→present
     /// step both deep-link entry points funnel through. `resolveRoute`'s `await`
     /// releases the main actor (a clone lookup can queue behind a multi-second
     /// `CatalogRefreshService` store replace), so two presentations can be in
-    /// flight at once: a parked drain racing a fresh tap. A monotonic token makes
-    /// the **most-recently-requested** album win deterministically — rather than
-    /// whichever store read happens to resume last — so a stale parked id can't
-    /// clobber a just-tapped one.
+    /// flight at once: a parked replay racing a fresh tap, or a sign-out landing
+    /// mid-resolve. A monotonic token makes the **most-recently-requested**
+    /// outcome win deterministically — rather than whichever store read resumes
+    /// last — so a stale parked id (or a route resolved before sign-out) can't
+    /// clobber a just-tapped one (or strand over `LoginView`).
     private func present(albumID: Int) async {
+        // Already showing this exact album (e.g. a re-tap of the open cover):
+        // nothing to present, and skip the redundant clone read.
+        if router.deepLink?.id == albumID { return }
         presentationToken += 1
         let token = presentationToken
         let route = await resolveRoute(albumID: albumID)
-        // A newer tap/drain bumped the token while we were resolving; bow out so
-        // its fresher presentation is the one that lands.
+        // A newer tap/sign-out bumped the token while we were resolving; bow out
+        // so its fresher outcome is the one that lands.
         guard token == presentationToken else { return }
         router.deepLink = route
     }

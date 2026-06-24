@@ -71,32 +71,50 @@ struct RouterDeepLinkTests {
         #expect(deps.router.pending == 100)
     }
 
-    @Test func drainWhileStillSignedOutIsNoOp() async {
-        // The signed-out no-op path never reaches resolveRoute / the store, so
-        // skip the temp SQLite file (mirrors tapPresentsEvenWhenCatalogStoreIsInert).
+    @Test func coldLaunchSignedOutResolutionKeepsParkForLaterSignIn() async {
+        // restoreSession() resolving to .signedOut (no session) is .unknown →
+        // .signedOut: NOT a genuine sign-out, so a tap parked before sign-in
+        // survives for the DJ's later manual sign-in. The path never reaches the
+        // store, so skip the temp file (mirrors tapPresentsEvenWhenCatalogStoreIsInert).
         let deps = AppDependencies(catalogStoreURL: nil)
         await deps.handleSpotlightTap(albumID: 100, isSignedIn: false)
 
-        // restoreSession() resolved to signedOut, not signedIn: nothing replays.
-        await deps.drainPendingDeepLink(isSignedIn: false)
+        await deps.handleAuthChange(wasSignedIn: false, isSignedIn: false)
 
         #expect(deps.router.deepLink == nil)
         #expect(deps.router.pending == 100)  // still parked for a later sign-in
     }
 
-    @Test func drainOnSignedInPresentsWithCloneFallback() async throws {
+    @Test func replayOnSignedInPresentsWithCloneFallback() async throws {
         let (deps, url) = Self.makeDeps()
         defer { Self.cleanup(url) }
         try await #require(deps.catalogStore).replace(rows: [Self.dogaRow()], lastModified: nil)
 
-        await deps.handleSpotlightTap(albumID: 100, isSignedIn: false)  // cold-launch park
-        await deps.drainPendingDeepLink(isSignedIn: true)               // auth resolved → replay
+        await deps.handleSpotlightTap(albumID: 100, isSignedIn: false)         // cold-launch park
+        await deps.handleAuthChange(wasSignedIn: false, isSignedIn: true)      // auth resolved → replay
 
         let route = try #require(deps.router.deepLink)
         #expect(route.id == 100)
         // Clone hit: the looked-up row's detailFallback renders the header instantly.
         #expect(route.fallback?.albumTitle == "DOGA")
         #expect(route.fallback?.artistName == "Juana Molina")
+        #expect(deps.router.pending == nil)
+    }
+
+    @Test func signOutTearsDownPresentedCover() async throws {
+        let (deps, url) = Self.makeDeps()
+        defer { Self.cleanup(url) }
+        try await #require(deps.catalogStore).replace(rows: [Self.dogaRow()], lastModified: nil)
+
+        // A signed-in DJ is viewing a deep-linked album...
+        await deps.handleSpotlightTap(albumID: 100, isSignedIn: true)
+        #expect(deps.router.deepLink != nil)
+
+        // ...then signs out (.signedIn → .signedOut): the cover must be dismissed
+        // so a detail can't strand over LoginView issuing 401s.
+        await deps.handleAuthChange(wasSignedIn: true, isSignedIn: false)
+
+        #expect(deps.router.deepLink == nil)
         #expect(deps.router.pending == nil)
     }
 
@@ -134,8 +152,8 @@ struct RouterDeepLinkTests {
         // clone-miss path (symmetry with the immediate-tap miss above).
         try await #require(deps.catalogStore).replace(rows: [Self.dogaRow(id: 100)], lastModified: nil)
 
-        await deps.handleSpotlightTap(albumID: 999, isSignedIn: false)  // park a miss
-        await deps.drainPendingDeepLink(isSignedIn: true)               // replay
+        await deps.handleSpotlightTap(albumID: 999, isSignedIn: false)    // park a miss
+        await deps.handleAuthChange(wasSignedIn: false, isSignedIn: true) // replay
 
         let route = try #require(deps.router.deepLink)
         #expect(route.id == 999)

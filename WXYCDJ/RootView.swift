@@ -46,18 +46,24 @@ struct RootView: View {
                   let albumID = CatalogSpotlight.albumID(from: identifier) else { return }
             Task { await deps.handleSpotlightTap(albumID: albumID, isSignedIn: auth.isSignedIn) }
         }
-        // Cold-launch replay: a tap that landed before sign-in resolved parked
-        // its id in Router.pending. The load-bearing transition is the
-        // .unknown/.signedOut → .signedIn flip; drain it into the cover then.
-        // drainPendingDeepLink is idempotent (it guards on isSignedIn && a
-        // non-nil pending), so firing on the other transitions (e.g. sign-out)
-        // is harmless. Do NOT "optimize" this into a one-shot keyed on the first
-        // signed-in — that reintroduces the race where a tap arriving
-        // mid-restoreSession() is dropped. (A routine JWT refresh does NOT fire
-        // this: AuthService.refreshJWT updates only the cached token, never
-        // `state`, so .signedIn keeps its original payload and stays Equatable-equal.)
-        .onChange(of: auth.state) {
-            Task { await deps.drainPendingDeepLink(isSignedIn: auth.isSignedIn) }
+        // Reconcile the deep link with every auth transition (old → new). On the
+        // flip to signed-in (cold-launch resolve or a fresh sign-in) a parked tap
+        // replays into the cover; on a genuine sign-out (was signed in, now not)
+        // the cover is torn down so a detail can't strand over LoginView; a
+        // cold-launch .unknown → .signedOut keeps the park for a later sign-in.
+        // The old/new flags are why this needs both values, not just the new one.
+        // Do NOT collapse this to a one-shot keyed on the first signed-in — that
+        // reintroduces the race where a tap arriving mid-restoreSession() is
+        // dropped. (A routine JWT refresh does NOT fire this: AuthService.refreshJWT
+        // updates only the cached token, never `state`, so .signedIn keeps its
+        // original payload and stays Equatable-equal.)
+        .onChange(of: auth.state) { oldState, newState in
+            Task {
+                await deps.handleAuthChange(
+                    wasSignedIn: oldState.isSignedIn,
+                    isSignedIn: newState.isSignedIn
+                )
+            }
         }
         // The deep-linked detail lives in its own cover (own NavigationStack),
         // never on the Search/Bin tab stacks — so dismissing returns the DJ to
@@ -70,14 +76,12 @@ struct RootView: View {
             // fullScreenCover content is hosted in a separate presentation
             // context that does NOT inherit the presenter's
             // .environment(_:)-injected @Observable objects. Re-inject the SAME
-            // trio WXYCDJApp injects at the root so the shared AlbumDetailView
-            // runs under an identical environment whether it's reached here or
-            // pushed onto a tab stack — otherwise a future auth/router read in
-            // the detail subtree would crash only on the (untested) deep-link path.
+            // trio WXYCDJApp injects at the root (one shared helper, so the two
+            // sites can't drift) — the shared AlbumDetailView then runs under an
+            // identical environment whether reached here or pushed onto a tab
+            // stack, so a future auth/router read can't crash only on this path.
             DeepLinkAlbumCover(route: route)
-                .environment(deps)
-                .environment(auth)
-                .environment(router)
+                .wxycAppEnvironment(deps)
         }
     }
 }

@@ -69,6 +69,16 @@ struct AuthServiceTests {
         #expect(service.isSignedIn == false)  // .signedOut
     }
 
+    @Test func stateIsSignedInFlag() {
+        // The non-authenticated cases — the deep-link auth-change handler compares
+        // old vs. new State.isSignedIn to tell a genuine sign-out from a
+        // cold-launch .unknown → .signedOut. (.signedIn → true is covered by
+        // isSignedInTracksState, which needs a real JWTPayload.)
+        #expect(AuthService.State.unknown.isSignedIn == false)
+        #expect(AuthService.State.signedOut.isSignedIn == false)
+        #expect(AuthService.State.signingIn.isSignedIn == false)
+    }
+
     @Test func signInFailureSurfacesInvalidCredentials() async throws {
         let session = StubRequestSession()
         let storage = InMemoryTokenStorage()

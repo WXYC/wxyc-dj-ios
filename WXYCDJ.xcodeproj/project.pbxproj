@@ -21,6 +21,7 @@
 		759C5888FC7CF1D709B5F953 /* WXYCDJApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D62BB1A222E85317724557C /* WXYCDJApp.swift */; };
 		75C46202B5A836CB31D649FE /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3C3F1A8A8E2B9449C84894 /* RootView.swift */; };
 		87657943589225BAA0E65A7B /* StubRequestSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85944AD2D64ED468BE70FB80 /* StubRequestSession.swift */; };
+		8ED39D937F51F188FB3C700E /* View+AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = D317ED7B8718828E57375589 /* View+AppEnvironment.swift */; };
 		A8D1D090E2B450A27FFD508F /* WXYCAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 89D30A6942DD94B4BDD547A2 /* WXYCAPI */; };
 		AAF320BD598E531F6EBA5954 /* AppDependencies.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6225BA88FCDBB74E198F0388 /* AppDependencies.swift */; };
 		ABA5F662B7377F106722B223 /* DeepLinkAlbumCover.swift in Sources */ = {isa = PBXBuildFile; fileRef = E85422FA59D8966C8BE74197 /* DeepLinkAlbumCover.swift */; };
@@ -79,6 +80,7 @@
 		C9FA5B67202EDF0E87ADC86A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CE7E76CFC35C37D73EAA0A89 /* WXYCAPI */ = {isa = PBXFileReference; lastKnownFileType = folder; name = WXYCAPI; path = Packages/WXYCAPI; sourceTree = SOURCE_ROOT; };
 		CF0AE695EDC8A02507316E1C /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
+		D317ED7B8718828E57375589 /* View+AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "View+AppEnvironment.swift"; sourceTree = "<group>"; };
 		DE45EAFB43A539EC66615E15 /* AlbumDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumDetailView.swift; sourceTree = "<group>"; };
 		E85422FA59D8966C8BE74197 /* DeepLinkAlbumCover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLinkAlbumCover.swift; sourceTree = "<group>"; };
 		ED3C3F1A8A8E2B9449C84894 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
@@ -194,6 +196,7 @@
 				BF2EA536C610B62875284DBC /* MainView.swift */,
 				ED3C3F1A8A8E2B9449C84894 /* RootView.swift */,
 				F9B94507CE6ED66434689ECD /* Router.swift */,
+				D317ED7B8718828E57375589 /* View+AppEnvironment.swift */,
 				56A9F5B3F64702BFFAE2B4B5 /* WXYCDJ.entitlements */,
 				3D62BB1A222E85317724557C /* WXYCDJApp.swift */,
 				588B2D1835695F4A2A6474F3 /* Auth */,
@@ -386,6 +389,7 @@
 				0DD716BEB42AB99DC6908CE7 /* SearchView.swift in Sources */,
 				C03AB4DC4B72F41F6135A84C /* SearchViewModel.swift in Sources */,
 				B90C6447D3F4DC7F4B4A4DC1 /* TrackMatchBadge.swift in Sources */,
+				8ED39D937F51F188FB3C700E /* View+AppEnvironment.swift in Sources */,
 				759C5888FC7CF1D709B5F953 /* WXYCDJApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
