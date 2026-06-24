@@ -118,3 +118,36 @@ struct AppDependenciesCatalogWiringTests {
         #expect(deps.catalogRefreshService == nil)
     }
 }
+
+/// `catalogErrorDetail` is the verbose error formatter the catalog-refresh
+/// failure log uses instead of `localizedDescription`, so a Core Spotlight
+/// rejection names its domain + numeric code (e.g. `CSIndexErrorDomain -1001`
+/// `InvalidItemError`) and any nested cause rather than collapsing to the opaque
+/// "operation couldn't be completed".
+@Suite("AppDependencies.catalogErrorDetail")
+struct CatalogErrorDetailTests {
+    @Test func includesDomainAndNumericCode() {
+        // Mirrors the real failure we debugged: CSIndexErrorDomain -1001.
+        let error = NSError(domain: "CSIndexErrorDomain", code: -1001)
+
+        let detail = catalogErrorDetail(error)
+
+        #expect(detail.contains("CSIndexErrorDomain"))
+        #expect(detail.contains("code=-1001"))
+    }
+
+    @Test func surfacesUnderlyingErrors() {
+        let underlying = NSError(domain: "LowLevelDomain", code: 42)
+        let error = NSError(
+            domain: "CSIndexErrorDomain",
+            code: -1001,
+            userInfo: [NSMultipleUnderlyingErrorsKey: [underlying]]
+        )
+
+        let detail = catalogErrorDetail(error)
+
+        #expect(detail.contains("underlying"))
+        #expect(detail.contains("LowLevelDomain"))
+        #expect(detail.contains("code=42"))
+    }
+}

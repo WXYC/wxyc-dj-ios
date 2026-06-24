@@ -42,19 +42,31 @@ final class FakeSearchableIndex: SearchableIndexing {
         var indexBatchSizes: [Int] = []
         var indexedItems: [IndexedItem] = []
         var deletedIdentifiers: [String] = []
+        /// The client state from the most recent `endBatch` (what `lastClientState`
+        /// returns).
         var committedClientState: Data?
+        /// Every `endBatch` client state in order — pins which batch advanced the
+        /// watermark, so a test can assert intermediate batches commit empty state
+        /// and only the final batch carries the real watermark.
+        var committedClientStates: [Data] = []
     }
 
     struct FakeError: Error {}
 
     private let state: OSAllocatedUnfairLock<Recording>
     private let failOn: FailurePoint?
+    /// Throw on the Nth `indexItems` call (1-based), so a test can fail a *later*
+    /// batch after earlier ones have already committed — the multi-batch
+    /// crash-safety path `failOn: .indexItems` (which fails the first call) can't
+    /// reach.
+    private let failIndexItemsOnCall: Int?
 
-    init(initialClientState: Data? = nil, failOn: FailurePoint? = nil) {
+    init(initialClientState: Data? = nil, failOn: FailurePoint? = nil, failIndexItemsOnCall: Int? = nil) {
         self.state = OSAllocatedUnfairLock(
             initialState: Recording(committedClientState: initialClientState)
         )
         self.failOn = failOn
+        self.failIndexItemsOnCall = failIndexItemsOnCall
     }
 
     var recording: Recording { state.withLock { $0 } }
@@ -67,6 +79,10 @@ final class FakeSearchableIndex: SearchableIndexing {
 
     func indexItems(_ items: [CSSearchableItem]) async throws {
         if failOn == .indexItems { throw FakeError() }
+        // 1-based ordinal of this call = already-recorded calls + 1.
+        if let failIndexItemsOnCall, state.withLock({ $0.indexBatchSizes.count + 1 }) == failIndexItemsOnCall {
+            throw FakeError()
+        }
         let projected = items.map { item in
             IndexedItem(
                 identifier: item.uniqueIdentifier,
@@ -94,6 +110,7 @@ final class FakeSearchableIndex: SearchableIndexing {
         state.withLock {
             $0.endCount += 1
             $0.committedClientState = clientState
+            $0.committedClientStates.append(clientState)
         }
     }
 
