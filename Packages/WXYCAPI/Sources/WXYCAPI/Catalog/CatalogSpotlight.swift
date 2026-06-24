@@ -54,6 +54,23 @@ public enum CatalogSpotlight {
         return Int(digits)
     }
 
+    /// The album id carried by a Core Spotlight **continuation activity**, or
+    /// `nil` if `activity` isn't a catalog-item tap. The system delivers an
+    /// `NSUserActivity` of type `CSSearchableItemActionType` carrying the tapped
+    /// item's `uniqueIdentifier` under `userInfo[CSSearchableItemActivityIdentifier]`;
+    /// this guards the activity type, pulls that identifier, and parses it via
+    /// ``albumID(from:)``. One home for the continuation parse so the
+    /// `UIWindowSceneDelegate` (cold launch via `scene(_:willConnectTo:)`, warm
+    /// via `scene(_:continue:)`) routes a tap through the exact same, unit-tested
+    /// logic — the reliable replacement for the flaky view-level
+    /// `onContinueUserActivity`, which was not delivering the activity on this app.
+    public static func albumID(fromActivity activity: NSUserActivity) -> Int? {
+        guard activity.activityType == CSSearchableItemActionType,
+              let identifier = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String
+        else { return nil }
+        return albumID(from: identifier)
+    }
+
     /// The `CSSearchableItem` mirroring `row`: `title` / `displayName` = album (the
     /// field Spotlight reliably matches free-text queries against),
     /// `contentDescription` = artist (plus the shelf call number when present) as

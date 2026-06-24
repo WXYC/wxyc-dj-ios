@@ -38,13 +38,18 @@ struct RootView: View {
             }
         }
         // A Spotlight tap delivers an NSUserActivity carrying the item's
-        // "album.<id>" identifier. Parse it and either present immediately (when
-        // signed in) or stash for replay. Attached here, not in MainView, so a
-        // tap during the cold-launch spinner / signed-out state isn't dropped.
+        // "album.<id>" identifier; handleSpotlightContinuation parses it and
+        // either presents immediately (signed in) or stashes for replay.
+        //
+        // NOTE: this view-level modifier is a FALLBACK. The primary, reliable
+        // delivery is `SceneDelegate` — this modifier was not firing for the
+        // CSSearchableItemActionType activity in either cold or warm state, which
+        // is the bug it caused. Both paths funnel through the same
+        // `handleSpotlightContinuation`, so a double-delivery is a harmless no-op
+        // (present() early-outs on the already-shown album). Kept until the
+        // scene-delegate path is confirmed on device, then it can be removed.
         .onContinueUserActivity(CSSearchableItemActionType) { activity in
-            guard let identifier = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String,
-                  let albumID = CatalogSpotlight.albumID(from: identifier) else { return }
-            Task { await deps.handleSpotlightTap(albumID: albumID, isSignedIn: auth.isSignedIn) }
+            Task { await deps.handleSpotlightContinuation(activity) }
         }
         // Reconcile the deep link with every auth transition (old → new). On the
         // flip to signed-in (cold-launch resolve or a fresh sign-in) a parked tap

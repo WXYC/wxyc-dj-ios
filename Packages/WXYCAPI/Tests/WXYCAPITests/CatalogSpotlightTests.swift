@@ -10,6 +10,7 @@
 //  Copyright © 2026 WXYC. All rights reserved.
 //
 
+import CoreSpotlight
 import Foundation
 import Testing
 @testable import WXYCAPI
@@ -41,6 +42,33 @@ struct CatalogSpotlightTests {
         #expect(CatalogSpotlight.albumID(from: "album.+5") == nil)
         #expect(CatalogSpotlight.albumID(from: "album. 5") == nil)
         #expect(CatalogSpotlight.albumID(from: "album.5 ") == nil)
+    }
+
+    // MARK: Continuation-activity parse (step 7 deep link)
+
+    /// Build the `CSSearchableItemActionType` continuation activity the system
+    /// hands back when a DJ taps a catalog item in Spotlight.
+    private static func spotlightActivity(identifier: String) -> NSUserActivity {
+        let activity = NSUserActivity(activityType: CSSearchableItemActionType)
+        activity.userInfo = [CSSearchableItemActivityIdentifier: identifier]
+        return activity
+    }
+
+    @Test func albumIDFromActivityExtractsTheTappedID() {
+        let activity = Self.spotlightActivity(identifier: CatalogSpotlight.itemIdentifier(100))
+        #expect(CatalogSpotlight.albumID(fromActivity: activity) == 100)
+    }
+
+    @Test func albumIDFromActivityRejectsNonContinuationActivity() {
+        // A Handoff / browsing activity that isn't a Spotlight item tap.
+        let activity = NSUserActivity(activityType: "org.wxyc.dj.browsing")
+        activity.userInfo = [CSSearchableItemActivityIdentifier: CatalogSpotlight.itemIdentifier(100)]
+        #expect(CatalogSpotlight.albumID(fromActivity: activity) == nil)
+    }
+
+    @Test func albumIDFromActivityRejectsMissingOrMalformedIdentifier() {
+        #expect(CatalogSpotlight.albumID(fromActivity: NSUserActivity(activityType: CSSearchableItemActionType)) == nil)
+        #expect(CatalogSpotlight.albumID(fromActivity: Self.spotlightActivity(identifier: "track.12")) == nil)
     }
 
     @Test func searchableItemMapsCatalogRowFields() throws {
