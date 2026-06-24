@@ -20,13 +20,13 @@
 		753572DD46DEE31D8A3F2CDB /* SearchResultRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ECD186BFE3631C6C27416AE /* SearchResultRow.swift */; };
 		759C5888FC7CF1D709B5F953 /* WXYCDJApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D62BB1A222E85317724557C /* WXYCDJApp.swift */; };
 		75C46202B5A836CB31D649FE /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3C3F1A8A8E2B9449C84894 /* RootView.swift */; };
-		7F0331A2ABDB143FB8300E1A /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 71F85B4C8B8BE6B63A031436 /* Preview Assets.xcassets */; };
 		87657943589225BAA0E65A7B /* StubRequestSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85944AD2D64ED468BE70FB80 /* StubRequestSession.swift */; };
 		8ED39D937F51F188FB3C700E /* View+AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = D317ED7B8718828E57375589 /* View+AppEnvironment.swift */; };
 		9EC8B78671B1FC2CBB6A7F5B /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = C119CEEC9E20EE8783822BD5 /* AppIcon.icon */; };
 		A8D1D090E2B450A27FFD508F /* WXYCAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 89D30A6942DD94B4BDD547A2 /* WXYCAPI */; };
 		AAF320BD598E531F6EBA5954 /* AppDependencies.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6225BA88FCDBB74E198F0388 /* AppDependencies.swift */; };
 		ABA5F662B7377F106722B223 /* DeepLinkAlbumCover.swift in Sources */ = {isa = PBXBuildFile; fileRef = E85422FA59D8966C8BE74197 /* DeepLinkAlbumCover.swift */; };
+		B427ABFA72D740CDC87D0B35 /* SpotlightClientStateToleranceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54E53B2B0DF8CCAB1C3786E0 /* SpotlightClientStateToleranceTests.swift */; };
 		B90C6447D3F4DC7F4B4A4DC1 /* TrackMatchBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30DE4EC11A66379C3F9D35AE /* TrackMatchBadge.swift */; };
 		C03AB4DC4B72F41F6135A84C /* SearchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD38B1719410E4392D6E05CB /* SearchViewModel.swift */; };
 		CE480C510E594A1E231129FC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C9FA5B67202EDF0E87ADC86A /* Assets.xcassets */; };
@@ -66,11 +66,11 @@
 		3D62BB1A222E85317724557C /* WXYCDJApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WXYCDJApp.swift; sourceTree = "<group>"; };
 		48A7FCC8FFAC9479948ABE16 /* BinViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BinViewModel.swift; sourceTree = "<group>"; };
 		51B5512AA3CE4A98785BFE44 /* CatalogBackgroundTasks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogBackgroundTasks.swift; sourceTree = "<group>"; };
+		54E53B2B0DF8CCAB1C3786E0 /* SpotlightClientStateToleranceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotlightClientStateToleranceTests.swift; sourceTree = "<group>"; };
 		56A9F5B3F64702BFFAE2B4B5 /* WXYCDJ.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = WXYCDJ.entitlements; sourceTree = "<group>"; };
 		6225BA88FCDBB74E198F0388 /* AppDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDependencies.swift; sourceTree = "<group>"; };
 		6AC54CD81B8E16E4B0754D16 /* BinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BinView.swift; sourceTree = "<group>"; };
 		6ECD186BFE3631C6C27416AE /* SearchResultRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResultRow.swift; sourceTree = "<group>"; };
-		71F85B4C8B8BE6B63A031436 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		7745B51EB2BF815A8B960F3F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		8037CAA3BF1777EA3F2B050C /* SignedInClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignedInClient.swift; sourceTree = "<group>"; };
 		85944AD2D64ED468BE70FB80 /* StubRequestSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubRequestSession.swift; sourceTree = "<group>"; };
@@ -186,6 +186,7 @@
 				8E5BB2C6A6D78D45FBE8B7E8 /* AlbumRouteTests.swift */,
 				08B568981D92EC8060CDFD01 /* AppDependenciesTests.swift */,
 				1FD0E661440B5825AA5F5B40 /* RouterDeepLinkTests.swift */,
+				54E53B2B0DF8CCAB1C3786E0 /* SpotlightClientStateToleranceTests.swift */,
 				82DCC10710E5C28AC5F3E81F /* Auth */,
 				6E365C89E935BFAED36CF283 /* Bin */,
 				388300DDABAC9EA5746EAA29 /* Search */,
@@ -214,7 +215,6 @@
 				44E169A4BF78262702B4142B /* Bin */,
 				E1EC06BF517B76C203321D4F /* Catalog */,
 				EA016031AECC3E5F528C5898 /* Detail */,
-				EC9D106FEFB0ECA0F178FFF6 /* Preview Content */,
 				DA9E47BE7DD04FB123E92736 /* Search */,
 			);
 			path = WXYCDJ;
@@ -264,14 +264,6 @@
 				E85422FA59D8966C8BE74197 /* DeepLinkAlbumCover.swift */,
 			);
 			path = Detail;
-			sourceTree = "<group>";
-		};
-		EC9D106FEFB0ECA0F178FFF6 /* Preview Content */ = {
-			isa = PBXGroup;
-			children = (
-				71F85B4C8B8BE6B63A031436 /* Preview Assets.xcassets */,
-			);
-			path = "Preview Content";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -366,7 +358,6 @@
 			files = (
 				9EC8B78671B1FC2CBB6A7F5B /* AppIcon.icon in Resources */,
 				CE480C510E594A1E231129FC /* Assets.xcassets in Resources */,
-				7F0331A2ABDB143FB8300E1A /* Preview Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -386,6 +377,7 @@
 				E7A9C8D05D95D4EBCB17F9A6 /* RouterDeepLinkTests.swift in Sources */,
 				08E228FB46EFDFE100855DC3 /* SearchViewModelTests.swift in Sources */,
 				FE66AC126ECF6B037DCDA4DE /* SignedInClient.swift in Sources */,
+				B427ABFA72D740CDC87D0B35 /* SpotlightClientStateToleranceTests.swift in Sources */,
 				87657943589225BAA0E65A7B /* StubRequestSession.swift in Sources */,
 				F3CD0CC95D42497D03CE47DC /* TrackMatchBadgeTests.swift in Sources */,
 			);
