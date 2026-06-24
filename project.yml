@@ -70,6 +70,8 @@ targets:
       testTargets:
         - WXYCDJTests
       gatherCoverageData: false
+      environmentVariables:
+        WXYC_SPOTLIGHT_TOLERANCE: "1"
 
   WXYCDJTests:
     type: bundle.unit-test

@@ -99,10 +99,13 @@ xcodebuild test \
   -scheme WXYCDJ \
   -destination "platform=iOS Simulator,id=$SIM_ID" \
   -configuration Debug \
+  -skip-testing:WXYCDJTests/SpotlightClientStateToleranceTests \
   CODE_SIGNING_ALLOWED=NO
 ```
 
 `CODE_SIGNING_ALLOWED=NO` keeps the test step from requiring a provisioning profile. The test step needs a real simulator (not `generic/platform=iOS Simulator`) because `WXYCDJTests` is a host-app unit-test bundle.
+
+`-skip-testing:WXYCDJTests/SpotlightClientStateToleranceTests` is required on the **Simulator** (CI and local): the `WXYCDJ` scheme sets `WXYC_SPOTLIGHT_TOLERANCE=1` (in `project.yml`) so a **physical-device** test run picks up the Core Spotlight client-state tolerance probe automatically — but Core Spotlight rejects client-state commits on the Simulator with `CSIndexError -1002`, so that suite can only pass on device and must be skipped anywhere it runs against a Simulator. Run it by targeting a device destination (drop the `-skip-testing` flag).
 
 ## Things explicitly out of scope
 
