@@ -29,6 +29,7 @@ struct WXYCDJApp: App {
             RootView()
                 .environment(dependencies)
                 .environment(dependencies.authService)
+                .environment(dependencies.router)
                 .task {
                     // Foreground-primary refresh: restore the session, then clone
                     // the catalog (a no-op skip until signed in).

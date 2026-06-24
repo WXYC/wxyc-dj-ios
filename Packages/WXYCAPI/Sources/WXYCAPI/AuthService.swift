@@ -46,6 +46,15 @@ public final class AuthService {
     public private(set) var state: State = .unknown
     public private(set) var lastError: AuthError?
 
+    /// Whether a DJ is currently signed in. The Spotlight deep-link handler
+    /// (issue #19 step 7) reads this to decide whether to present a tapped
+    /// album immediately or stash it for replay once `restoreSession()` (or a
+    /// fresh sign-in) resolves `state` to `.signedIn`.
+    public var isSignedIn: Bool {
+        if case .signedIn = state { return true }
+        return false
+    }
+
     private let configuration: WXYCAPIConfiguration
     private let storage: any TokenStorage
     private let session: any RequestSession
