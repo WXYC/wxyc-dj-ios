@@ -69,13 +69,27 @@ public protocol CatalogIndexing: Sendable {
     /// Upserts **and** deletes are chunked under Core Spotlight's per-batch item
     /// cap. Runs off the main actor.
     ///
-    /// **Atomic, crash-safe commit.** The watermark *and* the new fingerprint map
-    /// advance together, only on the final batch's commit; a throw leaves both
-    /// un-advanced (intermediate batches preserve the *old* map and withhold the
-    /// watermark), so the next poll re-fetches the same `200` and re-derives the
-    /// identical work set. On a thrown error the open batch is left unended (the
-    /// framework has no cancel): partial upserts persist (idempotent) but neither
-    /// the watermark nor the map advances. Because Core Spotlight forbids a second
+    /// **Crash-safe commit (eventually consistent across runs).** The watermark
+    /// advances only on the final batch's commit; a throw leaves it un-advanced, so
+    /// the next poll re-fetches and reconciles. Each batch commits the fingerprint
+    /// map of work applied **so far** (cumulative), so the persisted map tracks what
+    /// the index holds batch by batch — a crash *between* batches leaves the next
+    /// run able to reconcile a *fresh* export against what the index actually holds
+    /// (re-deleting a vanished id rather than stranding it), not just an unchanged
+    /// one. The guarantee is per-run eventual consistency, not per-batch atomicity:
+    /// a crash *within* a batch (after its `indexItems`/`deleteItems`, before its
+    /// `endBatch`) leaves that batch's work uncommitted to the map, so the next run
+    /// re-derives it from the last committed map — a re-upsert is idempotent and a
+    /// re-delete a no-op (stable `uniqueIdentifier`). One narrow residual: *if* Core
+    /// Spotlight physically persists an unended batch's adds (its `endBatch` is a
+    /// client-state checkpoint, not a documented transaction), a row that batch added
+    /// but the *next* export drops in the same crash window is in neither the
+    /// committed map nor the export, so it lingers as a stale Spotlight item until
+    /// that id is next re-added or changed (the gap-free design never deletes by
+    /// domain). Self-limiting and far rarer than the between-batch crash, which is
+    /// fully reconciled. On a thrown error the open batch is left unended (the
+    /// framework has no cancel) and neither the watermark nor the map advances.
+    /// Because Core Spotlight forbids a second
     /// open batch before the prior one ends, a retry must run on a
     /// freshly-constructed `CSSearchableIndex(name:)`, not by re-calling `reindex`
     /// on the same failed instance — ``CatalogRefreshService`` guarantees this by
