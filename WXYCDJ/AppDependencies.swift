@@ -40,8 +40,8 @@ final class AppDependencies {
     /// `.environment` and bound to RootView's `fullScreenCover`. The resolution
     /// that turns a tapped `album.<id>` into a route lives here — on
     /// ``handleSpotlightTap(albumID:isSignedIn:)`` /
-    /// ``drainPendingDeepLink(isSignedIn:)`` — because the `fallback` lookup
-    /// needs ``catalogStore``.
+    /// ``handleAuthChange(wasSignedIn:isSignedIn:)`` — because the `fallback`
+    /// lookup needs ``catalogStore``.
     let router = Router()
     /// Monotonic generation for ``present(albumID:)``'s most-recent-wins latch,
     /// so a stale parked drain can't clobber a freshly-tapped album when their
@@ -56,15 +56,9 @@ final class AppDependencies {
     /// (injected in tests; the default points under Application Support). A `nil`
     /// URL, or a store that fails to open, leaves the catalog features inert.
     init(catalogStoreURL: URL?) {
-        let bundle = Bundle.main
-        let configuration = Self.resolveConfiguration(
-            authString: bundle.object(forInfoDictionaryKey: "WXYCAuthBaseURL") as? String,
-            apiString: bundle.object(forInfoDictionaryKey: "WXYCAPIBaseURL") as? String
-        )
+        let (configuration, authService, api) = Self.makeCore()
         self.configuration = configuration
-        let authService = AuthService(configuration: configuration)
         self.authService = authService
-        let api = APIClient(configuration: configuration, authService: authService)
         self.api = api
 
         // Catalog clone + Spotlight index. Store construction can fail (disk
@@ -91,6 +85,33 @@ final class AppDependencies {
             self.catalogStore = nil
             self.catalogRefreshService = nil
         }
+    }
+
+    /// Test seam: build the composition root around an injected catalog store and
+    /// no refresh service. The deep-link resolution path (``handleSpotlightTap``,
+    /// ``handleAuthChange``, ``present(albumID:)``) reads only ``catalogStore``,
+    /// so a unit test can supply a store whose `row(id:)` suspends on demand to
+    /// drive `present`'s most-recent-wins token latch across the `await` —
+    /// the one branch the sequential-await tests can't reach.
+    init(catalogStore: any CatalogStore) {
+        let (configuration, authService, api) = Self.makeCore()
+        self.configuration = configuration
+        self.authService = authService
+        self.api = api
+        self.catalogStore = catalogStore
+        self.catalogRefreshService = nil
+    }
+
+    /// Build the configuration + auth + API client shared by every initializer.
+    private static func makeCore() -> (WXYCAPIConfiguration, AuthService, APIClient) {
+        let bundle = Bundle.main
+        let configuration = resolveConfiguration(
+            authString: bundle.object(forInfoDictionaryKey: "WXYCAuthBaseURL") as? String,
+            apiString: bundle.object(forInfoDictionaryKey: "WXYCAPIBaseURL") as? String
+        )
+        let authService = AuthService(configuration: configuration)
+        let api = APIClient(configuration: configuration, authService: authService)
+        return (configuration, authService, api)
     }
 
     // MARK: Catalog refresh
@@ -157,8 +178,8 @@ final class AppDependencies {
     /// (with an O(1) clone lookup for the instant-header `fallback`) and present
     /// it immediately by setting ``Router/deepLink``. Otherwise — a tap that
     /// landed while signed out or mid-`restoreSession()` — park the id in
-    /// ``Router/pending`` for ``drainPendingDeepLink(isSignedIn:)`` to replay
-    /// once auth resolves. Never flips auth state or surfaces a sign-in prompt.
+    /// ``Router/pending`` for ``handleAuthChange(wasSignedIn:isSignedIn:)`` to
+    /// replay once auth resolves. Never flips auth state or surfaces a sign-in prompt.
     ///
     /// `isSignedIn` is passed in (rather than read off ``authService``) so the
     /// replay logic is unit-testable without driving a real sign-in; the caller

@@ -187,4 +187,79 @@ struct RouterDeepLinkTests {
         #expect(route.id == 200)
         #expect(deps.router.pending == nil)  // the stale stash is cleared
     }
+
+    @Test func concurrentPresentationsMostRecentWins() async throws {
+        // The token bow-out branch the sequential-await tests can't reach: two
+        // presentations interleaved across the resolveRoute suspension. A
+        // signed-in tap for 100 suspends inside the store's row(100) (token 1); a
+        // second tap for 200 then suspends in row(200) (token 2); when both reads
+        // release, the most-recently-requested album (200) wins and the stale 100
+        // bows out on the `guard token == presentationToken`. A GatedCatalogStore
+        // makes the interleaving deterministic instead of timing-dependent.
+        let store = GatedCatalogStore(rows: [Self.dogaRow(id: 100), Self.dogaRow(id: 200)])
+        let deps = AppDependencies(catalogStore: store)
+
+        let first = Task { await deps.handleSpotlightTap(albumID: 100, isSignedIn: true) }
+        await store.waitUntilEntered(count: 1)   // present(100) suspended, token = 1
+        let second = Task { await deps.handleSpotlightTap(albumID: 200, isSignedIn: true) }
+        await store.waitUntilEntered(count: 2)   // present(200) suspended, token = 2
+        await store.release()                    // both row() reads return
+        _ = await first.value
+        _ = await second.value
+
+        // Fresh wins; the stale 100 bowed out rather than clobbering the cover.
+        #expect(deps.router.deepLink?.id == 200)
+        #expect(deps.router.pending == nil)
+    }
+}
+
+/// A `CatalogStore` whose `row(id:)` records the requested id then blocks until
+/// ``release()``, so a test can suspend two `present(albumID:)` calls inside the
+/// store read at once and deterministically exercise the most-recent-wins token
+/// latch. An `actor`, so it's `Sendable` and its bookkeeping is race-free.
+private actor GatedCatalogStore: CatalogStore {
+    private var rowsByID: [Int: CatalogRow]
+    private var enteredCount = 0
+    private var released = false
+    private var rowWaiters: [CheckedContinuation<Void, Never>] = []
+    private var enteredWaiters: [(needed: Int, continuation: CheckedContinuation<Void, Never>)] = []
+
+    init(rows: [CatalogRow]) {
+        rowsByID = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
+    }
+
+    func row(id: Int) async -> CatalogRow? {
+        enteredCount += 1
+        let reached = enteredCount
+        let woken = enteredWaiters.filter { reached >= $0.needed }
+        enteredWaiters.removeAll { reached >= $0.needed }
+        for waiter in woken { waiter.continuation.resume() }
+        if !released {
+            await withCheckedContinuation { rowWaiters.append($0) }
+        }
+        return rowsByID[id]
+    }
+
+    /// Suspend until at least `count` `row(id:)` calls have entered.
+    func waitUntilEntered(count: Int) async {
+        if enteredCount >= count { return }
+        await withCheckedContinuation { enteredWaiters.append((count, $0)) }
+    }
+
+    /// Unblock every suspended (and future) `row(id:)` read.
+    func release() {
+        released = true
+        let waiters = rowWaiters
+        rowWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+
+    // Remaining CatalogStore surface — unused by the deep-link resolution path.
+    func count() async throws -> Int { rowsByID.count }
+    func ids() async throws -> Set<Int> { Set(rowsByID.keys) }
+    func lastModified() async throws -> String? { nil }
+    func rows(after id: Int?, limit: Int) async throws -> [CatalogRow] { [] }
+    func replace(rows: [CatalogRow], lastModified: String?) async throws {
+        rowsByID = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
+    }
 }
