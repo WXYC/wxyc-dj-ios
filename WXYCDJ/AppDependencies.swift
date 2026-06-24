@@ -36,6 +36,13 @@ final class AppDependencies {
     /// `@unchecked Sendable` sound (no two Spotlight batches open at once). `nil`
     /// when ``catalogStore`` is.
     let catalogRefreshService: CatalogRefreshService?
+    /// Cold-launch Spotlight deep-link state (issue #19 step 7), injected via
+    /// `.environment` and bound to RootView's `fullScreenCover`. The resolution
+    /// that turns a tapped `album.<id>` into a route lives here — on
+    /// ``handleSpotlightTap(albumID:isSignedIn:)`` /
+    /// ``drainPendingDeepLink(isSignedIn:)`` — because the `fallback` lookup
+    /// needs ``catalogStore``.
+    let router = Router()
 
     convenience init() {
         self.init(catalogStoreURL: Self.defaultCatalogStoreURL())
@@ -138,6 +145,50 @@ final class AppDependencies {
     func scheduleBackgroundRefreshIfAvailable() {
         guard catalogRefreshService != nil else { return }
         CatalogBackgroundTasks.scheduleNextPoll()
+    }
+
+    // MARK: Spotlight deep link (issue #19 step 7)
+
+    /// Handle a Spotlight tap on `album.<id>`. When signed in, resolve the route
+    /// (with an O(1) clone lookup for the instant-header `fallback`) and present
+    /// it immediately by setting ``Router/deepLink``. Otherwise — a tap that
+    /// landed while signed out or mid-`restoreSession()` — park the id in
+    /// ``Router/pending`` for ``drainPendingDeepLink(isSignedIn:)`` to replay
+    /// once auth resolves. Never flips auth state or surfaces a sign-in prompt.
+    ///
+    /// `isSignedIn` is passed in (rather than read off ``authService``) so the
+    /// replay logic is unit-testable without driving a real sign-in; the caller
+    /// (RootView) supplies `authService.isSignedIn`.
+    func handleSpotlightTap(albumID: Int, isSignedIn: Bool) async {
+        guard isSignedIn else {
+            router.pending = albumID
+            return
+        }
+        router.deepLink = await resolveRoute(albumID: albumID)
+        router.pending = nil
+    }
+
+    /// Replay a parked deep link once auth resolves to `.signedIn`. A no-op when
+    /// not signed in or when nothing is parked, so RootView can call it on every
+    /// auth-state change. On the flip to signed-in it resolves the parked id into
+    /// ``Router/deepLink`` (clone lookup for the `fallback`) and clears
+    /// ``Router/pending``.
+    func drainPendingDeepLink(isSignedIn: Bool) async {
+        guard isSignedIn, let albumID = router.pending else { return }
+        router.deepLink = await resolveRoute(albumID: albumID)
+        router.pending = nil
+    }
+
+    /// Build the route for `albumID`, looking up the cloned row for an instant
+    /// header render. A clone hit carries the row's ``CatalogRow/detailFallback``
+    /// so `AlbumDetailView` renders before `/library/info` resolves; a clone miss
+    /// (no store, absent row, or a store read error) falls through to
+    /// `fallback: nil`, which the detail view resolves by awaiting `/library/info`.
+    private func resolveRoute(albumID: Int) async -> AlbumRoute {
+        guard let catalogStore else { return AlbumRoute(id: albumID, fallback: nil) }
+        // `try?` collapses both a thrown read and an absent row to "no fallback".
+        let row = (try? await catalogStore.row(id: albumID)) ?? nil
+        return AlbumRoute(id: albumID, fallback: row?.detailFallback)
     }
 
     /// The on-device catalog clone's SQLite file:

@@ -89,7 +89,7 @@ The bin endpoints derive the DJ from the JWT's `sub` claim, so the client never 
 - **Token storage**: `KeychainTokenStorage` for production, `InMemoryTokenStorage` for tests; both implement `TokenStorage`.
 - **Debounced search**: 300 ms via `Task.sleep(for:)`, prior task cancelled on every keystroke. Min query length is 2 chars (matches dj-site).
 - **Date decoding**: ISO 8601 with or without fractional seconds, via a custom `JSONDecoder` strategy in `JSONCoders.swift`.
-- **On-device catalog clone + Spotlight (in progress, [#19](https://github.com/WXYC/wxyc-dj-ios/issues/19))**: `WXYCAPI/Catalog/` holds an id-keyed `SQLiteCatalogStore` cloned from the conditional-GET `/library/catalog` export and a `SpotlightCatalogIndexer` that mirrors it into a client-owned named Core Spotlight index (`domainIdentifier "catalog"`, `"album.<id>"` keys) for home-screen search, both driven by one shared `CatalogRefreshService`. The deep-link tap-through surface lands in a later step.
+- **On-device catalog clone + Spotlight ([#19](https://github.com/WXYC/wxyc-dj-ios/issues/19))**: `WXYCAPI/Catalog/` holds an id-keyed `SQLiteCatalogStore` cloned from the conditional-GET `/library/catalog` export and a `SpotlightCatalogIndexer` that mirrors it into a client-owned named Core Spotlight index (`domainIdentifier "catalog"`, `"album.<id>"` keys) for home-screen search, both driven by one shared `CatalogRefreshService`. Tapping a result opens the app directly on that release's detail (see [Spotlight deep link](#spotlight-deep-link), below).
 
 ### Catalog refresh (foreground-primary, background-best-effort)
 
@@ -116,6 +116,17 @@ e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateExpirationForTask
 ```
 
 The task must have been submitted (an `earliestBeginDate` request in the queue) before `_simulateLaunch` will fire it.
+
+### Spotlight deep link
+
+Tapping a catalog result in the iOS home-screen search opens its detail **in its own `fullScreenCover` + `NavigationStack`** over `RootView` — never pushed onto the Search/Bin tab stacks, so it can't pollute their navigation/scroll state or fabricate a Back target. Dismissing (the cover's "Close" button) returns the DJ to the exact tab and scroll position they left.
+
+- **Routing.** `RootView` carries an `.onContinueUserActivity(CSSearchableItemActionType)` handler (live in *every* auth state, including the cold-launch spinner). It parses the activity's `"album.<id>"` identifier with `CatalogSpotlight.albumID(from:)` and hands the id to `AppDependencies.handleSpotlightTap(albumID:isSignedIn:)`.
+- **Cold-launch replay.** A tap can arrive while signed out or mid-`restoreSession()`. When not signed in, the id is parked in `Router.pending` rather than presented. `RootView`'s `.onChange(of: auth.state)` calls `drainPendingDeepLink(isSignedIn:)` on every transition; on the flip to `.signedIn` it resolves the parked id into `Router.deepLink` and the cover appears. Without this stash-and-replay, cold-launch deep links would silently drop.
+- **Instant header.** Resolution does an O(1) `catalogStore.row(id:)` lookup. A clone **hit** carries the row's `CatalogRow.detailFallback` so `AlbumDetailView` renders its header + Catalog section immediately, before `/library/info` returns; a clone **miss** (cold cache, since the clone is populated *after* `restoreSession()` on a fresh install) routes with `fallback: nil` and the detail view resolves the row by awaiting `/library/info`.
+- **`Router`.** A `@MainActor @Observable` two-slot holder (`deepLink`, `pending`) owned by `AppDependencies` and injected via `.environment`. The auth-replay logic is unit-tested in `WXYCDJTests/RouterDeepLinkTests.swift` (the signed-in gate is passed in explicitly, so the replay is testable without driving a real sign-in).
+
+The deep link is an in-app `NSUserActivity` continuation (`CSSearchableItemActionType`), **not** a Universal Link — so it needs no Associated Domains / AASA entitlement.
 
 ## Conventions
 

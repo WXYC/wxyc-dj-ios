@@ -45,6 +45,30 @@ struct AuthServiceTests {
         #expect(try storage.load(.sessionToken) == "session-abc")
     }
 
+    @Test func isSignedInTracksState() async throws {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        // .unknown at construction.
+        #expect(service.isSignedIn == false)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-abc"],
+            body: Data("{}".utf8)
+        ))
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await service.signIn(username: "dj", password: "pw")
+        #expect(service.isSignedIn == true)  // .signedIn
+
+        await service.signOut()
+        #expect(service.isSignedIn == false)  // .signedOut
+    }
+
     @Test func signInFailureSurfacesInvalidCredentials() async throws {
         let session = StubRequestSession()
         let storage = InMemoryTokenStorage()
