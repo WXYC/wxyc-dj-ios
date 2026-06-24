@@ -4,7 +4,8 @@
 //
 //  Decision-logic tests for the shared CatalogRefreshService (issue #19 step 4):
 //  a 304 touches neither the store nor the index, a 200 wholesale-replaces the
-//  store and diff-reindexes (dropping vanished ids), the poll watermark is
+//  store and hands the in-memory snapshot to the indexer (which derives the
+//  add/change/remove delta against its own map, issue #36), the poll watermark is
 //  sourced from the index commit (so a failed reindex does NOT advance it and the
 //  next poll re-attempts), and an end-to-end pass over the real store + indexer.
 //
@@ -75,13 +76,17 @@ struct CatalogRefreshServiceTests {
         #expect(request.value(forHTTPHeaderField: "If-Modified-Since") == watermark)
     }
 
-    // MARK: 200 — replace + diff-reindex
+    // MARK: 200 — replace + hand the snapshot to the indexer
 
-    @Test func modifiedReplacesStoreAndReindexesDroppingVanishedIDs() async throws {
+    @Test func modifiedReplacesStoreAndHandsSnapshotToIndexer() async throws {
         let (client, session) = try await Self.makeSignedInClient()
-        // Previously cloned {100, 999}; the new export is {100, 200}, so 999 vanished.
-        let store = SpyCatalogStore(rows: [Self.row(100), Self.row(999)])
-        let indexer = SpyCatalogIndexer(watermark: nil)
+        // The INDEX previously held {100, 999} (the removed set now derives from the
+        // indexer's own map, not the store); the new export is {100, 200}. Row 100
+        // is byte-identical to its export row (unchanged), so the delta is: add 200,
+        // remove 999. The store starts empty — its contents no longer drive the diff.
+        let indexedRows = [try Fixtures.catalogRows()[0], Self.row(999)]
+        let store = SpyCatalogStore()
+        let indexer = SpyCatalogIndexer(watermark: nil, indexedRows: indexedRows)
         let service = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer })
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200,
@@ -91,14 +96,15 @@ struct CatalogRefreshServiceTests {
 
         let outcome = try await service.refresh()
 
-        #expect(outcome == .refreshed(rowCount: 2, removed: 1))
+        // upserted 1 (id 200 added; id 100 unchanged) + removed 1 (id 999).
+        #expect(outcome == .refreshed(rowCount: 2, upserted: 1, removed: 1))
         #expect(store.replaceCalls == [
             .init(rowIDs: [100, 200], lastModified: "Tue, 02 Jun 2026 09:30:00 GMT")
         ])
-        // observedStoreIDs == the NEW ids proves the store was replaced BEFORE the
-        // reindex read it — a service that reindexed first would observe {100, 999}.
+        // The service hands the indexer the full NEW export snapshot; the indexer
+        // derives the remove set internally from its own map.
         #expect(indexer.reindexCalls == [
-            .init(removedIDs: [999], watermark: "Tue, 02 Jun 2026 09:30:00 GMT", observedStoreIDs: [100, 200])
+            .init(snapshotIDs: [100, 200], watermark: "Tue, 02 Jun 2026 09:30:00 GMT", upserted: 1, removed: 1)
         ])
         #expect(indexer.indexedWatermark() == "Tue, 02 Jun 2026 09:30:00 GMT")
         // First-ever poll (nil index watermark) carries no conditional header.
@@ -106,10 +112,10 @@ struct CatalogRefreshServiceTests {
         #expect(request.value(forHTTPHeaderField: "If-Modified-Since") == nil)
     }
 
-    @Test func firstPopulationFromEmptyStoreRemovesNothing() async throws {
+    @Test func firstPopulationFromEmptyIndexRemovesNothing() async throws {
         let (client, session) = try await Self.makeSignedInClient()
         let store = SpyCatalogStore()
-        let indexer = SpyCatalogIndexer(watermark: nil)
+        let indexer = SpyCatalogIndexer(watermark: nil)   // empty map -> all adds
         let service = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer })
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200,
@@ -119,9 +125,9 @@ struct CatalogRefreshServiceTests {
 
         let outcome = try await service.refresh()
 
-        #expect(outcome == .refreshed(rowCount: 2, removed: 0))
+        #expect(outcome == .refreshed(rowCount: 2, upserted: 2, removed: 0))
         #expect(indexer.reindexCalls == [
-            .init(removedIDs: [], watermark: "W", observedStoreIDs: [100, 200])
+            .init(snapshotIDs: [100, 200], watermark: "W", upserted: 2, removed: 0)
         ])
     }
 
@@ -248,7 +254,7 @@ struct CatalogRefreshServiceTests {
         #expect(indexers[0].indexedWatermark() == "OLD")  // #1 failed -> watermark NOT advanced
         #expect(indexers[1].indexedWatermark() == "NEW")  // #2 (fresh) recovered and committed
         #expect(indexers[1].reindexCalls.count == 1)      // the retry actually reindexed
-        #expect(outcome == .refreshed(rowCount: 2, removed: 0))
+        #expect(outcome == .refreshed(rowCount: 2, upserted: 2, removed: 0))
         // The store was replaced on each run (briefly ahead of the index)...
         #expect(store.replaceCalls.map(\.lastModified) == ["NEW", "NEW"])
         // ...and both polls were conditional on the un-advanced "OLD" watermark.
@@ -306,10 +312,10 @@ struct CatalogRefreshServiceTests {
         ))
         let first = try await service.refresh()
 
-        #expect(first == .refreshed(rowCount: 2, removed: 0))
+        #expect(first == .refreshed(rowCount: 2, upserted: 2, removed: 0))
         #expect(try await store.count() == 2)
         #expect(fake.recording.indexedItems.map(\.identifier) == ["album.100", "album.200"])
-        #expect(fake.recording.committedClientState == Data("W".utf8))
+        #expect(fake.committedIndexState?.watermark == "W")
 
         // Second refresh: the index watermark "W" goes out as If-Modified-Since
         // and the server answers 304 — a no-op.

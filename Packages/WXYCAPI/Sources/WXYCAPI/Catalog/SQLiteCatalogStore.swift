@@ -91,25 +91,6 @@ public actor SQLiteCatalogStore: CatalogStore {
         return Int(sqlite3_column_int64(stmt, 0))
     }
 
-    public func ids() throws -> Set<Int> {
-        // SELECT the primary key only — never the row BLOB — so the step-4 diff
-        // stays cheap on a tens-of-thousands-row catalog.
-        let stmt = try Self.prepare(db, "SELECT id FROM catalog;")
-        defer { sqlite3_finalize(stmt) }
-        var ids: Set<Int> = []
-        loop: while true {
-            switch sqlite3_step(stmt) {
-            case SQLITE_ROW:
-                ids.insert(Int(sqlite3_column_int64(stmt, 0)))
-            case SQLITE_DONE:
-                break loop
-            default:
-                throw Self.error(db, "step ids")
-            }
-        }
-        return ids
-    }
-
     public func lastModified() throws -> String? {
         let stmt = try Self.prepare(db, "SELECT value FROM meta WHERE key = 'last_modified';")
         defer { sqlite3_finalize(stmt) }
@@ -122,34 +103,6 @@ public actor SQLiteCatalogStore: CatalogStore {
         default:
             throw Self.error(db, "step watermark read")
         }
-    }
-
-    public func rows(after id: Int?, limit: Int) throws -> [CatalogRow] {
-        guard limit > 0 else { return [] }
-        let stmt = try Self.prepare(db, "SELECT row FROM catalog WHERE id > ? ORDER BY id LIMIT ?;")
-        defer { sqlite3_finalize(stmt) }
-        // Album ids are positive, so `Int64.min` as the nil-cursor sentinel makes
-        // `id > ?` match every row from the start. `limit` is bound as int64 so a
-        // caller can't overflow Int32.
-        guard sqlite3_bind_int64(stmt, 1, id.map(Int64.init) ?? Int64.min) == SQLITE_OK,
-              sqlite3_bind_int64(stmt, 2, Int64(limit)) == SQLITE_OK else {
-            throw Self.error(db, "bind page")
-        }
-        var page: [CatalogRow] = []
-        loop: while true {
-            switch sqlite3_step(stmt) {
-            case SQLITE_ROW:
-                // A corrupt blob throws and fails the page — same fail-closed
-                // posture as `replace`/the NDJSON parser: a torn read never
-                // yields a silently-truncated index.
-                if let row = try Self.decodeRow(stmt) { page.append(row) }
-            case SQLITE_DONE:
-                break loop
-            default:
-                throw Self.error(db, "step page")
-            }
-        }
-        return page
     }
 
     public func replace(rows: [CatalogRow], lastModified: String?) throws {

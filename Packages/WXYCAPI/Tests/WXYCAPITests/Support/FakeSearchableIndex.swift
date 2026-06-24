@@ -75,6 +75,22 @@ final class FakeSearchableIndex: SearchableIndexing {
 
     var recording: Recording { state.withLock { $0 } }
 
+    /// The most recent committed client state decoded as a ``CatalogIndexState``
+    /// (issue #36's watermark + fingerprint map), or `nil` if nothing was
+    /// committed. Lets a test read the persisted map and watermark directly.
+    var committedIndexState: CatalogIndexState? {
+        guard let data = recording.committedClientState, !data.isEmpty else { return nil }
+        return CatalogIndexState(decoding: data)
+    }
+
+    /// Every committed client state decoded, in order — to assert intermediate
+    /// batches preserved the old map / withheld the watermark while only the
+    /// final batch advanced both. A blob that doesn't decode surfaces as
+    /// ``CatalogIndexState/empty`` rather than vanishing.
+    var committedIndexStates: [CatalogIndexState] {
+        recording.committedClientStates.map { CatalogIndexState(decoding: $0) ?? .empty }
+    }
+
     // MARK: SearchableIndexing
 
     func beginBatch() {
