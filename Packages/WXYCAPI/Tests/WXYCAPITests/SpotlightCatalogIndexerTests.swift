@@ -2,10 +2,11 @@
 //  SpotlightCatalogIndexerTests.swift
 //  WXYCAPITests
 //
-//  Tests the Core Spotlight indexer (issue #19 step 3) against FakeSearchableIndex
-//  and a real SQLiteCatalogStore: diff-upsert of every row, chunked batches,
-//  targeted deletes, the watermark committed once at endBatch, and the
-//  commit-only-on-success crash-safety property step 4's invariant relies on.
+//  Tests the Core Spotlight indexer (issue #36) against FakeSearchableIndex: the
+//  add/change/remove/unchanged diff against the index's own persisted fingerprint
+//  map, delta-only upserts, chunked upserts AND deletes, the watermark + map
+//  advanced together only on the final batch, and the crash-reproducible delete
+//  — a vanished id re-derived from the surviving map by a fresh indexer.
 //
 //  Created by Jake on 06/23/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -17,238 +18,331 @@ import Testing
 
 @Suite("SpotlightCatalogIndexer")
 struct SpotlightCatalogIndexerTests {
-    // MARK: Store helpers (a real SQLiteCatalogStore exercises rows(after:limit:) too)
+    // MARK: Row + state helpers
 
-    static func withStore(
-        rows: [CatalogRow],
-        watermark: String? = nil,
-        _ body: (SQLiteCatalogStore) async throws -> Void
-    ) async throws {
-        let url = FileManager.default.temporaryDirectory
-            .appending(path: "indexer-store-\(UUID().uuidString).sqlite")
-        defer {
-            let base = url.path(percentEncoded: false)
-            try? FileManager.default.removeItem(at: url)
-            for suffix in ["-journal", "-wal", "-shm"] {
-                try? FileManager.default.removeItem(at: URL(filePath: base + suffix))
-            }
-        }
-        do {
-            let store = try SQLiteCatalogStore(url: url)
-            try await store.replace(rows: rows, lastModified: watermark)
-            try await body(store)
-        }
+    /// A WXYC-representative stand-in row with the given id; override `albumTitle`
+    /// or `artworkURL` to forge a fingerprinted change for a change test.
+    static func row(_ id: Int, albumTitle: String? = nil, artworkURL: URL? = nil) -> CatalogRow {
+        CatalogRow(
+            id: id, artistName: "Artist \(id)", albumTitle: albumTitle ?? "Album \(id)",
+            codeLetters: "AAA", codeNumber: id, codeArtistNumber: 1,
+            label: nil, genreName: nil, formatName: nil,
+            onStreaming: nil, plays: nil, artworkURL: artworkURL,
+            rotationBin: nil, rotationKillDate: nil
+        )
     }
 
     static func numberedRows(_ count: Int) -> [CatalogRow] {
-        (1...count).map { i in
-            CatalogRow(
-                id: i, artistName: "Artist \(i)", albumTitle: "Album \(i)",
-                codeLetters: "AAA", codeNumber: i, codeArtistNumber: 1,
-                label: nil, genreName: nil, formatName: nil,
-                onStreaming: nil, plays: nil, artworkURL: nil,
-                rotationBin: nil, rotationKillDate: nil
-            )
-        }
+        (1...count).map { row($0) }
     }
 
-    // MARK: Tests
-
-    @Test func upsertsEveryRowAsSearchableItemAndCommitsWatermark() async throws {
-        try await Self.withStore(rows: Self.numberedRows(3)) { store in
-            let fake = FakeSearchableIndex()
-            let indexer = SpotlightCatalogIndexer(index: fake)
-
-            try await indexer.reindex(store: store, removedIDs: [], watermark: "Mon, 01 Jun 2026 12:00:00 GMT")
-
-            let rec = fake.recording
-            #expect(rec.beginCount == 1)
-            #expect(rec.endCount == 1)
-            #expect(rec.indexedItems.map(\.identifier) == ["album.1", "album.2", "album.3"])
-            #expect(rec.indexedItems.allSatisfy { $0.domainIdentifier == "catalog" })
-            #expect(rec.indexedItems.map(\.title) == ["Album 1", "Album 2", "Album 3"])
-            #expect(rec.deletedIdentifiers.isEmpty)
-            #expect(rec.committedClientState == Data("Mon, 01 Jun 2026 12:00:00 GMT".utf8))
-            #expect(try await indexer.indexedWatermark() == "Mon, 01 Jun 2026 12:00:00 GMT")
-        }
+    /// The fingerprint map for `rows` — the index's persisted record of holding them.
+    static func map(_ rows: [CatalogRow]) -> [Int: UInt64] {
+        var map: [Int: UInt64] = [:]
+        for row in rows { map[row.id] = CatalogSpotlight.fingerprint(for: row) }
+        return map
     }
 
-    @Test func chunksIndexCallsAtChunkSize() async throws {
-        try await Self.withStore(rows: Self.numberedRows(5)) { store in
-            let fake = FakeSearchableIndex()
-            let indexer = SpotlightCatalogIndexer(index: fake, chunkSize: 2)
-
-            try await indexer.reindex(store: store, removedIDs: [], watermark: nil)
-
-            // 5 rows at chunkSize 2 → batches of 2, 2, 1.
-            #expect(fake.recording.indexBatchSizes == [2, 2, 1])
-            #expect(fake.recording.indexedItems.count == 5)
-        }
+    /// Encode the "index currently holds `rows` at `watermark`" state as the
+    /// client-state blob a prior reindex would have committed.
+    static func seed(rows: [CatalogRow], watermark: String?) -> Data {
+        CatalogIndexState(watermark: watermark, fingerprints: map(rows)).encode()
     }
 
-    @Test func deletesOnlyRemovedIDsByIdentifier() async throws {
-        try await Self.withStore(rows: Self.numberedRows(3)) { store in
-            let fake = FakeSearchableIndex()
-            let indexer = SpotlightCatalogIndexer(index: fake)
+    // MARK: First-ever index (empty map -> all adds)
 
-            try await indexer.reindex(store: store, removedIDs: [42, 7], watermark: nil)
+    @Test func firstIndexUpsertsEveryRowAndCommitsWatermarkAndMap() async throws {
+        let fake = FakeSearchableIndex()   // never populated
+        let indexer = SpotlightCatalogIndexer(index: fake)
+        let rows = Self.numberedRows(3)
 
-            #expect(fake.recording.deletedIdentifiers == ["album.42", "album.7"])
-        }
-    }
+        let summary = try await indexer.reindex(snapshot: rows, watermark: "Mon, 01 Jun 2026 12:00:00 GMT")
 
-    @Test func nilWatermarkCommitsEmptyStateAndReadsBackNil() async throws {
-        try await Self.withStore(rows: Self.numberedRows(1)) { store in
-            let fake = FakeSearchableIndex()
-            let indexer = SpotlightCatalogIndexer(index: fake)
-
-            try await indexer.reindex(store: store, removedIDs: [], watermark: nil)
-
-            #expect(fake.recording.committedClientState == Data())
-            #expect(try await indexer.indexedWatermark() == nil)
-        }
-    }
-
-    @Test func emptyStoreOpensAndClosesBatchWithNoIndexCalls() async throws {
-        try await Self.withStore(rows: []) { store in
-            let fake = FakeSearchableIndex()
-            let indexer = SpotlightCatalogIndexer(index: fake)
-
-            try await indexer.reindex(store: store, removedIDs: [], watermark: "w")
-
-            let rec = fake.recording
-            #expect(rec.beginCount == 1)
-            #expect(rec.endCount == 1)
-            #expect(rec.indexBatchSizes.isEmpty)
-            #expect(rec.indexedItems.isEmpty)
-        }
-    }
-
-    @Test func throwMidCommitLeavesPriorWatermarkUnchanged() async throws {
-        // Crash-safety seam for step 4: a failure during the commit must not
-        // advance the index watermark, so the next refresh re-attempts.
-        try await Self.withStore(rows: Self.numberedRows(2)) { store in
-            let fake = FakeSearchableIndex(
-                initialClientState: Data("OLD-WATERMARK".utf8),
-                failOn: .endBatch
-            )
-            let indexer = SpotlightCatalogIndexer(index: fake)
-
-            await #expect(throws: FakeSearchableIndex.FakeError.self) {
-                try await indexer.reindex(store: store, removedIDs: [], watermark: "NEW-WATERMARK")
-            }
-
-            #expect(fake.recording.endCount == 0)
-            let restored = try await indexer.indexedWatermark()
-            #expect(restored == "OLD-WATERMARK")
-        }
+        let rec = fake.recording
+        #expect(rec.beginCount == 1)
+        #expect(rec.endCount == 1)
+        #expect(rec.indexedItems.map(\.identifier) == ["album.1", "album.2", "album.3"])
+        #expect(rec.indexedItems.allSatisfy { $0.domainIdentifier == "catalog" })
+        #expect(rec.indexedItems.map(\.title) == ["Album 1", "Album 2", "Album 3"])
+        #expect(rec.deletedIdentifiers.isEmpty)
+        #expect(summary == ReindexSummary(upserted: 3, removed: 0))
+        // Watermark AND the fingerprint map for all three rows are committed.
+        #expect(fake.committedIndexState?.watermark == "Mon, 01 Jun 2026 12:00:00 GMT")
+        #expect(fake.committedIndexState?.fingerprints == Self.map(rows))
+        #expect(try await indexer.indexedWatermark() == "Mon, 01 Jun 2026 12:00:00 GMT")
     }
 
     @Test func indexedWatermarkIsNilWhenIndexNeverPopulated() async throws {
-        let fake = FakeSearchableIndex()
-        let indexer = SpotlightCatalogIndexer(index: fake)
+        let indexer = SpotlightCatalogIndexer(index: FakeSearchableIndex())
         #expect(try await indexer.indexedWatermark() == nil)
     }
 
-    @Test func boundsEachBatchAtChunkSizeAcrossManyRows() async throws {
-        // Core Spotlight caps a single beginBatch/endBatch cycle at 32,767 items;
-        // accumulating the whole catalog into one batch throws -1001 at endBatch.
-        // Each chunk must therefore close its own batch. 5 rows at chunkSize 2 ->
-        // three bounded batches of 2, 2, 1 — not one batch of five.
-        try await Self.withStore(rows: Self.numberedRows(5)) { store in
-            let fake = FakeSearchableIndex()
-            let indexer = SpotlightCatalogIndexer(index: fake, chunkSize: 2)
+    @Test func nilWatermarkCommitsStateThatReadsBackNil() async throws {
+        let fake = FakeSearchableIndex()
+        let indexer = SpotlightCatalogIndexer(index: fake)
 
-            try await indexer.reindex(store: store, removedIDs: [], watermark: "W")
+        try await indexer.reindex(snapshot: Self.numberedRows(1), watermark: nil)
 
-            let rec = fake.recording
-            #expect(rec.beginCount == 3)
-            #expect(rec.endCount == 3)
-            #expect(rec.indexBatchSizes == [2, 2, 1])
-            #expect(rec.indexBatchSizes.allSatisfy { $0 <= 2 })
-        }
+        #expect(fake.committedIndexState?.watermark == nil)
+        #expect(try await indexer.indexedWatermark() == nil)
     }
 
-    @Test func advancesTheWatermarkOnlyOnTheFinalBatch() async throws {
-        // Crash-safety invariant: indexedWatermark() must advance to the new
-        // watermark ONLY after the whole reindex completes. With batches split per
-        // chunk, the intermediate batches commit empty client state and only the
-        // last batch carries the real watermark — so a crash between batches leaves
-        // the index un-advanced and the next refresh re-attempts.
-        try await Self.withStore(rows: Self.numberedRows(5)) { store in
-            let fake = FakeSearchableIndex()
-            let indexer = SpotlightCatalogIndexer(index: fake, chunkSize: 2)
+    // MARK: Delta — unchanged rows are skipped
 
-            try await indexer.reindex(store: store, removedIDs: [], watermark: "W")
+    @Test func unchangedSnapshotUpsertsNothingButStillAdvancesWatermark() async throws {
+        // A 200 whose changes are confined to non-fingerprinted fields (or no real
+        // change) must NOT re-upsert the catalog — but must still advance the
+        // watermark, or the next poll re-fetches the same 200 forever.
+        let rows = Self.numberedRows(3)
+        let fake = FakeSearchableIndex(initialClientState: Self.seed(rows: rows, watermark: "OLD"))
+        let indexer = SpotlightCatalogIndexer(index: fake)
 
-            #expect(fake.recording.committedClientStates == [Data(), Data(), Data("W".utf8)])
-            #expect(try await indexer.indexedWatermark() == "W")
-        }
+        let summary = try await indexer.reindex(snapshot: rows, watermark: "NEW")
+
+        let rec = fake.recording
+        #expect(rec.indexBatchSizes.isEmpty)        // zero indexItems calls
+        #expect(rec.deletedIdentifiers.isEmpty)
+        #expect(rec.beginCount == 1 && rec.endCount == 1)   // one empty commit
+        #expect(summary == ReindexSummary(upserted: 0, removed: 0))
+        #expect(fake.committedIndexState?.watermark == "NEW")
+        #expect(try await indexer.indexedWatermark() == "NEW")
     }
 
-    @Test func aFailureOnALaterBatchDoesNotAdvanceTheWatermark() async throws {
-        // Multi-batch crash safety: when the reindex throws AFTER an earlier batch
-        // has already committed (empty) client state, indexedWatermark() must not
-        // report the new watermark — the failing batch never reached the
-        // watermark-bearing final batch, so the next refresh re-fetches and
-        // re-indexes rather than 304-ing past a half-built index.
-        try await Self.withStore(rows: Self.numberedRows(5)) { store in
-            // 5 rows at chunkSize 2 -> indexItems calls for [1,2] then [3,4] then
-            // [5]; fail the 2nd so the first batch's empty commit has already landed.
-            let fake = FakeSearchableIndex(failIndexItemsOnCall: 2)
-            let indexer = SpotlightCatalogIndexer(index: fake, chunkSize: 2)
+    @Test func changingOneRowReupsertsExactlyThatRow() async throws {
+        // Acceptance criterion: a 200 that changes one existing row's metadata
+        // re-upserts EXACTLY that row — not zero (stale), not the whole catalog.
+        let original = [Self.row(1), Self.row(2)]
+        let fake = FakeSearchableIndex(initialClientState: Self.seed(rows: original, watermark: "OLD"))
+        let indexer = SpotlightCatalogIndexer(index: fake)
 
-            await #expect(throws: FakeSearchableIndex.FakeError.self) {
-                try await indexer.reindex(store: store, removedIDs: [], watermark: "NEW")
-            }
+        // Row 1's album title changes; row 2 is byte-identical.
+        let changed = [Self.row(1, albumTitle: "Album 1 (Remaster)"), Self.row(2)]
+        let summary = try await indexer.reindex(snapshot: changed, watermark: "NEW")
 
-            // The first batch committed empty client state *before* the failure —
-            // proving this exercises the multi-batch path. (The old single-batch
-            // code commits nothing until the end, so a mid-loop throw would leave
-            // committedClientStates == [], and this test would not distinguish it.)
-            #expect(fake.recording.committedClientStates == [Data()])
-            let watermark = try await indexer.indexedWatermark()
-            #expect(watermark == nil)
-        }
+        let rec = fake.recording
+        #expect(rec.indexedItems.map(\.identifier) == ["album.1"])      // exactly that row
+        #expect(rec.indexedItems.map(\.title) == ["Album 1 (Remaster)"]) // reflecting the new metadata
+        #expect(rec.deletedIdentifiers.isEmpty)
+        #expect(summary == ReindexSummary(upserted: 1, removed: 0))
+        // The persisted map now records row 1's new fingerprint.
+        #expect(fake.committedIndexState?.fingerprints[1] == CatalogSpotlight.fingerprint(for: changed[0]))
     }
 
-    @Test func exactMultipleOfChunkSizeIndexesEachRowOnceAcrossBatches() async throws {
-        // The held-back-last-page logic is where an off-by-one would hide on an
-        // even boundary: 4 rows at chunkSize 2 -> two full pages, and the loop only
-        // learns the second is last by reading a trailing empty page. Each row must
-        // be indexed exactly once, in two batches, with the watermark on the last.
-        try await Self.withStore(rows: Self.numberedRows(4)) { store in
-            let fake = FakeSearchableIndex()
-            let indexer = SpotlightCatalogIndexer(index: fake, chunkSize: 2)
+    @Test func artworkOnlyChangeReupserts() async throws {
+        // #44 sequences thumbnails on top of this; an artwork-only change must
+        // re-upsert so the thumbnail refreshes on a change day.
+        let original = [Self.row(1, artworkURL: URL(string: "https://img.example/old.jpg"))]
+        let fake = FakeSearchableIndex(initialClientState: Self.seed(rows: original, watermark: "OLD"))
+        let indexer = SpotlightCatalogIndexer(index: fake)
 
-            try await indexer.reindex(store: store, removedIDs: [], watermark: "W")
+        let changed = [Self.row(1, artworkURL: URL(string: "https://img.example/new.jpg"))]
+        let summary = try await indexer.reindex(snapshot: changed, watermark: "NEW")
 
-            let rec = fake.recording
-            #expect(rec.indexBatchSizes == [2, 2])
-            #expect(rec.indexedItems.map(\.identifier) == ["album.1", "album.2", "album.3", "album.4"])
-            // Intermediate batch empty, final batch carries the watermark.
-            #expect(rec.committedClientStates == [Data(), Data("W".utf8)])
-        }
+        #expect(fake.recording.indexedItems.map(\.identifier) == ["album.1"])
+        #expect(summary == ReindexSummary(upserted: 1, removed: 0))
     }
 
-    @Test func deletesRideTheFinalBatchInTheMultiBatchPath() async throws {
-        // The existing delete test is single-batch (default chunkSize). Here the
-        // deletes must still be applied — and ride the final, watermark-bearing
-        // batch — when the reindex spans several batches.
-        try await Self.withStore(rows: Self.numberedRows(5)) { store in
-            let fake = FakeSearchableIndex()
-            let indexer = SpotlightCatalogIndexer(index: fake, chunkSize: 2)
+    // MARK: Add + change + remove together
 
-            try await indexer.reindex(store: store, removedIDs: [42, 7], watermark: "W")
+    @Test func addChangeRemoveProducesExactlyTheDelta() async throws {
+        // Acceptance criterion: an export that simultaneously adds, changes, and
+        // removes yields exactly {add ∪ change} upserts and {remove} deletes.
+        let original = [Self.row(1), Self.row(2), Self.row(3)]
+        let fake = FakeSearchableIndex(initialClientState: Self.seed(rows: original, watermark: "OLD"))
+        let indexer = SpotlightCatalogIndexer(index: fake)
 
-            let rec = fake.recording
-            #expect(rec.deletedIdentifiers == ["album.42", "album.7"])
-            #expect(rec.indexBatchSizes == [2, 2, 1])
-            // The deletes land in the 3rd (final) batch — the one that commits the
-            // real watermark — not an intermediate empty-state batch.
-            #expect(rec.deletedInBatch == [3])
-            #expect(rec.endCount == 3)
-            #expect(rec.committedClientStates == [Data(), Data(), Data("W".utf8)])
+        // 1 changed, 2 unchanged, 3 removed, 4 added.
+        let snapshot = [Self.row(1, albumTitle: "Changed"), Self.row(2), Self.row(4)]
+        let summary = try await indexer.reindex(snapshot: snapshot, watermark: "NEW")
+
+        let rec = fake.recording
+        // Upserts in snapshot order: 1 (changed), 4 (added). 2 (unchanged) skipped.
+        #expect(rec.indexedItems.map(\.identifier) == ["album.1", "album.4"])
+        #expect(rec.deletedIdentifiers == ["album.3"])
+        #expect(summary == ReindexSummary(upserted: 2, removed: 1))
+        #expect(fake.committedIndexState?.fingerprints.keys.sorted() == [1, 2, 4])
+    }
+
+    // MARK: Crash-reproducible delete (the headline fix)
+
+    @Test func vanishedIdIsRemovedOnRetryWithAFreshIndexerAfterAMidCommitCrash() async throws {
+        // Acceptance criterion 1: a vanished album is removed from Spotlight even
+        // when the reindex crashes mid-commit and is retried on a later launch
+        // with a fresh indexer. The persisted map must survive the crash so the
+        // delete is RE-DERIVED — not recomputed to empty (the old store-derived
+        // bug, where `replace` had already dropped the only record of the vanish).
+        let indexed = [Self.row(1), Self.row(2), Self.row(3)]
+        let seed = Self.seed(rows: indexed, watermark: "OLD")
+
+        // Run 1: a fresh indexer over an index whose endBatch fails — a mid-commit
+        // crash. Snapshot drops id 3 (1 & 2 unchanged), so the only work is the
+        // delete of album.3, which never commits.
+        let crashed = FakeSearchableIndex(initialClientState: seed, failOn: .endBatch)
+        let indexer1 = SpotlightCatalogIndexer(index: crashed)
+        await #expect(throws: FakeSearchableIndex.FakeError.self) {
+            try await indexer1.reindex(snapshot: [Self.row(1), Self.row(2)], watermark: "NEW")
         }
+        // The persisted client state is unchanged: still the OLD map, which STILL
+        // records id 3. This is what survives the crash.
+        let survived = try #require(crashed.recording.committedClientState)
+        let survivedState = try #require(CatalogIndexState(decoding: survived))
+        #expect(survivedState.watermark == "OLD")          // watermark not advanced
+        #expect(survivedState.fingerprints.keys.contains(3))   // the vanished id survives
+
+        // Run 2: a FRESH indexer over a FRESH handle reading the SAME persisted
+        // client state (modelling the daemon's shared resume token). The delete is
+        // re-derived from the surviving map and applied.
+        let recovered = FakeSearchableIndex(initialClientState: survived)
+        let indexer2 = SpotlightCatalogIndexer(index: recovered)
+        let summary = try await indexer2.reindex(snapshot: [Self.row(1), Self.row(2)], watermark: "NEW")
+
+        #expect(recovered.recording.deletedIdentifiers == ["album.3"])   // not lost
+        #expect(summary == ReindexSummary(upserted: 0, removed: 1))
+        #expect(recovered.committedIndexState?.fingerprints.keys.sorted() == [1, 2])
+        #expect(recovered.committedIndexState?.watermark == "NEW")
+        #expect(try await indexer2.indexedWatermark() == "NEW")
+    }
+
+    // MARK: Atomic, final-batch-only commit (watermark + map together)
+
+    @Test func intermediateBatchesPreserveOldMapAndWithholdWatermark() async throws {
+        // Crash-safety crux: across a multi-batch reindex the intermediate batches
+        // must commit the OLD map (so a vanished id stays re-derivable) and a nil
+        // watermark (so the next poll re-fetches); only the final batch advances
+        // both. Old map = {10, 11} (both vanish); snapshot adds {1, 2, 3}.
+        let removedRows = [Self.row(10), Self.row(11)]
+        let fake = FakeSearchableIndex(initialClientState: Self.seed(rows: removedRows, watermark: "OLD"))
+        let indexer = SpotlightCatalogIndexer(index: fake, chunkSize: 2)
+
+        let snapshot = Self.numberedRows(3)   // ids 1,2,3 — all adds
+        let summary = try await indexer.reindex(snapshot: snapshot, watermark: "W")
+
+        let rec = fake.recording
+        // upserts [1,2,3] then deletes [10,11], packed ≤2/batch:
+        //   batch1 = upsert 1,2          batch2 = upsert 3 + delete 10
+        //   batch3 = delete 11 (final)
+        #expect(rec.indexBatchSizes == [2, 1])
+        #expect(rec.deletedIdentifiers == ["album.10", "album.11"])
+        #expect(rec.deletedInBatch == [2, 3])          // deletes are chunked, not all on one batch
+        #expect(rec.beginCount == 3 && rec.endCount == 3)
+        // Intermediate batches: nil watermark + OLD map; final: "W" + new map.
+        let old = CatalogIndexState(watermark: nil, fingerprints: Self.map(removedRows))
+        let final = CatalogIndexState(watermark: "W", fingerprints: Self.map(snapshot))
+        #expect(fake.committedIndexStates == [old, old, final])
+        #expect(summary == ReindexSummary(upserted: 3, removed: 2))
+        #expect(try await indexer.indexedWatermark() == "W")
+    }
+
+    @Test func failureOnALaterBatchLeavesWatermarkAndMapUnAdvanced() async throws {
+        // A throw AFTER an earlier batch already committed must leave BOTH the
+        // watermark and the map un-advanced — so the next poll re-fetches and
+        // re-derives the identical work set (including the still-pending removes).
+        let removedRows = [Self.row(10), Self.row(11)]
+        let oldMap = Self.map(removedRows)
+        // Fail the 2nd indexItems call, after batch 1 has committed.
+        let fake = FakeSearchableIndex(
+            initialClientState: Self.seed(rows: removedRows, watermark: "OLD"),
+            failIndexItemsOnCall: 2
+        )
+        let indexer = SpotlightCatalogIndexer(index: fake, chunkSize: 2)
+
+        await #expect(throws: FakeSearchableIndex.FakeError.self) {
+            try await indexer.reindex(snapshot: Self.numberedRows(5), watermark: "NEW")
+        }
+
+        // Exactly one (intermediate) commit landed, preserving the OLD map and a
+        // nil watermark — proving this is the multi-batch path, not a no-op.
+        #expect(fake.committedIndexStates == [CatalogIndexState(watermark: nil, fingerprints: oldMap)])
+        #expect(try await indexer.indexedWatermark() == nil)
+    }
+
+    @Test func throwOnSingleBatchLeavesPriorStateIntact() async throws {
+        // Single-batch failure: the prior committed state (OLD map + watermark)
+        // must remain readable, so a fresh indexer recovers on the next run.
+        let indexed = Self.numberedRows(2)
+        let fake = FakeSearchableIndex(
+            initialClientState: Self.seed(rows: indexed, watermark: "OLD-WATERMARK"),
+            failOn: .endBatch
+        )
+        let indexer = SpotlightCatalogIndexer(index: fake)
+
+        await #expect(throws: FakeSearchableIndex.FakeError.self) {
+            // A real change so there IS work in the single batch.
+            try await indexer.reindex(snapshot: [Self.row(1, albumTitle: "x"), Self.row(2)], watermark: "NEW")
+        }
+
+        #expect(fake.recording.endCount == 0)
+        #expect(try await indexer.indexedWatermark() == "OLD-WATERMARK")
+    }
+
+    // MARK: Chunk-cap bounding
+
+    @Test func boundsEachBatchAtChunkSizeAcrossManyUpserts() async throws {
+        // Core Spotlight caps a single batch at 32,767 items; each chunk must close
+        // its own batch. 5 first-ever adds at chunkSize 2 -> bounded batches 2,2,1.
+        let fake = FakeSearchableIndex()
+        let indexer = SpotlightCatalogIndexer(index: fake, chunkSize: 2)
+
+        try await indexer.reindex(snapshot: Self.numberedRows(5), watermark: "W")
+
+        let rec = fake.recording
+        #expect(rec.beginCount == 3 && rec.endCount == 3)
+        #expect(rec.indexBatchSizes == [2, 2, 1])
+        #expect(rec.indexBatchSizes.allSatisfy { $0 <= 2 })
+    }
+
+    @Test func boundsTheDeleteSetAtChunkSizeToo() async throws {
+        // A large vanish set (e.g. a catalog re-keying) must chunk like the
+        // upserts — deletes count against the same per-batch cap. Old map
+        // {1..5}; snapshot keeps only id 1, so 2,3,4,5 vanish.
+        let indexed = Self.numberedRows(5)
+        let fake = FakeSearchableIndex(initialClientState: Self.seed(rows: indexed, watermark: "OLD"))
+        let indexer = SpotlightCatalogIndexer(index: fake, chunkSize: 2)
+
+        let summary = try await indexer.reindex(snapshot: [Self.row(1)], watermark: "W")
+
+        let rec = fake.recording
+        #expect(rec.indexBatchSizes.isEmpty)            // id 1 unchanged: no upserts
+        #expect(rec.deletedIdentifiers == ["album.2", "album.3", "album.4", "album.5"])
+        // Deletes packed ≤2/batch: one deleteItems([2,3]) in batch 1, one
+        // deleteItems([4,5]) in batch 2 — `deletedInBatch` records the batch number
+        // per call, so two bounded batches read as [1, 2].
+        #expect(rec.deletedInBatch == [1, 2])
+        #expect(rec.beginCount == 2 && rec.endCount == 2)
+        #expect(summary == ReindexSummary(upserted: 0, removed: 4))
+        #expect(try await indexer.indexedWatermark() == "W")
+    }
+
+    // MARK: Edge cases
+
+    @Test func emptySnapshotWithEmptyMapOpensOneEmptyBatch() async throws {
+        // The service guards an empty 200 (skippedEmptyExport), but the indexer
+        // stays robust: an empty snapshot against an empty map commits once.
+        let fake = FakeSearchableIndex()
+        let indexer = SpotlightCatalogIndexer(index: fake)
+
+        let summary = try await indexer.reindex(snapshot: [], watermark: "w")
+
+        let rec = fake.recording
+        #expect(rec.beginCount == 1 && rec.endCount == 1)
+        #expect(rec.indexBatchSizes.isEmpty)
+        #expect(rec.deletedIdentifiers.isEmpty)
+        #expect(summary == ReindexSummary(upserted: 0, removed: 0))
+        #expect(fake.committedIndexState?.watermark == "w")
+    }
+
+    @Test func unreadableClientStateIsTreatedAsEmptyAndRebuilds() async throws {
+        // A legacy issue-#19 bare-watermark blob (or any non-decodable state) must
+        // degrade to a from-scratch reindex — every row an add, nothing to remove
+        // — rather than crash or misparse.
+        let fake = FakeSearchableIndex(initialClientState: Data("Mon, 01 Jun 2026 12:00:00 GMT".utf8))
+        let indexer = SpotlightCatalogIndexer(index: fake)
+
+        #expect(try await indexer.indexedWatermark() == nil)   // legacy blob reads as empty
+        let summary = try await indexer.reindex(snapshot: Self.numberedRows(2), watermark: "W")
+
+        #expect(fake.recording.indexedItems.map(\.identifier) == ["album.1", "album.2"])
+        #expect(summary == ReindexSummary(upserted: 2, removed: 0))
+        #expect(fake.committedIndexState?.watermark == "W")
     }
 }

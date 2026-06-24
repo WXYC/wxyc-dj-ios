@@ -12,6 +12,7 @@
 //
 
 import CoreSpotlight
+import CryptoKit
 import Foundation
 import UniformTypeIdentifiers
 
@@ -107,5 +108,58 @@ public enum CatalogSpotlight {
             domainIdentifier: domainIdentifier,
             attributeSet: attributes
         )
+    }
+
+    /// A **stable** content fingerprint over exactly the fields that feed
+    /// ``searchableItem(for:)`` — so the indexer (issue #36) can tell, across
+    /// process launches, whether a row's *indexed representation* changed and
+    /// re-upsert only the rows that did.
+    ///
+    /// Fingerprinted fields: album title, artist, label, the call-number
+    /// components (`codeLetters` / `codeNumber` / `codeArtistNumber`), and
+    /// `artworkURL` (so an artwork-only change still re-upserts — required once
+    /// Spotlight thumbnails land, issue #44). Deliberately **excludes** fields
+    /// the searchable item ignores (`plays`, `genreName`, `formatName`,
+    /// `onStreaming`, rotation): a change confined to those produces an identical
+    /// `CSSearchableItem`, so re-upserting it would be wasted work. Keep this set
+    /// in lockstep with ``searchableItem(for:)`` — a field that starts feeding
+    /// the item but not the fingerprint would leave Spotlight stale on a change
+    /// confined to it.
+    ///
+    /// **Not** `CatalogRow.hashValue`: Swift seeds `Hashable` with a per-process
+    /// random salt, so `hashValue` differs run to run and is unusable as a
+    /// persisted token. This is a SHA-256 digest truncated to 64 bits; for
+    /// change detection the only event that matters is *the same id's* old vs.
+    /// new content hashing equal despite differing (≈ 2⁻⁶⁴), which is negligible
+    /// — cross-id collisions are irrelevant since fingerprints are only ever
+    /// compared per id.
+    static func fingerprint(for row: CatalogRow) -> UInt64 {
+        var hasher = SHA256()
+        // Length-prefix every field and mark nil distinctly, so field boundaries
+        // are unambiguous ("AB"+"C" can't hash like "A"+"BC") and a nil never
+        // hashes like an empty string. Over-sensitivity (nil vs "") is harmless
+        // — a redundant re-upsert is idempotent — whereas under-sensitivity
+        // would miss a real change.
+        for field in [
+            row.albumTitle,
+            row.artistName,
+            row.label,
+            row.codeLetters,
+            row.codeNumber.map(String.init),
+            row.codeArtistNumber.map(String.init),
+            row.artworkURL?.absoluteString,
+        ] {
+            if let field {
+                let utf8 = Data(field.utf8)
+                var length = UInt64(utf8.count).littleEndian
+                Swift.withUnsafeBytes(of: &length) { hasher.update(bufferPointer: $0) }
+                hasher.update(data: utf8)
+            } else {
+                // A length no real string can have, so nil ≠ "" (length 0).
+                var sentinel = UInt64.max.littleEndian
+                Swift.withUnsafeBytes(of: &sentinel) { hasher.update(bufferPointer: $0) }
+            }
+        }
+        return hasher.finalize().prefix(8).reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
     }
 }

@@ -25,7 +25,7 @@ import Foundation
 /// Sendable` is sound *only* because "step 4 guarantees no overlapping reindex".
 /// Overlapping `refresh()` calls coalesce onto the single in-flight run (see
 /// `refresh()`), so concurrent callers never open a second Core Spotlight batch
-/// and the `ids()` diff can't race a concurrent `replace`.
+/// and the indexer's fingerprint-map diff can't race a concurrent `replace`.
 ///
 /// **A fresh indexer per run.** The service builds a new indexer (via the
 /// injected `makeIndexer` factory) for each `refresh()` and each `poll()`, never
@@ -57,9 +57,11 @@ public actor CatalogRefreshService {
         /// The server answered `304` — the clone and index were already current.
         case upToDate
         /// The server answered `200`; the store was replaced and Spotlight
-        /// reindexed. `rowCount` is the new catalog size, `removed` the number of
-        /// vanished ids dropped from the index.
-        case refreshed(rowCount: Int, removed: Int)
+        /// reindexed. `rowCount` is the new catalog size; `upserted` the rows the
+        /// indexer add/changed and `removed` the vanished ids it dropped — the
+        /// delta the indexer derived against its own fingerprint map (issue #36),
+        /// not the whole catalog.
+        case refreshed(rowCount: Int, upserted: Int, removed: Int)
         /// The server answered `200` with an **empty** export. Treated as a
         /// backend anomaly rather than a legitimately empty catalog: the clone is
         /// left untouched and the watermark is not advanced (see ``refresh()``).
@@ -173,26 +175,18 @@ public actor CatalogRefreshService {
             guard !rows.isEmpty else {
                 return .skippedEmptyExport
             }
-            // Diff the vanished ids BEFORE the wholesale replace — a plain reindex
-            // only upserts, so the indexer needs the explicit removed set to drop
-            // albums that left the catalog. `ids()` reads ids only (no row decode).
-            //
-            // NOTE: the removed set is derived from the store, which `replace`
-            // below mutates, so it is not reproducible across a mid-reindex crash
-            // (a vanished id can be stranded in Spotlight). The indexer also
-            // re-upserts every row rather than just the changed ones. Both stem
-            // from the step-3 indexer's store-paging design and are tracked as a
-            // follow-up; see the PR description for issue #19 step 4.
-            let previousIDs = try await store.ids()
-            let newIDs = Set(rows.map(\.id))
-            let removedIDs = previousIDs.subtracting(newIDs)
-            // Replace the store first so the indexer pages the NEW rows...
+            // Replace the store first so a deep-link `row(id:)` lookup sees the new
+            // rows immediately...
             try await store.replace(rows: rows, lastModified: lastModified)
-            // ...then commit the index. The watermark advances only when this
-            // endBatch succeeds; a throw here leaves indexedWatermark() unchanged,
-            // so the next poll re-fetches the same 200 and retries.
-            try await indexer.reindex(store: store, removedIDs: Array(removedIDs), watermark: lastModified)
-            return .refreshed(rowCount: rows.count, removed: removedIDs.count)
+            // ...then reindex from the in-memory snapshot. The indexer derives
+            // add/change/remove against its OWN persisted fingerprint map (issue
+            // #36), so the removed set survives this replace and is reproducible
+            // across a mid-reindex crash, and unchanged rows are skipped. The
+            // watermark advances only when the final endBatch succeeds; a throw
+            // here leaves indexedWatermark() unchanged, so the next poll re-fetches
+            // the same 200 and re-derives the identical work set.
+            let summary = try await indexer.reindex(snapshot: rows, watermark: lastModified)
+            return .refreshed(rowCount: rows.count, upserted: summary.upserted, removed: summary.removed)
         }
     }
 }

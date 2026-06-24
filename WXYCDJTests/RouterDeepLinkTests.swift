@@ -256,9 +256,7 @@ private actor GatedCatalogStore: CatalogStore {
 
     // Remaining CatalogStore surface — unused by the deep-link resolution path.
     func count() async throws -> Int { rowsByID.count }
-    func ids() async throws -> Set<Int> { Set(rowsByID.keys) }
     func lastModified() async throws -> String? { nil }
-    func rows(after id: Int?, limit: Int) async throws -> [CatalogRow] { [] }
     func replace(rows: [CatalogRow], lastModified: String?) async throws {
         rowsByID = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
     }

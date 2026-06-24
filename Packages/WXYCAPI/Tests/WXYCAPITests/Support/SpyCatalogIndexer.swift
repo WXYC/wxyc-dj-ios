@@ -2,12 +2,13 @@
 //  SpyCatalogIndexer.swift
 //  WXYCAPITests
 //
-//  A recording CatalogIndexing double for the CatalogRefreshService tests (issue
-//  #19 step 4). Models the real indexer's watermark semantics — indexedWatermark()
-//  advances to the committed value only when reindex succeeds — with a toggle to
-//  fail the reindex, so the crash-safety invariant (watermark does not advance on
-//  a failed commit, and the next poll re-attempts) is testable. Lock-guarded
-//  Sendable class, matching FakeSearchableIndex.
+//  A recording CatalogIndexing double for the CatalogRefreshService tests. Models
+//  the real indexer's persisted state — an id->fingerprint map plus the watermark
+//  (issue #36) — so it derives the same add/change/remove diff the service relies
+//  on for its Outcome, and advances both only when reindex succeeds. A toggle
+//  fails the reindex so the crash-safety invariant (neither watermark nor map
+//  advances on a failed commit, and the next poll re-attempts) stays testable.
+//  Lock-guarded Sendable class, matching FakeSearchableIndex.
 //
 //  Created by Jake on 06/23/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -20,13 +21,16 @@ import os
 final class SpyCatalogIndexer: CatalogIndexing {
     /// One recorded `reindex`, lifted to a Sendable, assertable shape.
     struct ReindexCall: Sendable, Equatable {
-        let removedIDs: [Int]
+        /// The ids of the snapshot the service handed the indexer, sorted. The
+        /// service replaces the store *before* reindexing, so these must be the
+        /// NEW export ids — a service that reindexed before replacing would be
+        /// caught by the companion `SpyCatalogStore.replaceCalls` assertion.
+        let snapshotIDs: [Int]
         let watermark: String?
-        /// The ids the indexer actually observed in the store at reindex time.
-        /// The real `SpotlightCatalogIndexer` pages the store, so this models that
-        /// the store must already hold the NEW rows — a test asserting this catches
-        /// a service that reindexed BEFORE replacing the store.
-        let observedStoreIDs: [Int]
+        /// The delta this spy derived from the snapshot vs. its persisted map —
+        /// the same numbers the real indexer reports in its ``ReindexSummary``.
+        let upserted: Int
+        let removed: Int
     }
 
     /// Thrown when the indexer is set to fail its commit.
@@ -34,6 +38,10 @@ final class SpyCatalogIndexer: CatalogIndexing {
 
     private struct State {
         var watermark: String?
+        /// The index's persisted record of what it holds — `album id ->
+        /// fingerprint`. Seeded from the rows the index already held, advanced to
+        /// the new snapshot only on a successful reindex.
+        var fingerprints: [Int: UInt64]
         var reindexCalls: [ReindexCall] = []
     }
 
@@ -43,9 +51,14 @@ final class SpyCatalogIndexer: CatalogIndexing {
     private let shouldFail: Bool
     private let state: OSAllocatedUnfairLock<State>
 
-    init(watermark: String? = nil, shouldFail: Bool = false) {
+    /// Seed the index's persisted state: `watermark` and the fingerprint map
+    /// derived from `indexedRows` (the rows the index already holds). The diff a
+    /// later `reindex` computes is `snapshot` vs. these fingerprints.
+    init(watermark: String? = nil, indexedRows: [CatalogRow] = [], shouldFail: Bool = false) {
         self.shouldFail = shouldFail
-        state = OSAllocatedUnfairLock(initialState: State(watermark: watermark))
+        var fingerprints: [Int: UInt64] = [:]
+        for row in indexedRows { fingerprints[row.id] = CatalogSpotlight.fingerprint(for: row) }
+        state = OSAllocatedUnfairLock(initialState: State(watermark: watermark, fingerprints: fingerprints))
     }
 
     var reindexCalls: [ReindexCall] { state.withLock { $0.reindexCalls } }
@@ -54,19 +67,36 @@ final class SpyCatalogIndexer: CatalogIndexing {
 
     func indexedWatermark() -> String? { state.withLock { $0.watermark } }
 
-    func reindex(store: any CatalogStore, removedIDs: [Int], watermark: String?) async throws {
-        // Read the store the way the real indexer does, so the recorded call
-        // reflects what the index would have seen (proving replace ran first).
-        let observed = (try? await store.ids()).map { $0.sorted() } ?? []
+    @discardableResult
+    func reindex(snapshot: [CatalogRow], watermark: String?) async throws -> ReindexSummary {
+        // Diff the snapshot against the persisted map exactly as the real indexer
+        // does, so the recorded delta and the returned summary match production.
+        let oldMap = state.withLock { $0.fingerprints }
+        var map: [Int: UInt64] = [:]
+        var upsertedCount = 0
+        for row in snapshot {
+            let fingerprint = CatalogSpotlight.fingerprint(for: row)
+            map[row.id] = fingerprint
+            if oldMap[row.id] != fingerprint { upsertedCount += 1 }
+        }
+        let newMap = map
+        let upserted = upsertedCount
+        let removed = oldMap.keys.filter { newMap[$0] == nil }.count
+
         // Record the attempt (even a failing one is observable), then decide.
         state.withLock {
             $0.reindexCalls.append(ReindexCall(
-                removedIDs: removedIDs.sorted(), watermark: watermark, observedStoreIDs: observed
+                snapshotIDs: snapshot.map(\.id).sorted(),
+                watermark: watermark, upserted: upserted, removed: removed
             ))
         }
         if shouldFail { throw ReindexFailure() }
-        // Mirror the real indexer: the watermark (the index's client state)
-        // advances only when the commit succeeds.
-        state.withLock { $0.watermark = watermark }
+        // Mirror the real indexer: the watermark AND the map (the index's client
+        // state) advance together, only on a successful commit.
+        state.withLock {
+            $0.watermark = watermark
+            $0.fingerprints = newMap
+        }
+        return ReindexSummary(upserted: upserted, removed: removed)
     }
 }

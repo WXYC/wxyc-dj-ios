@@ -2,10 +2,12 @@
 //  SpotlightCatalogIndexer.swift
 //  WXYCAPI
 //
-//  Core Spotlight implementation of CatalogIndexing (issue #19 step 3): pages the
-//  catalog store into CSSearchableItems, diff-upserts in chunked batches, deletes
-//  only vanished ids, and commits the Last-Modified watermark as client state.
-//  Gap-free (never delete-by-domain) and off the main actor.
+//  Core Spotlight implementation of CatalogIndexing. Issue #36: diffs the
+//  in-memory export snapshot against the index's own persisted id->fingerprint
+//  map (CatalogIndexState, committed as client state), upserts only add/changed
+//  rows, deletes only vanished ids, and advances the watermark + map together on
+//  the final batch. Upserts and deletes are chunked under Core Spotlight's
+//  per-batch cap. Gap-free (never delete-by-domain) and off the main actor.
 //
 //  Created by Jake on 06/23/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -14,8 +16,8 @@
 import CoreSpotlight
 import Foundation
 
-/// Mirrors the on-device catalog clone into Core Spotlight via the
-/// ``SearchableIndexing`` seam, so the work is unit-testable against a fake.
+/// Mirrors the catalog into Core Spotlight via the ``SearchableIndexing`` seam,
+/// so the work is unit-testable against a fake.
 ///
 /// A `Sendable` value type holding only the (Sendable) index seam and a chunk
 /// size; `reindex` is `nonisolated`, so step 4 runs it off the main actor and
@@ -25,14 +27,14 @@ public struct SpotlightCatalogIndexer: CatalogIndexing {
 
     /// Core Spotlight's hard cap on the number of items in a single
     /// `beginBatch()`/`endBatch()` cycle (`Int16.max`). A batch holding more than
-    /// this throws `CSIndexErrorDomain -1001` at `endBatch`, so `chunkSize` — which
-    /// is also the per-batch item count — must stay at or below it.
+    /// this throws `CSIndexErrorDomain -1001` at `endBatch`, so `chunkSize` — the
+    /// per-batch *combined* upsert + delete count — must stay at or below it.
     public static let maxBatchItemCount = 32_767
 
-    /// Rows per `indexItems` call *and* per batch — bounds memory, lets the index
-    /// process the catalog incrementally, and (capped at ``maxBatchItemCount``)
-    /// keeps every batch within Core Spotlight's per-batch item limit. Batch
-    /// guidance is ~thousands; injectable so tests can use a small value.
+    /// Items (upserts **plus** deletes) per batch — bounds memory, lets the index
+    /// process the work incrementally, and (capped at ``maxBatchItemCount``) keeps
+    /// every batch within Core Spotlight's per-batch limit. Batch guidance is
+    /// ~thousands; injectable so tests can use a small value.
     private let chunkSize: Int
 
     public init(index: any SearchableIndexing, chunkSize: Int = 5_000) {
@@ -54,56 +56,107 @@ public struct SpotlightCatalogIndexer: CatalogIndexing {
     }
 
     public func indexedWatermark() async throws -> String? {
-        guard let data = try await index.lastClientState(), !data.isEmpty else { return nil }
-        return String(data: data, encoding: .utf8)
+        try await currentState().watermark
     }
 
-    public func reindex(store: any CatalogStore, removedIDs: [Int], watermark: String?) async throws {
-        let finalClientState = watermark.map { Data($0.utf8) } ?? Data()
+    /// Decode the index's persisted ``CatalogIndexState`` from client state, or
+    /// ``CatalogIndexState/empty`` when the index has never committed (or the blob
+    /// is the legacy issue-#19 bare-watermark form, or otherwise unreadable —
+    /// `init(decoding:)` is defensive, so an unreadable record degrades to a
+    /// from-scratch reindex rather than a crash).
+    private func currentState() async throws -> CatalogIndexState {
+        guard let data = try await index.lastClientState(), !data.isEmpty,
+              let state = CatalogIndexState(decoding: data) else { return .empty }
+        return state
+    }
 
-        // One bounded batch per `chunkSize` page: Core Spotlight rejects a single
-        // beginBatch/endBatch cycle holding more than `maxBatchItemCount` items
-        // with -1001 at endBatch, so the whole catalog must never ride one batch.
-        //
-        // The watermark advances only when the WHOLE reindex completes, so it
-        // rides the final batch alone and intermediate batches commit empty client
-        // state. A throw between batches therefore CLEARS the committed watermark
-        // to empty (so `indexedWatermark()` reads back nil) — it does not leave the
-        // prior watermark intact. That is safe because `CatalogRefreshService`
-        // replaces the store *before* reindexing, so the next poll re-fetches and
-        // re-indexes from scratch rather than 304-ing past a half-built index (the
-        // step-4 crash-safety invariant). The last page is held back so the
-        // watermark-bearing final batch always carries real index work.
+    @discardableResult
+    public func reindex(snapshot: [CatalogRow], watermark: String?) async throws -> ReindexSummary {
+        let oldMap = try await currentState().fingerprints
 
-        // Index `page` (when non-empty) and apply `deletedIDs` in one bounded
-        // batch, committing `clientState`. Paging the store keeps the reindex from
-        // materializing the whole catalog and leaves it free for deep-link lookups
-        // between batches; deletes are by explicit id only — never delete-by-domain,
-        // so home-screen search is never emptied mid-reindex.
-        func commitBatch(_ page: [CatalogRow], clientState: Data, deleting deletedIDs: [Int]) async throws {
-            index.beginBatch()
-            if !page.isEmpty {
-                try await index.indexItems(page.map(CatalogSpotlight.searchableItem(for:)))
+        // Diff the snapshot against the index's OWN map. Iterating the snapshot
+        // (an array) keeps the upsert order deterministic.
+        var newMap: [Int: UInt64] = [:]
+        newMap.reserveCapacity(snapshot.count)
+        var toUpsert: [CatalogRow] = []
+        for row in snapshot {
+            let fingerprint = CatalogSpotlight.fingerprint(for: row)
+            newMap[row.id] = fingerprint
+            // Absent (add) or fingerprint differs (change). Equal → skip.
+            if oldMap[row.id] != fingerprint {
+                toUpsert.append(row)
             }
-            if !deletedIDs.isEmpty {
-                try await index.deleteItems(withIdentifiers: deletedIDs.map(CatalogSpotlight.itemIdentifier))
+        }
+        // Removes derived from the index's map, NOT the on-device store (which the
+        // refresh already replaced) — so they survive a mid-reindex crash and the
+        // next run re-derives the identical set. Sorted for deterministic batching.
+        let removedIDs = oldMap.keys.filter { newMap[$0] == nil }.sorted()
+
+        // The watermark and the map advance together, only on the final batch:
+        // intermediate batches preserve the OLD map (so a vanished id's delete is
+        // still re-derivable after a mid-reindex crash) and withhold the watermark
+        // (so indexedWatermark() reports the index isn't current and the next poll
+        // re-fetches). A throw before the final commit therefore leaves both
+        // un-advanced and the work set re-derives identically.
+        let intermediateState = CatalogIndexState(watermark: nil, fingerprints: oldMap).encode()
+        let finalState = CatalogIndexState(watermark: watermark, fingerprints: newMap).encode()
+
+        // Apply one bounded batch — its upserts, then its deletes — and commit
+        // `clientState`. Deletes are by explicit id only (never delete-by-domain),
+        // so home-screen search is never emptied mid-reindex.
+        func apply(_ batch: Batch, committing clientState: Data) async throws {
+            index.beginBatch()
+            if !batch.upserts.isEmpty {
+                try await index.indexItems(batch.upserts.map(CatalogSpotlight.searchableItem(for:)))
+            }
+            if !batch.deletes.isEmpty {
+                try await index.deleteItems(withIdentifiers: batch.deletes.map(CatalogSpotlight.itemIdentifier))
             }
             try await index.endBatch(clientState: clientState)
         }
 
-        var cursor: Int? = nil
-        var heldPage: [CatalogRow] = []
-        while true {
-            let page = try await store.rows(after: cursor, limit: chunkSize)
-            guard let lastID = page.last?.id else { break }
-            if !heldPage.isEmpty {
-                try await commitBatch(heldPage, clientState: Data(), deleting: [])
+        let batches = Self.planBatches(upserts: toUpsert, deletes: removedIDs, chunkSize: chunkSize)
+        if batches.isEmpty {
+            // No add/change/remove (e.g. a 200 that touched only non-fingerprinted
+            // fields like `plays`): still commit once so the watermark + map
+            // advance and the next poll 304s instead of re-fetching forever.
+            try await apply(Batch(), committing: finalState)
+        } else {
+            for (offset, batch) in batches.enumerated() {
+                let isFinal = offset == batches.count - 1
+                try await apply(batch, committing: isFinal ? finalState : intermediateState)
             }
-            heldPage = page
-            cursor = lastID
         }
-        // Final batch: the held-back last page (empty only for an empty store) plus
-        // the vanished-id deletes, committing the real watermark exactly once.
-        try await commitBatch(heldPage, clientState: finalClientState, deleting: removedIDs)
+
+        return ReindexSummary(upserted: toUpsert.count, removed: removedIDs.count)
+    }
+
+    /// One bounded unit of work: the upserts and deletes that ride a single Core
+    /// Spotlight batch.
+    private struct Batch {
+        var upserts: [CatalogRow] = []
+        var deletes: [Int] = []
+    }
+
+    /// Pack `upserts` and `deletes` into batches whose **combined** item count
+    /// never exceeds `chunkSize` (both upserts and deletes count against Core
+    /// Spotlight's per-batch cap). Upserts fill each batch first, then deletes top
+    /// up the remaining capacity. Returns `[]` only when there is no work at all —
+    /// the caller still commits one empty final batch to advance the watermark.
+    private static func planBatches(upserts: [CatalogRow], deletes: [Int], chunkSize: Int) -> [Batch] {
+        var batches: [Batch] = []
+        var upsertSlice = upserts[...]
+        var deleteSlice = deletes[...]
+        while !upsertSlice.isEmpty || !deleteSlice.isEmpty {
+            var batch = Batch()
+            let takeUpserts = min(upsertSlice.count, chunkSize)
+            batch.upserts = Array(upsertSlice.prefix(takeUpserts))
+            upsertSlice = upsertSlice.dropFirst(takeUpserts)
+            let takeDeletes = min(deleteSlice.count, chunkSize - batch.upserts.count)
+            batch.deletes = Array(deleteSlice.prefix(takeDeletes))
+            deleteSlice = deleteSlice.dropFirst(takeDeletes)
+            batches.append(batch)
+        }
+        return batches
     }
 }
