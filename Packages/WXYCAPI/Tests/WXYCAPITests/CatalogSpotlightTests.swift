@@ -50,6 +50,10 @@ struct CatalogSpotlightTests {
         #expect(item.uniqueIdentifier == "album.100")
         #expect(item.domainIdentifier == "catalog")
         #expect(item.attributeSet.title == "DOGA")
+        // displayName must be set alongside title: Core Spotlight on iOS 17+
+        // rejects an item with no displayName as an invalid item
+        // (CSIndexErrorDomain -1001), which fails the whole index batch.
+        #expect(item.attributeSet.displayName == "DOGA")
         #expect(item.attributeSet.artist == "Juana Molina")
         #expect(item.attributeSet.album == "DOGA")
         // contentDescription = artist + shelf call number.

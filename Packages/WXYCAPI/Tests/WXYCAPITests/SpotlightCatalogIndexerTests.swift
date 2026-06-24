@@ -149,4 +149,61 @@ struct SpotlightCatalogIndexerTests {
         let indexer = SpotlightCatalogIndexer(index: fake)
         #expect(try await indexer.indexedWatermark() == nil)
     }
+
+    @Test func boundsEachBatchAtChunkSizeAcrossManyRows() async throws {
+        // Core Spotlight caps a single beginBatch/endBatch cycle at 32,767 items;
+        // accumulating the whole catalog into one batch throws -1001 at endBatch.
+        // Each chunk must therefore close its own batch. 5 rows at chunkSize 2 ->
+        // three bounded batches of 2, 2, 1 — not one batch of five.
+        try await Self.withStore(rows: Self.numberedRows(5)) { store in
+            let fake = FakeSearchableIndex()
+            let indexer = SpotlightCatalogIndexer(index: fake, chunkSize: 2)
+
+            try await indexer.reindex(store: store, removedIDs: [], watermark: "W")
+
+            let rec = fake.recording
+            #expect(rec.beginCount == 3)
+            #expect(rec.endCount == 3)
+            #expect(rec.indexBatchSizes == [2, 2, 1])
+            #expect(rec.indexBatchSizes.allSatisfy { $0 <= 2 })
+        }
+    }
+
+    @Test func advancesTheWatermarkOnlyOnTheFinalBatch() async throws {
+        // Crash-safety invariant: indexedWatermark() must advance to the new
+        // watermark ONLY after the whole reindex completes. With batches split per
+        // chunk, the intermediate batches commit empty client state and only the
+        // last batch carries the real watermark — so a crash between batches leaves
+        // the index un-advanced and the next refresh re-attempts.
+        try await Self.withStore(rows: Self.numberedRows(5)) { store in
+            let fake = FakeSearchableIndex()
+            let indexer = SpotlightCatalogIndexer(index: fake, chunkSize: 2)
+
+            try await indexer.reindex(store: store, removedIDs: [], watermark: "W")
+
+            #expect(fake.recording.committedClientStates == [Data(), Data(), Data("W".utf8)])
+            #expect(try await indexer.indexedWatermark() == "W")
+        }
+    }
+
+    @Test func aFailureOnALaterBatchDoesNotAdvanceTheWatermark() async throws {
+        // Multi-batch crash safety: when the reindex throws AFTER an earlier batch
+        // has already committed (empty) client state, indexedWatermark() must not
+        // report the new watermark — the failing batch never reached the
+        // watermark-bearing final batch, so the next refresh re-fetches and
+        // re-indexes rather than 304-ing past a half-built index.
+        try await Self.withStore(rows: Self.numberedRows(5)) { store in
+            // 5 rows at chunkSize 2 -> indexItems calls for [1,2] then [3,4] then
+            // [5]; fail the 2nd so the first batch's empty commit has already landed.
+            let fake = FakeSearchableIndex(failIndexItemsOnCall: 2)
+            let indexer = SpotlightCatalogIndexer(index: fake, chunkSize: 2)
+
+            await #expect(throws: FakeSearchableIndex.FakeError.self) {
+                try await indexer.reindex(store: store, removedIDs: [], watermark: "NEW")
+            }
+
+            let watermark = try await indexer.indexedWatermark()
+            #expect(watermark == nil)
+        }
+    }
 }

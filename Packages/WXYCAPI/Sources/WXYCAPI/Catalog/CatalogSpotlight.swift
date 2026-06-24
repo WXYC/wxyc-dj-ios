@@ -54,17 +54,25 @@ public enum CatalogSpotlight {
         return Int(digits)
     }
 
-    /// The `CSSearchableItem` mirroring `row`: `title` = album (the field Spotlight
-    /// reliably matches free-text queries against), `contentDescription` = artist
-    /// (plus the shelf call number when present) as the human-readable subtitle,
-    /// and `keywords` = artist, album, label, and call number so a query on any of
-    /// those can match. The searchable terms live in `title`/`keywords` precisely
-    /// because `contentDescription` is display-only — Core Spotlight does not match
-    /// queries against it — so a call number kept only there would be unfindable.
-    /// Pure — builds a value, talks to no index.
+    /// The `CSSearchableItem` mirroring `row`: `title` / `displayName` = album (the
+    /// field Spotlight reliably matches free-text queries against),
+    /// `contentDescription` = artist (plus the shelf call number when present) as
+    /// the human-readable subtitle, and `keywords` = artist, album, label, and call
+    /// number so a query on any of those can match. The searchable terms live in
+    /// `title`/`keywords` precisely because `contentDescription` is display-only —
+    /// Core Spotlight does not match queries against it — so a call number kept only
+    /// there would be unfindable.
+    ///
+    /// `displayName` is set alongside `title` deliberately: on iOS 17+ Core
+    /// Spotlight rejects an item that has no `displayName` as an *invalid item*
+    /// (`CSIndexErrorDomain` `-1001` `CSIndexErrorCodeInvalidItemError`), and since
+    /// `indexSearchableItems` fails the whole batch on any invalid item, a single
+    /// missing `displayName` leaves the entire catalog unindexed and home-screen
+    /// search empty. Pure — builds a value, talks to no index.
     public static func searchableItem(for row: CatalogRow) -> CSSearchableItem {
         let attributes = CSSearchableItemAttributeSet(contentType: .content)
         attributes.title = row.albumTitle
+        attributes.displayName = row.albumTitle
         let callNumber = row.callNumber
         attributes.contentDescription = callNumber.isEmpty
             ? row.artistName

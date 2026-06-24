@@ -48,26 +48,42 @@ public struct SpotlightCatalogIndexer: CatalogIndexing {
     }
 
     public func reindex(store: any CatalogStore, removedIDs: [Int], watermark: String?) async throws {
-        index.beginBatch()
+        let finalClientState = watermark.map { Data($0.utf8) } ?? Data()
         // Page the store so the reindex never materializes the whole catalog and
-        // the store stays free for deep-link lookups between pages.
+        // the store stays free for deep-link lookups between pages. Each page is
+        // its OWN bounded batch: Core Spotlight caps a single beginBatch/endBatch
+        // cycle at 32,767 items, so accumulating the whole catalog into one batch
+        // throws -1001 at endBatch. `chunkSize` (≤ 32,767) keeps every batch legal.
+        //
+        // The watermark must advance only when the WHOLE reindex completes, so it
+        // rides the final batch alone and intermediate batches commit empty client
+        // state — a crash between batches then leaves `indexedWatermark()`
+        // un-advanced and the next refresh re-attempts (the step-4 crash-safety
+        // invariant). The last page is held back so the final batch always carries
+        // real index work plus the watermark and the vanished-id deletes.
         var cursor: Int? = nil
+        var heldPage: [CatalogRow]? = nil
         while true {
             let page = try await store.rows(after: cursor, limit: chunkSize)
             guard let lastID = page.last?.id else { break }
-            try await index.indexItems(page.map(CatalogSpotlight.searchableItem(for:)))
+            if let intermediate = heldPage {
+                index.beginBatch()
+                try await index.indexItems(intermediate.map(CatalogSpotlight.searchableItem(for:)))
+                try await index.endBatch(clientState: Data())
+            }
+            heldPage = page
             cursor = lastID
         }
-        // Targeted deletes for vanished ids only — never delete-by-domain, so
-        // home-screen search is never emptied mid-reindex.
+        // Final batch: the held-back last page (if any) + targeted deletes for
+        // vanished ids only — never delete-by-domain, so home-screen search is
+        // never emptied mid-reindex — committing the real watermark exactly once.
+        index.beginBatch()
+        if let lastPage = heldPage {
+            try await index.indexItems(lastPage.map(CatalogSpotlight.searchableItem(for:)))
+        }
         if !removedIDs.isEmpty {
             try await index.deleteItems(withIdentifiers: removedIDs.map(CatalogSpotlight.itemIdentifier))
         }
-        // Commit the watermark exactly once, only after every upsert + delete
-        // succeeded. Any throw above leaves the prior client state intact, so
-        // `indexedWatermark()` does not advance — the crash-safety property step
-        // 4's invariant test relies on. A nil watermark commits empty client
-        // state, which `indexedWatermark()` reads back as nil.
-        try await index.endBatch(clientState: watermark.map { Data($0.utf8) } ?? Data())
+        try await index.endBatch(clientState: finalClientState)
     }
 }
