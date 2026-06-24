@@ -41,6 +41,15 @@ public final class AuthService {
         case signedOut
         case signingIn
         case signedIn(payload: JWTPayload)
+
+        /// Whether this state represents an authenticated DJ. Lets the deep-link
+        /// auth-change handler (issue #19 step 7) compare a transition's old vs.
+        /// new value — distinguishing a genuine sign-out (`.signedIn` → not) from
+        /// a cold-launch `.unknown` → `.signedOut` that must keep a parked tap.
+        public var isSignedIn: Bool {
+            if case .signedIn = self { return true }
+            return false
+        }
     }
 
     public private(set) var state: State = .unknown
@@ -50,10 +59,7 @@ public final class AuthService {
     /// (issue #19 step 7) reads this to decide whether to present a tapped
     /// album immediately or stash it for replay once `restoreSession()` (or a
     /// fresh sign-in) resolves `state` to `.signedIn`.
-    public var isSignedIn: Bool {
-        if case .signedIn = state { return true }
-        return false
-    }
+    public var isSignedIn: Bool { state.isSignedIn }
 
     private let configuration: WXYCAPIConfiguration
     private let storage: any TokenStorage
