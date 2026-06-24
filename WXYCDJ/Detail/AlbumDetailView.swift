@@ -86,7 +86,11 @@ struct AlbumDetailView: View {
     private var headerSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 4) {
-                if let url = metadata?.artworkURL ?? fallback?.artworkURL {
+                if let url = Self.preferredArtworkURL(
+                    info: info?.artworkURL,
+                    fallback: fallback?.artworkURL,
+                    metadata: metadata?.artworkURL
+                ) {
                     AsyncImage(url: url) { phase in
                         switch phase {
                         case .success(let image): image.resizable().scaledToFit()
@@ -254,6 +258,17 @@ struct AlbumDetailView: View {
 
     private var displayLabel: String? {
         info?.label ?? metadata?.label ?? fallback?.label
+    }
+
+    /// Header artwork precedence. The catalog row is the source of truth for
+    /// shelf data, so its art wins: `/library/info` first, then the live
+    /// search-row `fallback` that renders before `/library/info` lands.
+    /// LML's best-effort `metadata` art is only a last resort — it can
+    /// resolve to a label-level image rather than the cover (e.g. Autechre —
+    /// Confield coming back as the Warp Records logo), so it must never
+    /// replace catalog art that's already on screen.
+    static func preferredArtworkURL(info: URL?, fallback: URL?, metadata: URL?) -> URL? {
+        info ?? fallback ?? metadata
     }
 
     private func hasReleaseInfo(_ m: AlbumMetadata) -> Bool {
