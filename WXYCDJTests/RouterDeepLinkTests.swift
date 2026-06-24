@@ -71,9 +71,10 @@ struct RouterDeepLinkTests {
         #expect(deps.router.pending == 100)
     }
 
-    @Test func drainWhileStillSignedOutIsNoOp() async throws {
-        let (deps, url) = Self.makeDeps()
-        defer { Self.cleanup(url) }
+    @Test func drainWhileStillSignedOutIsNoOp() async {
+        // The signed-out no-op path never reaches resolveRoute / the store, so
+        // skip the temp SQLite file (mirrors tapPresentsEvenWhenCatalogStoreIsInert).
+        let deps = AppDependencies(catalogStoreURL: nil)
         await deps.handleSpotlightTap(albumID: 100, isSignedIn: false)
 
         // restoreSession() resolved to signedOut, not signedIn: nothing replays.

@@ -43,6 +43,10 @@ final class AppDependencies {
     /// ``drainPendingDeepLink(isSignedIn:)`` — because the `fallback` lookup
     /// needs ``catalogStore``.
     let router = Router()
+    /// Monotonic generation for ``present(albumID:)``'s most-recent-wins latch,
+    /// so a stale parked drain can't clobber a freshly-tapped album when their
+    /// clone lookups race across the `await`.
+    private var presentationToken = 0
 
     convenience init() {
         self.init(catalogStoreURL: Self.defaultCatalogStoreURL())
@@ -164,19 +168,41 @@ final class AppDependencies {
             router.pending = albumID
             return
         }
-        router.deepLink = await resolveRoute(albumID: albumID)
+        // A fresh signed-in tap supersedes any park: clear it synchronously
+        // (before the resolve hop) so a concurrent drain can't replay the stale
+        // parked id behind us.
         router.pending = nil
+        await present(albumID: albumID)
     }
 
     /// Replay a parked deep link once auth resolves to `.signedIn`. A no-op when
     /// not signed in or when nothing is parked, so RootView can call it on every
     /// auth-state change. On the flip to signed-in it resolves the parked id into
-    /// ``Router/deepLink`` (clone lookup for the `fallback`) and clears
-    /// ``Router/pending``.
+    /// ``Router/deepLink`` (clone lookup for the `fallback`).
     func drainPendingDeepLink(isSignedIn: Bool) async {
         guard isSignedIn, let albumID = router.pending else { return }
-        router.deepLink = await resolveRoute(albumID: albumID)
+        // Capture-and-clear synchronously: the resolve below suspends, and
+        // clearing now stops a second drain from re-reading the same park.
         router.pending = nil
+        await present(albumID: albumID)
+    }
+
+    /// Resolve `albumID` to a route and present it — the single resolve→present
+    /// step both deep-link entry points funnel through. `resolveRoute`'s `await`
+    /// releases the main actor (a clone lookup can queue behind a multi-second
+    /// `CatalogRefreshService` store replace), so two presentations can be in
+    /// flight at once: a parked drain racing a fresh tap. A monotonic token makes
+    /// the **most-recently-requested** album win deterministically — rather than
+    /// whichever store read happens to resume last — so a stale parked id can't
+    /// clobber a just-tapped one.
+    private func present(albumID: Int) async {
+        presentationToken += 1
+        let token = presentationToken
+        let route = await resolveRoute(albumID: albumID)
+        // A newer tap/drain bumped the token while we were resolving; bow out so
+        // its fresher presentation is the one that lands.
+        guard token == presentationToken else { return }
+        router.deepLink = route
     }
 
     /// Build the route for `albumID`, looking up the cloned row for an instant
@@ -186,8 +212,9 @@ final class AppDependencies {
     /// `fallback: nil`, which the detail view resolves by awaiting `/library/info`.
     private func resolveRoute(albumID: Int) async -> AlbumRoute {
         guard let catalogStore else { return AlbumRoute(id: albumID, fallback: nil) }
-        // `try?` collapses both a thrown read and an absent row to "no fallback".
-        let row = (try? await catalogStore.row(id: albumID)) ?? nil
+        // A thrown read and an absent row both collapse to "no fallback" — `try?`
+        // already flattens the optional-returning call (SE-0230), so no `?? nil`.
+        let row = try? await catalogStore.row(id: albumID)
         return AlbumRoute(id: albumID, fallback: row?.detailFallback)
     }
 
