@@ -202,8 +202,53 @@ struct SpotlightCatalogIndexerTests {
                 try await indexer.reindex(store: store, removedIDs: [], watermark: "NEW")
             }
 
+            // The first batch committed empty client state *before* the failure —
+            // proving this exercises the multi-batch path. (The old single-batch
+            // code commits nothing until the end, so a mid-loop throw would leave
+            // committedClientStates == [], and this test would not distinguish it.)
+            #expect(fake.recording.committedClientStates == [Data()])
             let watermark = try await indexer.indexedWatermark()
             #expect(watermark == nil)
+        }
+    }
+
+    @Test func exactMultipleOfChunkSizeIndexesEachRowOnceAcrossBatches() async throws {
+        // The held-back-last-page logic is where an off-by-one would hide on an
+        // even boundary: 4 rows at chunkSize 2 -> two full pages, and the loop only
+        // learns the second is last by reading a trailing empty page. Each row must
+        // be indexed exactly once, in two batches, with the watermark on the last.
+        try await Self.withStore(rows: Self.numberedRows(4)) { store in
+            let fake = FakeSearchableIndex()
+            let indexer = SpotlightCatalogIndexer(index: fake, chunkSize: 2)
+
+            try await indexer.reindex(store: store, removedIDs: [], watermark: "W")
+
+            let rec = fake.recording
+            #expect(rec.indexBatchSizes == [2, 2])
+            #expect(rec.indexedItems.map(\.identifier) == ["album.1", "album.2", "album.3", "album.4"])
+            // Intermediate batch empty, final batch carries the watermark.
+            #expect(rec.committedClientStates == [Data(), Data("W".utf8)])
+        }
+    }
+
+    @Test func deletesRideTheFinalBatchInTheMultiBatchPath() async throws {
+        // The existing delete test is single-batch (default chunkSize). Here the
+        // deletes must still be applied — and ride the final, watermark-bearing
+        // batch — when the reindex spans several batches.
+        try await Self.withStore(rows: Self.numberedRows(5)) { store in
+            let fake = FakeSearchableIndex()
+            let indexer = SpotlightCatalogIndexer(index: fake, chunkSize: 2)
+
+            try await indexer.reindex(store: store, removedIDs: [42, 7], watermark: "W")
+
+            let rec = fake.recording
+            #expect(rec.deletedIdentifiers == ["album.42", "album.7"])
+            #expect(rec.indexBatchSizes == [2, 2, 1])
+            // The deletes land in the 3rd (final) batch — the one that commits the
+            // real watermark — not an intermediate empty-state batch.
+            #expect(rec.deletedInBatch == [3])
+            #expect(rec.endCount == 3)
+            #expect(rec.committedClientStates == [Data(), Data(), Data("W".utf8)])
         }
     }
 }
