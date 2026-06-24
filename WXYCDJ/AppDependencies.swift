@@ -18,6 +18,7 @@ import OSLog
 import WXYCAPI
 
 private let configLog = Logger(subsystem: "org.wxyc.dj", category: "config")
+private let deepLinkLog = Logger(subsystem: "org.wxyc.dj", category: "deeplink")
 
 @MainActor
 @Observable
@@ -173,6 +174,25 @@ final class AppDependencies {
     }
 
     // MARK: Spotlight deep link (issue #19 step 7)
+
+    /// Route a Core Spotlight **continuation activity** — the `NSUserActivity` of
+    /// type `CSSearchableItemActionType` the system hands back when a DJ taps a
+    /// catalog item in home-screen Spotlight — to the deep-link surface. Parses
+    /// the `"album.<id>"` identifier and forwards to
+    /// ``handleSpotlightTap(albumID:isSignedIn:)`` with the live auth state. A
+    /// non-continuation or malformed activity is a no-op.
+    ///
+    /// This is the single entry point ``SceneDelegate`` drives for **both**
+    /// cold-launch (`scene(_:willConnectTo:)`, where the launch activity arrives
+    /// in `connectionOptions`) and warm (`scene(_:continue:)`) taps. The
+    /// `UIWindowSceneDelegate` is the reliable delivery path: SwiftUI's view-level
+    /// `onContinueUserActivity` was not firing for this activity in either state,
+    /// so the tap never reached the (correct, tested) park/replay/present logic.
+    func handleSpotlightContinuation(_ activity: NSUserActivity) async {
+        guard let albumID = CatalogSpotlight.albumID(fromActivity: activity) else { return }
+        deepLinkLog.debug("Spotlight continuation -> album \(albumID, privacy: .public) (signedIn=\(self.authService.isSignedIn, privacy: .public))")
+        await handleSpotlightTap(albumID: albumID, isSignedIn: authService.isSignedIn)
+    }
 
     /// Handle a Spotlight tap on `album.<id>`. When signed in, resolve the route
     /// (with an O(1) clone lookup for the instant-header `fallback`) and present

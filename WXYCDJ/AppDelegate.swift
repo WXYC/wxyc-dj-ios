@@ -32,4 +32,23 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         CatalogBackgroundTasks.registerReindexHandler(dependencies: dependencies)
         return true
     }
+
+    /// Attach ``SceneDelegate`` to SwiftUI's window scene so it receives Spotlight
+    /// continuation activities (issue #19 step 7 fix). Only `delegateClass` is
+    /// set — no `sceneClass`, no storyboard — so SwiftUI keeps owning the window
+    /// and hosting `RootView`; the delegate just observes the launch /
+    /// continuation activities the view-level `onContinueUserActivity` was
+    /// dropping in both cold and warm states.
+    func application(
+        _ application: UIApplication,
+        configurationForConnecting connectingSceneSession: UISceneSession,
+        options: UIScene.ConnectionOptions
+    ) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(
+            name: nil,
+            sessionRole: connectingSceneSession.role
+        )
+        configuration.delegateClass = SceneDelegate.self
+        return configuration
+    }
 }
