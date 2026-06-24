@@ -47,13 +47,15 @@ struct RootView: View {
             Task { await deps.handleSpotlightTap(albumID: albumID, isSignedIn: auth.isSignedIn) }
         }
         // Cold-launch replay: a tap that landed before sign-in resolved parked
-        // its id in Router.pending. State is Equatable, so this fires on EVERY
-        // transition — including sign-out and JWT rotation (a re-derived payload
-        // is a new .signedIn state). drainPendingDeepLink is idempotent (it
-        // guards on isSignedIn && a non-nil pending), which is exactly what makes
-        // the over-firing harmless. Do NOT "optimize" this into `if case
-        // .signedIn` keyed on a one-shot — that reintroduces the cold-launch race
-        // where a tap arriving mid-restoreSession() is dropped.
+        // its id in Router.pending. The load-bearing transition is the
+        // .unknown/.signedOut → .signedIn flip; drain it into the cover then.
+        // drainPendingDeepLink is idempotent (it guards on isSignedIn && a
+        // non-nil pending), so firing on the other transitions (e.g. sign-out)
+        // is harmless. Do NOT "optimize" this into a one-shot keyed on the first
+        // signed-in — that reintroduces the race where a tap arriving
+        // mid-restoreSession() is dropped. (A routine JWT refresh does NOT fire
+        // this: AuthService.refreshJWT updates only the cached token, never
+        // `state`, so .signedIn keeps its original payload and stays Equatable-equal.)
         .onChange(of: auth.state) {
             Task { await deps.drainPendingDeepLink(isSignedIn: auth.isSignedIn) }
         }
@@ -65,13 +67,17 @@ struct RootView: View {
         // nil↔non-nil, not an identity swap. Two consecutive taps without an
         // intervening dismiss is rare enough to accept.
         .fullScreenCover(item: $router.deepLink) { route in
-            // Re-inject the composition root: fullScreenCover content is hosted
-            // in a separate presentation context that does NOT inherit the
-            // presenter's .environment(_:)-injected @Observable objects, and
-            // AlbumDetailView reads AppDependencies. (auth/router aren't read in
-            // this subtree, so they're not re-injected.)
+            // fullScreenCover content is hosted in a separate presentation
+            // context that does NOT inherit the presenter's
+            // .environment(_:)-injected @Observable objects. Re-inject the SAME
+            // trio WXYCDJApp injects at the root so the shared AlbumDetailView
+            // runs under an identical environment whether it's reached here or
+            // pushed onto a tab stack — otherwise a future auth/router read in
+            // the detail subtree would crash only on the (untested) deep-link path.
             DeepLinkAlbumCover(route: route)
                 .environment(deps)
+                .environment(auth)
+                .environment(router)
         }
     }
 }
