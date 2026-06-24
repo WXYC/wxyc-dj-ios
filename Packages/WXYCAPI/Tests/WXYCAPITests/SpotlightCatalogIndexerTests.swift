@@ -205,11 +205,11 @@ struct SpotlightCatalogIndexerTests {
 
     // MARK: Atomic, final-batch-only commit (watermark + map together)
 
-    @Test func intermediateBatchesPreserveOldMapAndWithholdWatermark() async throws {
-        // Crash-safety crux: across a multi-batch reindex the intermediate batches
-        // must commit the OLD map (so a vanished id stays re-derivable) and a nil
-        // watermark (so the next poll re-fetches); only the final batch advances
-        // both. Old map = {10, 11} (both vanish); snapshot adds {1, 2, 3}.
+    @Test func intermediateBatchesCommitCumulativeAppliedMapAndWithholdWatermark() async throws {
+        // Crash-safety crux: across a multi-batch reindex each batch commits the map
+        // of work applied SO FAR (so the persisted map matches what the index
+        // physically holds between batches) and withholds the watermark (nil); only
+        // the final batch advances it. Old map = {10,11} (both vanish); adds {1,2,3}.
         let removedRows = [Self.row(10), Self.row(11)]
         let fake = FakeSearchableIndex(initialClientState: Self.seed(rows: removedRows, watermark: "OLD"))
         let indexer = SpotlightCatalogIndexer(index: fake, chunkSize: 2)
@@ -219,26 +219,29 @@ struct SpotlightCatalogIndexerTests {
 
         let rec = fake.recording
         // upserts [1,2,3] then deletes [10,11], packed ≤2/batch:
-        //   batch1 = upsert 1,2          batch2 = upsert 3 + delete 10
-        //   batch3 = delete 11 (final)
+        //   batch1 = upsert 1,2            -> cumulative {1,2,10,11}
+        //   batch2 = upsert 3 + delete 10  -> cumulative {1,2,3,11}
+        //   batch3 = delete 11 (final)     -> cumulative {1,2,3}
         #expect(rec.indexBatchSizes == [2, 1])
         #expect(rec.deletedIdentifiers == ["album.10", "album.11"])
         #expect(rec.deletedInBatch == [2, 3])          // deletes are chunked, not all on one batch
         #expect(rec.beginCount == 3 && rec.endCount == 3)
-        // Intermediate batches: nil watermark + OLD map; final: "W" + new map.
-        let old = CatalogIndexState(watermark: nil, fingerprints: Self.map(removedRows))
-        let final = CatalogIndexState(watermark: "W", fingerprints: Self.map(snapshot))
-        #expect(fake.committedIndexStates == [old, old, final])
+        // Each commit reflects the work applied so far; intermediates withhold the
+        // watermark, the final carries it with the complete map.
+        let afterBatch1 = CatalogIndexState(watermark: nil, fingerprints: Self.map([Self.row(1), Self.row(2)] + removedRows))
+        let afterBatch2 = CatalogIndexState(watermark: nil, fingerprints: Self.map([Self.row(1), Self.row(2), Self.row(3), Self.row(11)]))
+        let afterBatch3 = CatalogIndexState(watermark: "W", fingerprints: Self.map(snapshot))
+        #expect(fake.committedIndexStates == [afterBatch1, afterBatch2, afterBatch3])
         #expect(summary == ReindexSummary(upserted: 3, removed: 2))
         #expect(try await indexer.indexedWatermark() == "W")
     }
 
-    @Test func failureOnALaterBatchLeavesWatermarkAndMapUnAdvanced() async throws {
-        // A throw AFTER an earlier batch already committed must leave BOTH the
-        // watermark and the map un-advanced — so the next poll re-fetches and
-        // re-derives the identical work set (including the still-pending removes).
+    @Test func failureOnALaterBatchWithholdsWatermarkAndKeepsRemovesReDerivable() async throws {
+        // A throw AFTER an earlier batch already committed must leave the watermark
+        // un-advanced (so the next poll re-fetches) while the committed map reflects
+        // exactly the work the index made durable — including the still-pending
+        // removes, so the next run re-derives them rather than stranding the ids.
         let removedRows = [Self.row(10), Self.row(11)]
-        let oldMap = Self.map(removedRows)
         // Fail the 2nd indexItems call, after batch 1 has committed.
         let fake = FakeSearchableIndex(
             initialClientState: Self.seed(rows: removedRows, watermark: "OLD"),
@@ -250,10 +253,50 @@ struct SpotlightCatalogIndexerTests {
             try await indexer.reindex(snapshot: Self.numberedRows(5), watermark: "NEW")
         }
 
-        // Exactly one (intermediate) commit landed, preserving the OLD map and a
-        // nil watermark — proving this is the multi-batch path, not a no-op.
-        #expect(fake.committedIndexStates == [CatalogIndexState(watermark: nil, fingerprints: oldMap)])
+        // Exactly one (intermediate) commit landed: batch 1's upserts {1,2} folded
+        // onto the old map, watermark withheld. The pending removes {10,11} are
+        // still in the committed map, so the retry re-derives them.
+        let afterBatch1 = CatalogIndexState(
+            watermark: nil,
+            fingerprints: Self.map([Self.row(1), Self.row(2)] + removedRows)
+        )
+        #expect(fake.committedIndexStates == [afterBatch1])
         #expect(try await indexer.indexedWatermark() == nil)
+    }
+
+    @Test func midRunCrashThenShrunkExportDeletesAppliedRowsNotInNewExport() async throws {
+        // Regression for the multi-batch crash + CHANGED-export hole: a batch's
+        // endBatch durably applies its work, so the committed map must reflect that
+        // — otherwise a crash mid-run followed by an export that DROPS an
+        // already-applied row strands it (the next run's diff can't see it).
+        //
+        // Run 1: first-ever index of {1..5} at chunkSize 2; batch 1 applies {1,2}
+        // then batch 2's indexItems crashes. Run 2 (fresh indexer, same persisted
+        // state) gets a SHRUNK export {1} only — id 2 (applied in run 1) must be
+        // deleted, not stranded.
+        let crashed = FakeSearchableIndex(failIndexItemsOnCall: 2)   // empty index, fail 2nd batch
+        let indexer1 = SpotlightCatalogIndexer(index: crashed, chunkSize: 2)
+        await #expect(throws: FakeSearchableIndex.FakeError.self) {
+            try await indexer1.reindex(snapshot: Self.numberedRows(5), watermark: "W1")
+        }
+        // Batch 1 committed the cumulative map {1,2} (the rows it made durable),
+        // with the watermark withheld.
+        let survived = try #require(crashed.recording.committedClientState)
+        let survivedState = try #require(CatalogIndexState(decoding: survived))
+        #expect(survivedState.watermark == nil)
+        #expect(survivedState.fingerprints.keys.sorted() == [1, 2])
+
+        // Run 2: fresh handle over the survived state; the catalog shrank to {1}.
+        let recovered = FakeSearchableIndex(initialClientState: survived)
+        let indexer2 = SpotlightCatalogIndexer(index: recovered)
+        let summary = try await indexer2.reindex(snapshot: [Self.row(1)], watermark: "W2")
+
+        // id 2 was applied in the crashed run and is gone from the new export → it
+        // is deleted (with the old store-derived oldMap it would have been stranded).
+        #expect(recovered.recording.deletedIdentifiers == ["album.2"])
+        #expect(summary == ReindexSummary(upserted: 0, removed: 1))
+        #expect(recovered.committedIndexState?.fingerprints.keys.sorted() == [1])
+        #expect(recovered.committedIndexState?.watermark == "W2")
     }
 
     @Test func throwOnSingleBatchLeavesPriorStateIntact() async throws {

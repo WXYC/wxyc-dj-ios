@@ -100,6 +100,60 @@ struct CatalogIndexState: Equatable, Sendable {
         return data
     }
 
+    /// Read a little-endian unsigned integer of type `T` from `bytes` at `offset`,
+    /// advancing `offset`; `nil` if fewer than `T`'s bytes remain. The inverse of
+    /// ``Data/appendLittleEndian(_:)`` — byte `i` carries bits `8*i`, so it agrees
+    /// with the encoder on any host endianness.
+    private static func readLittleEndian<T: FixedWidthInteger & UnsignedInteger>(
+        _ type: T.Type, from bytes: [UInt8], at offset: inout Int
+    ) -> T? {
+        let size = MemoryLayout<T>.size
+        guard offset + size <= bytes.count else { return nil }
+        var value: T = 0
+        for i in 0..<size {
+            value |= T(bytes[offset + i]) << (8 * i)
+        }
+        offset += size
+        return value
+    }
+
+    /// Parse the version + watermark prefix shared by the full decoder and the
+    /// watermark-only fast path. Returns the watermark (itself `nil` when absent)
+    /// and the offset where the entry table begins, or `nil` if the prefix is
+    /// empty / wrong-version (e.g. the issue-#19 bare-watermark format) / malformed.
+    private static func parsePrefix(_ bytes: [UInt8]) -> (watermark: String?, entriesOffset: Int)? {
+        var offset = 0
+        guard offset < bytes.count, bytes[offset] == formatVersion else { return nil }
+        offset += 1
+        guard offset < bytes.count else { return nil }
+        let presence = bytes[offset]
+        offset += 1
+        switch presence {
+        case 0:
+            return (nil, offset)
+        case 1:
+            guard let length = readLittleEndian(UInt32.self, from: bytes, at: &offset),
+                  offset + Int(length) <= bytes.count,
+                  let watermark = String(bytes: bytes[offset..<offset + Int(length)], encoding: .utf8)
+            else { return nil }
+            offset += Int(length)
+            return (watermark, offset)
+        default:
+            return nil
+        }
+    }
+
+    /// Read **only** the watermark from an encoded blob, without decoding the
+    /// (potentially ~1 MB) fingerprint map — the cheap read ``indexedWatermark()``
+    /// needs on every poll and conditional GET. The watermark is encoded first
+    /// precisely so this can stop before the entry table. Returns `nil` for an
+    /// absent watermark **or** an unreadable prefix (both mean "no usable
+    /// watermark; re-fetch"); it does not validate the entry table — a full
+    /// ``init(decoding:)`` does that when the map itself is needed.
+    static func decodeWatermark(from data: Data) -> String? {
+        parsePrefix([UInt8](data)).flatMap { $0.watermark }
+    }
+
     /// Decode a blob produced by ``encode()``. Returns `nil` for an empty,
     /// truncated, wrong-version (e.g. the issue-#19 bare-watermark format), or
     /// otherwise malformed blob; callers treat `nil` as ``empty`` and rebuild.
@@ -107,48 +161,20 @@ struct CatalogIndexState: Equatable, Sendable {
     /// degrade to a from-scratch reindex, never a crash.
     init?(decoding data: Data) {
         let bytes = [UInt8](data)
-        var offset = 0
-
-        func readUInt8() -> UInt8? {
-            guard offset < bytes.count else { return nil }
-            defer { offset += 1 }
-            return bytes[offset]
-        }
-        func readFixedWidth<T: FixedWidthInteger & UnsignedInteger>(_ type: T.Type) -> T? {
-            let size = MemoryLayout<T>.size
-            guard offset + size <= bytes.count else { return nil }
-            var value: T = 0
-            for i in 0..<size {
-                value |= T(bytes[offset + i]) << (8 * i)
-            }
-            offset += size
-            return value
-        }
-
-        guard let version = readUInt8(), version == Self.formatVersion,
-              let presence = readUInt8() else { return nil }
-
-        var watermark: String?
-        switch presence {
-        case 0:
-            watermark = nil
-        case 1:
-            guard let length = readFixedWidth(UInt32.self),
-                  offset + Int(length) <= bytes.count,
-                  let decoded = String(bytes: bytes[offset..<offset + Int(length)], encoding: .utf8)
-            else { return nil }
-            offset += Int(length)
-            watermark = decoded
-        default:
-            return nil
-        }
-
-        guard let count = readFixedWidth(UInt32.self) else { return nil }
+        guard let (watermark, entriesOffset) = Self.parsePrefix(bytes) else { return nil }
+        var offset = entriesOffset
+        guard let count = Self.readLittleEndian(UInt32.self, from: bytes, at: &offset) else { return nil }
+        // Each entry is two UInt64s; reject a count the remaining bytes can't hold
+        // BEFORE reserving, so a corrupt/oversized count (e.g. 0xFFFFFFFF on a short
+        // blob) returns nil instead of OOM-trapping on reserveCapacity — the
+        // defensive-decode contract. Compared in Int to avoid any UInt32 overflow.
+        let entrySize = MemoryLayout<UInt64>.size * 2
+        guard Int(count) <= (bytes.count - offset) / entrySize else { return nil }
         var fingerprints: [Int: UInt64] = [:]
         fingerprints.reserveCapacity(Int(count))
         for _ in 0..<count {
-            guard let rawID = readFixedWidth(UInt64.self),
-                  let fingerprint = readFixedWidth(UInt64.self) else { return nil }
+            guard let rawID = Self.readLittleEndian(UInt64.self, from: bytes, at: &offset),
+                  let fingerprint = Self.readLittleEndian(UInt64.self, from: bytes, at: &offset) else { return nil }
             fingerprints[Int(Int64(bitPattern: rawID))] = fingerprint
         }
 

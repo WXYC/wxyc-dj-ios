@@ -56,7 +56,11 @@ public struct SpotlightCatalogIndexer: CatalogIndexing {
     }
 
     public func indexedWatermark() async throws -> String? {
-        try await currentState().watermark
+        // Read ONLY the watermark — `reindex` needs the full map, but every poll
+        // and conditional GET hits this, so decoding the whole ~1 MB map here just
+        // to read a date string would be wasted work on the cheap-probe path.
+        guard let data = try await index.lastClientState(), !data.isEmpty else { return nil }
+        return CatalogIndexState.decodeWatermark(from: data)
     }
 
     /// Decode the index's persisted ``CatalogIndexState`` from client state, or
@@ -92,15 +96,6 @@ public struct SpotlightCatalogIndexer: CatalogIndexing {
         // next run re-derives the identical set. Sorted for deterministic batching.
         let removedIDs = oldMap.keys.filter { newMap[$0] == nil }.sorted()
 
-        // The watermark and the map advance together, only on the final batch:
-        // intermediate batches preserve the OLD map (so a vanished id's delete is
-        // still re-derivable after a mid-reindex crash) and withhold the watermark
-        // (so indexedWatermark() reports the index isn't current and the next poll
-        // re-fetches). A throw before the final commit therefore leaves both
-        // un-advanced and the work set re-derives identically.
-        let intermediateState = CatalogIndexState(watermark: nil, fingerprints: oldMap).encode()
-        let finalState = CatalogIndexState(watermark: watermark, fingerprints: newMap).encode()
-
         // Apply one bounded batch — its upserts, then its deletes — and commit
         // `clientState`. Deletes are by explicit id only (never delete-by-domain),
         // so home-screen search is never emptied mid-reindex.
@@ -115,16 +110,38 @@ public struct SpotlightCatalogIndexer: CatalogIndexing {
             try await index.endBatch(clientState: clientState)
         }
 
+        // The watermark and the map advance together, only on the final batch.
+        // Each batch commits the map of work applied **so far** (cumulative), not
+        // the pre-reindex `oldMap`: a batch's `endBatch` durably applies that
+        // batch's upserts/deletes, so committing the cumulative map keeps the
+        // persisted record consistent with the physical index *mid-run*. A crash
+        // between batches then leaves the committed map describing exactly what the
+        // index holds, and the next run reconciles the fresh export against it —
+        // re-deleting a now-vanished id rather than stranding it, even if the export
+        // changed in the crash window. (Committing `oldMap` instead would, on a
+        // first-ever multi-batch index, claim an empty index while batches had
+        // already added rows — stranding any that the next export drops.)
+        // Intermediate batches withhold the watermark (`nil`) so the next poll
+        // re-fetches; only the final batch commits it, atomically with the
+        // by-then-complete map (which equals `newMap`). A throw before the final
+        // commit leaves the watermark un-advanced, so the next run re-derives.
         let batches = Self.planBatches(upserts: toUpsert, deletes: removedIDs, chunkSize: chunkSize)
         if batches.isEmpty {
             // No add/change/remove (e.g. a 200 that touched only non-fingerprinted
-            // fields like `plays`): still commit once so the watermark + map
-            // advance and the next poll 304s instead of re-fetching forever.
-            try await apply(Batch(), committing: finalState)
+            // fields like `plays`): still commit once so the watermark + map advance
+            // and the next poll 304s instead of re-fetching forever. The cumulative
+            // map is unchanged, and `newMap == oldMap` here.
+            try await apply(Batch(), committing: CatalogIndexState(watermark: watermark, fingerprints: newMap).encode())
         } else {
+            var committedMap = oldMap
             for (offset, batch) in batches.enumerated() {
                 let isFinal = offset == batches.count - 1
-                try await apply(batch, committing: isFinal ? finalState : intermediateState)
+                // Fold this batch's work into the running map BEFORE committing, so
+                // the commit reflects the state this batch's endBatch makes durable.
+                for row in batch.upserts { committedMap[row.id] = newMap[row.id] }
+                for id in batch.deletes { committedMap.removeValue(forKey: id) }
+                let state = CatalogIndexState(watermark: isFinal ? watermark : nil, fingerprints: committedMap)
+                try await apply(batch, committing: state.encode())
             }
         }
 
