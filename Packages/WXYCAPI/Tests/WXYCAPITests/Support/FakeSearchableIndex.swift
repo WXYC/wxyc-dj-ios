@@ -42,6 +42,10 @@ final class FakeSearchableIndex: SearchableIndexing {
         var indexBatchSizes: [Int] = []
         var indexedItems: [IndexedItem] = []
         var deletedIdentifiers: [String] = []
+        /// The 1-based batch number (`beginCount` at delete time) each `deleteItems`
+        /// call landed in — lets a test prove deletes ride the final
+        /// (watermark-bearing) batch, not an intermediate empty-state one.
+        var deletedInBatch: [Int] = []
         /// The client state from the most recent `endBatch` (what `lastClientState`
         /// returns).
         var committedClientState: Data?
@@ -102,7 +106,10 @@ final class FakeSearchableIndex: SearchableIndexing {
 
     func deleteItems(withIdentifiers identifiers: [String]) async throws {
         if failOn == .deleteItems { throw FakeError() }
-        state.withLock { $0.deletedIdentifiers.append(contentsOf: identifiers) }
+        state.withLock {
+            $0.deletedIdentifiers.append(contentsOf: identifiers)
+            $0.deletedInBatch.append($0.beginCount)
+        }
     }
 
     func endBatch(clientState: Data) async throws {

@@ -22,13 +22,24 @@ import Foundation
 /// the first full index never blocks the UI.
 public struct SpotlightCatalogIndexer: CatalogIndexing {
     private let index: any SearchableIndexing
-    /// Rows per `indexItems` call — bounds memory and lets the index process the
-    /// catalog incrementally. Core Spotlight's batch guidance is ~thousands;
-    /// injectable so tests can use a small value.
+
+    /// Core Spotlight's hard cap on the number of items in a single
+    /// `beginBatch()`/`endBatch()` cycle (`Int16.max`). A batch holding more than
+    /// this throws `CSIndexErrorDomain -1001` at `endBatch`, so `chunkSize` — which
+    /// is also the per-batch item count — must stay at or below it.
+    public static let maxBatchItemCount = 32_767
+
+    /// Rows per `indexItems` call *and* per batch — bounds memory, lets the index
+    /// process the catalog incrementally, and (capped at ``maxBatchItemCount``)
+    /// keeps every batch within Core Spotlight's per-batch item limit. Batch
+    /// guidance is ~thousands; injectable so tests can use a small value.
     private let chunkSize: Int
 
     public init(index: any SearchableIndexing, chunkSize: Int = 5_000) {
-        precondition(chunkSize > 0, "chunkSize must be positive")
+        precondition(
+            chunkSize > 0 && chunkSize <= Self.maxBatchItemCount,
+            "chunkSize must be in 1...\(Self.maxBatchItemCount) — Core Spotlight's per-batch item cap"
+        )
         self.index = index
         self.chunkSize = chunkSize
     }
@@ -49,41 +60,50 @@ public struct SpotlightCatalogIndexer: CatalogIndexing {
 
     public func reindex(store: any CatalogStore, removedIDs: [Int], watermark: String?) async throws {
         let finalClientState = watermark.map { Data($0.utf8) } ?? Data()
-        // Page the store so the reindex never materializes the whole catalog and
-        // the store stays free for deep-link lookups between pages. Each page is
-        // its OWN bounded batch: Core Spotlight caps a single beginBatch/endBatch
-        // cycle at 32,767 items, so accumulating the whole catalog into one batch
-        // throws -1001 at endBatch. `chunkSize` (≤ 32,767) keeps every batch legal.
+
+        // One bounded batch per `chunkSize` page: Core Spotlight rejects a single
+        // beginBatch/endBatch cycle holding more than `maxBatchItemCount` items
+        // with -1001 at endBatch, so the whole catalog must never ride one batch.
         //
-        // The watermark must advance only when the WHOLE reindex completes, so it
+        // The watermark advances only when the WHOLE reindex completes, so it
         // rides the final batch alone and intermediate batches commit empty client
-        // state — a crash between batches then leaves `indexedWatermark()`
-        // un-advanced and the next refresh re-attempts (the step-4 crash-safety
-        // invariant). The last page is held back so the final batch always carries
-        // real index work plus the watermark and the vanished-id deletes.
+        // state. A throw between batches therefore CLEARS the committed watermark
+        // to empty (so `indexedWatermark()` reads back nil) — it does not leave the
+        // prior watermark intact. That is safe because `CatalogRefreshService`
+        // replaces the store *before* reindexing, so the next poll re-fetches and
+        // re-indexes from scratch rather than 304-ing past a half-built index (the
+        // step-4 crash-safety invariant). The last page is held back so the
+        // watermark-bearing final batch always carries real index work.
+
+        // Index `page` (when non-empty) and apply `deletedIDs` in one bounded
+        // batch, committing `clientState`. Paging the store keeps the reindex from
+        // materializing the whole catalog and leaves it free for deep-link lookups
+        // between batches; deletes are by explicit id only — never delete-by-domain,
+        // so home-screen search is never emptied mid-reindex.
+        func commitBatch(_ page: [CatalogRow], clientState: Data, deleting deletedIDs: [Int]) async throws {
+            index.beginBatch()
+            if !page.isEmpty {
+                try await index.indexItems(page.map(CatalogSpotlight.searchableItem(for:)))
+            }
+            if !deletedIDs.isEmpty {
+                try await index.deleteItems(withIdentifiers: deletedIDs.map(CatalogSpotlight.itemIdentifier))
+            }
+            try await index.endBatch(clientState: clientState)
+        }
+
         var cursor: Int? = nil
-        var heldPage: [CatalogRow]? = nil
+        var heldPage: [CatalogRow] = []
         while true {
             let page = try await store.rows(after: cursor, limit: chunkSize)
             guard let lastID = page.last?.id else { break }
-            if let intermediate = heldPage {
-                index.beginBatch()
-                try await index.indexItems(intermediate.map(CatalogSpotlight.searchableItem(for:)))
-                try await index.endBatch(clientState: Data())
+            if !heldPage.isEmpty {
+                try await commitBatch(heldPage, clientState: Data(), deleting: [])
             }
             heldPage = page
             cursor = lastID
         }
-        // Final batch: the held-back last page (if any) + targeted deletes for
-        // vanished ids only — never delete-by-domain, so home-screen search is
-        // never emptied mid-reindex — committing the real watermark exactly once.
-        index.beginBatch()
-        if let lastPage = heldPage {
-            try await index.indexItems(lastPage.map(CatalogSpotlight.searchableItem(for:)))
-        }
-        if !removedIDs.isEmpty {
-            try await index.deleteItems(withIdentifiers: removedIDs.map(CatalogSpotlight.itemIdentifier))
-        }
-        try await index.endBatch(clientState: finalClientState)
+        // Final batch: the held-back last page (empty only for an empty store) plus
+        // the vanished-id deletes, committing the real watermark exactly once.
+        try await commitBatch(heldPage, clientState: finalClientState, deleting: removedIDs)
     }
 }

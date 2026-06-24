@@ -19,26 +19,6 @@ import WXYCAPI
 
 private let configLog = Logger(subsystem: "org.wxyc.dj", category: "config")
 
-/// A verbose, log-safe description of an error for the catalog-refresh failure
-/// path: the `NSError` domain + numeric code (so a Core Spotlight failure such as
-/// `CSIndexErrorDomain` `-1001` `CSIndexErrorCodeInvalidItemError` stays legible
-/// and greppable) plus any nested `underlyingErrors`. `localizedDescription`
-/// alone collapses all of that to "The operation couldn't be completed", which
-/// hides *which* attribute Core Spotlight rejected — exactly the detail we need
-/// when an index batch fails.
-func catalogErrorDetail(_ error: Error) -> String {
-    let ns = error as NSError
-    var detail = "\(ns.domain) code=\(ns.code): \(ns.localizedDescription)"
-    if !ns.underlyingErrors.isEmpty {
-        let nested = ns.underlyingErrors.map { underlying -> String in
-            let u = underlying as NSError
-            return "\(u.domain) code=\(u.code): \(u.localizedDescription)"
-        }
-        detail += " [underlying: \(nested.joined(separator: "; "))]"
-    }
-    return detail
-}
-
 @MainActor
 @Observable
 final class AppDependencies {
@@ -158,7 +138,7 @@ final class AppDependencies {
             catalogLog.debug("Catalog refresh skipped: not signed in")
             return true
         } catch {
-            catalogLog.error("Catalog refresh failed: \(catalogErrorDetail(error), privacy: .public)")
+            catalogLog.error("Catalog refresh failed: \(Self.catalogErrorDetail(error), privacy: .public)")
             return false
         }
     }
@@ -180,7 +160,7 @@ final class AppDependencies {
         } catch APIError.notSignedIn {
             catalogLog.debug("Background catalog poll skipped: not signed in")
         } catch {
-            catalogLog.error("Background catalog poll failed: \(catalogErrorDetail(error), privacy: .public)")
+            catalogLog.error("Background catalog poll failed: \(Self.catalogErrorDetail(error), privacy: .public)")
         }
     }
 
@@ -283,6 +263,27 @@ final class AppDependencies {
         // already flattens the optional-returning call (SE-0230), so no `?? nil`.
         let row = try? await catalogStore.row(id: albumID)
         return AlbumRoute(id: albumID, fallback: row?.detailFallback)
+    }
+
+    /// A verbose, log-safe description of an error for the catalog-refresh failure
+    /// path: the `NSError` domain + numeric code (so a Core Spotlight failure such
+    /// as `CSIndexErrorDomain` `-1001` `CSIndexErrorCodeInvalidItemError` stays
+    /// legible and greppable) plus any nested `underlyingErrors`.
+    /// `localizedDescription` alone collapses all of that to "The operation
+    /// couldn't be completed", which hides *which* attribute Core Spotlight
+    /// rejected — exactly the detail we need when an index batch fails. `nonisolated`
+    /// (it's pure) so the background catch and the unit tests can call it directly.
+    nonisolated static func catalogErrorDetail(_ error: Error) -> String {
+        let ns = error as NSError
+        var detail = "\(ns.domain) code=\(ns.code): \(ns.localizedDescription)"
+        if !ns.underlyingErrors.isEmpty {
+            let nested = ns.underlyingErrors.map { underlying -> String in
+                let u = underlying as NSError
+                return "\(u.domain) code=\(u.code): \(u.localizedDescription)"
+            }
+            detail += " [underlying: \(nested.joined(separator: "; "))]"
+        }
+        return detail
     }
 
     /// The on-device catalog clone's SQLite file:

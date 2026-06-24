@@ -130,7 +130,7 @@ struct CatalogErrorDetailTests {
         // Mirrors the real failure we debugged: CSIndexErrorDomain -1001.
         let error = NSError(domain: "CSIndexErrorDomain", code: -1001)
 
-        let detail = catalogErrorDetail(error)
+        let detail = AppDependencies.catalogErrorDetail(error)
 
         #expect(detail.contains("CSIndexErrorDomain"))
         #expect(detail.contains("code=-1001"))
@@ -144,7 +144,7 @@ struct CatalogErrorDetailTests {
             userInfo: [NSMultipleUnderlyingErrorsKey: [underlying]]
         )
 
-        let detail = catalogErrorDetail(error)
+        let detail = AppDependencies.catalogErrorDetail(error)
 
         #expect(detail.contains("underlying"))
         #expect(detail.contains("LowLevelDomain"))
