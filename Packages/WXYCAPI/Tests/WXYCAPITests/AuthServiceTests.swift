@@ -96,6 +96,63 @@ struct AuthServiceTests {
         #expect(try storage.load(.sessionToken) == nil)
     }
 
+    @Test func signInWithFailedJWTExchangeLeavesNoStoredToken() async throws {
+        // The two-leg handshake: /auth/sign-in/username succeeds (session token
+        // issued + persisted), then /auth/token fails transiently. We report the
+        // sign-in as failed — so it must leave NO durable trace. Otherwise the
+        // orphaned session token sits in the Keychain and the next cold launch's
+        // restoreSession() finds it, succeeds at the JWT exchange, and skips the
+        // login screen entirely: "login failed, but reopening logs me straight in."
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        // Leg 1: sign-in succeeds, session token captured from the header.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-abc"],
+            body: Data("{}".utf8)
+        ))
+        // Leg 2: JWT exchange fails transiently (server down, not bad creds).
+        session.enqueue(StubRequestSession.Stub(statusCode: 503, body: Data()))
+
+        await service.signIn(username: "dj", password: "pw")
+
+        #expect(service.state == .signedOut)
+        #expect(service.lastError == .serverFailure(status: 503, message: nil))
+        // The load-bearing assertion: a failed sign-in persists nothing.
+        #expect(try storage.load(.sessionToken) == nil)
+        #expect(try storage.load(.jwt) == nil)
+    }
+
+    @Test func signInRollsBackRotatedTokenWhenJWTDecodeFails() async throws {
+        // Narrower partial-commit path: /auth/token returns 2xx and rotates the
+        // session token (captureRotatedSessionToken persists it) but the body
+        // fails to decode. The rotated token must not survive a failed sign-in
+        // either — same "leave no trace" contract.
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-abc"],
+            body: Data("{}".utf8)
+        ))
+        // 2xx with a rotation header but a body that isn't a valid JWTResponse.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-rotated"],
+            body: Data("not json".utf8)
+        ))
+
+        await service.signIn(username: "dj", password: "pw")
+
+        #expect(service.state == .signedOut)
+        #expect(try storage.load(.sessionToken) == nil)
+        #expect(try storage.load(.jwt) == nil)
+    }
+
     @Test func restoreSessionPullsTokenFromStorage() async throws {
         let session = StubRequestSession()
         let storage = InMemoryTokenStorage()

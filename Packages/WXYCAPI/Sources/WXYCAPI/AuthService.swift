@@ -105,12 +105,29 @@ public final class AuthService {
             let payload = try await refreshJWT()
             state = .signedIn(payload: payload)
         } catch let error as AuthError {
+            rollBackFailedSignIn()
             lastError = error
             state = .signedOut
         } catch {
+            rollBackFailedSignIn()
             lastError = .network(message: error.localizedDescription)
             state = .signedOut
         }
+    }
+
+    /// Undo every durable side effect of an interrupted `signIn`. The session
+    /// token is persisted (and may be re-persisted on rotation by `refreshJWT`)
+    /// *before* the JWT exchange is confirmed, so a failure anywhere in the
+    /// handshake can leave an orphaned token in the Keychain. Since we report
+    /// the sign-in as failed, it must leave no trace: otherwise the next cold
+    /// launch's `restoreSession()` finds the token, completes the exchange, and
+    /// silently skips the login screen. Unlike `restoreSession`'s own failure
+    /// path — which keeps a previously-good token so an offline blip can retry —
+    /// a brand-new sign-in that never completed has nothing worth keeping.
+    private func rollBackFailedSignIn() {
+        sessionToken = nil
+        cachedJWT = nil
+        try? storage.clearAll()
     }
 
     public func signOut() async {
