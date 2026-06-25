@@ -63,6 +63,14 @@ public struct SpotlightCatalogIndexer: CatalogIndexing {
         return CatalogIndexState.decodeWatermark(from: data)
     }
 
+    public func upsert(row: CatalogRow, thumbnailData: Data?) async throws {
+        // Plain, non-batch write (no beginBatch/endBatch): commits no client state,
+        // so the watermark and the persisted fingerprint map are both untouched —
+        // a thumbnail attach is decoration, not a catalog-version advance. The full
+        // attribute set is written so search recall and displayName are preserved.
+        try await index.indexItems([CatalogSpotlight.searchableItem(for: row, thumbnailData: thumbnailData)])
+    }
+
     /// Decode the index's persisted ``CatalogIndexState`` from client state, or
     /// ``CatalogIndexState/empty`` when the index has never committed (or the blob
     /// is the legacy issue-#19 bare-watermark form, or otherwise unreadable —

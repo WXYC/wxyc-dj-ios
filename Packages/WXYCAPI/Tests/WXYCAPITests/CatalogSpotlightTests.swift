@@ -101,6 +101,33 @@ struct CatalogSpotlightTests {
         #expect(keywords.contains(row.callNumber))
     }
 
+    @Test func searchableItemOverloadEmbedsThumbnailDataAndKeepsSearchableAttributes() throws {
+        let row = try Self.juanaMolina()
+        let bytes = Data([0xFF, 0xD8, 0xFF, 0xE0])   // a stand-in JPEG magic prefix
+        let item = CatalogSpotlight.searchableItem(for: row, thumbnailData: bytes)
+
+        // The embedded cover bytes Spotlight renders as the result thumbnail (#44).
+        #expect(item.attributeSet.thumbnailData == bytes)
+        // The overload must not regress the searchable attribute set (cf. #32): a
+        // partial item with no displayName/keywords would trip -1001 or lose recall.
+        #expect(item.uniqueIdentifier == "album.100")
+        #expect(item.attributeSet.title == "DOGA")
+        #expect(item.attributeSet.displayName == "DOGA")
+        #expect(item.attributeSet.artist == "Juana Molina")
+        #expect(item.attributeSet.keywords?.contains("Sonamos") == true)
+    }
+
+    @Test func searchableItemWithoutThumbnailMatchesPureMapping() throws {
+        // searchableItem(for:) is the nil overload — same item, no thumbnailData.
+        let row = try Self.juanaMolina()
+        let plain = CatalogSpotlight.searchableItem(for: row)
+        let nilThumb = CatalogSpotlight.searchableItem(for: row, thumbnailData: nil)
+        #expect(plain.attributeSet.thumbnailData == nil)
+        #expect(nilThumb.attributeSet.thumbnailData == nil)
+        #expect(plain.attributeSet.title == nilThumb.attributeSet.title)
+        #expect(plain.attributeSet.keywords == nilThumb.attributeSet.keywords)
+    }
+
     @Test func searchableItemOmitsLabelKeywordWhenNil() throws {
         let row = CatalogRow(
             id: 300, artistName: "Chuquimamani-Condori", albumTitle: "Edits",

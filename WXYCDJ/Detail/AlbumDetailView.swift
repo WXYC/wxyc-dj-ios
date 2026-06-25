@@ -79,6 +79,9 @@ struct AlbumDetailView: View {
         .navigationTitle(info?.albumTitle ?? fallback?.albumTitle ?? "Album")
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadAll() }
+        // Viewing an album is a strong "populated by use" signal: lazily cache its
+        // Spotlight cover thumbnail so a later home-screen hit shows art (issue #44).
+        .task { await deps.cacheThumbnail(forAlbumID: albumId) }
     }
 
     // MARK: Sections

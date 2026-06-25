@@ -29,6 +29,9 @@ final class FakeSearchableIndex: SearchableIndexing {
         let artist: String?
         let album: String?
         let keywords: [String]?
+        /// The embedded Spotlight thumbnail bytes (issue #44), so a test can assert
+        /// a lazy/reindex upsert carried the cover (or, for a plain reindex, didn't).
+        let thumbnailData: Data?
     }
 
     /// The operation the fake should throw on, to exercise the indexer's
@@ -111,7 +114,8 @@ final class FakeSearchableIndex: SearchableIndexing {
                 contentDescription: item.attributeSet.contentDescription,
                 artist: item.attributeSet.artist,
                 album: item.attributeSet.album,
-                keywords: item.attributeSet.keywords
+                keywords: item.attributeSet.keywords,
+                thumbnailData: item.attributeSet.thumbnailData
             )
         }
         state.withLock {

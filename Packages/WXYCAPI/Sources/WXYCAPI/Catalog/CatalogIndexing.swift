@@ -102,4 +102,19 @@ public protocol CatalogIndexing: Sendable {
     /// Returns the ``ReindexSummary`` (upserted + removed counts) for logging.
     @discardableResult
     func reindex(snapshot: [CatalogRow], watermark: String?) async throws -> ReindexSummary
+
+    /// Upsert a single row's `CSSearchableItem` with an embedded `thumbnailData`
+    /// cover (issue #44's lazy thumbnail attach), as a **plain, non-batch** index
+    /// write: no `beginBatch`/`endBatch`, so it commits no client state and the
+    /// catalog watermark is left untouched. A thumbnail attach is best-effort
+    /// decoration, not a catalog-version advance — routing it through
+    /// `endBatch(withClientState:)` could prematurely advance the watermark and let
+    /// the next poll `304` past a not-yet-reindexed catalog. The full attribute set
+    /// is written (via ``CatalogSpotlight/searchableItem(for:thumbnailData:)``),
+    /// never a thumbnail-only partial item — a partial would drop `displayName` /
+    /// `keywords` (a `-1001` invalid item, or a search-recall regression, cf. #32).
+    /// Idempotent: the stable `uniqueIdentifier` means a re-attach just updates the
+    /// existing item. ``CatalogRefreshService`` serializes this against `reindex`
+    /// (both directions) so it never opens a second handle's write during a batch.
+    func upsert(row: CatalogRow, thumbnailData: Data?) async throws
 }

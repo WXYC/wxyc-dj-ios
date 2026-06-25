@@ -93,7 +93,7 @@ The bin endpoints derive the DJ from the JWT's `sub` claim, so the client never 
 
 ### Catalog refresh (foreground-primary, background-best-effort)
 
-A single `CatalogRefreshService` (an `actor` that single-flights overlapping runs) is owned by `AppDelegate` and shared by every caller, so there is never more than one Spotlight batch open at a time. The clone lives at `<Application Support>/Catalog/catalog.sqlite`.
+A single `CatalogRefreshService` (an `actor` that serializes *all* index touches — refreshes and the lazy thumbnail upsert — through one chain) is owned by `AppDelegate` and shared by every caller, so there is never more than one Spotlight batch open at a time. The clone lives at `<Application Support>/Catalog/catalog.sqlite`.
 
 - **Foreground (primary):** `WXYCDJApp`'s launch `.task` calls `refreshCatalog()` after `restoreSession()`, and re-runs it on scene-activation. Budget-unbounded; this is the floor.
 - **Background (best-effort, no guaranteed scheduling):** a split-task design driven by `BackgroundTasks`:
@@ -116,6 +116,14 @@ e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateExpirationForTask
 ```
 
 The task must have been submitted (an `earliestBeginDate` request in the queue) before `_simulateLaunch` will fire it.
+
+### Album art in Spotlight ([#44](https://github.com/WXYC/wxyc-dj-ios/issues/44))
+
+Home-screen Spotlight results show the album cover, not the default icon. iOS does **not** fetch a remote `artwork_url` for app-indexed content, so the cover is materialized on-device and embedded as the item's `thumbnailData` (embedded bytes, not a `thumbnailURL` — the index keeps its own copy, so nothing can dangle it).
+
+- **Populated by use, not pre-fetched.** When a DJ views an album (`AlbumDetailView`) or a search row surfaces (`SearchResultRow`), `AppDependencies.cacheThumbnail(forAlbumID:)` resolves the cover through `DiskThumbnailProvider`: fetch (plain `GET`, no Discogs key) → downscale (ImageIO, 256 px JPEG q0.8) → cache at `<Application Support>/Catalog/Thumbnails/<id>-<urlhash>.jpg` → upsert just that Spotlight item with the embedded bytes. Cache hits are O(1) with no network; a changed `artwork_url` hashes to a new key and re-fetches once. The cache self-sizes to the working set (tens–hundreds of covers), never downloads the catalog, and is de-duped per launch so scrolling re-fires cheaply.
+- **Serialized with reindex.** The lazy upsert opens a Core Spotlight write, so it runs through the **same serial chain** as the catalog reindex (`CatalogRefreshService`), in both directions — no two index touches ever overlap. The upsert is a plain non-batch write that never advances the catalog watermark.
+- **Verify on device.** Core Spotlight *surfacing* is unreliable on the Simulator (see [#19](https://github.com/WXYC/wxyc-dj-ios/issues/19)/[#32](https://github.com/WXYC/wxyc-dj-ios/issues/32)), so the "result then shows the cover" half is a **physical-device** check: view an album, then search for it from the home screen and confirm the thumbnail renders.
 
 ### Spotlight deep link
 

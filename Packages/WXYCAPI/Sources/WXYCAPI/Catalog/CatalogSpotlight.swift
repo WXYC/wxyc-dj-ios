@@ -88,6 +88,17 @@ public enum CatalogSpotlight {
     /// missing `displayName` leaves the entire catalog unindexed and home-screen
     /// search empty. Pure — builds a value, talks to no index.
     public static func searchableItem(for row: CatalogRow) -> CSSearchableItem {
+        searchableItem(for: row, thumbnailData: nil)
+    }
+
+    /// As ``searchableItem(for:)`` but also embeds `thumbnailData` (a downscaled
+    /// JPEG cover) as the item's Spotlight thumbnail (issue #44). Embedded bytes —
+    /// not a `thumbnailURL` — so the index owns its own copy: eviction or
+    /// container-path rotation can never dangle a live item's art (rdar://23592852),
+    /// and a `nil` here is identical to the plain mapping (default icon). The bytes
+    /// are read off the on-disk cache by the caller right before the upsert, keeping
+    /// this mapping pure / synchronous / network-free.
+    public static func searchableItem(for row: CatalogRow, thumbnailData: Data?) -> CSSearchableItem {
         let attributes = CSSearchableItemAttributeSet(contentType: .content)
         attributes.title = row.albumTitle
         attributes.displayName = row.albumTitle
@@ -103,6 +114,8 @@ public enum CatalogSpotlight {
         attributes.keywords = [row.artistName, row.albumTitle, row.label, callNumber]
             .compactMap { $0 }
             .filter { !$0.isEmpty }
+        // nil leaves no thumbnail → the default icon, identical to the plain mapping.
+        attributes.thumbnailData = thumbnailData
         return CSSearchableItem(
             uniqueIdentifier: itemIdentifier(row.id),
             domainIdentifier: domainIdentifier,
