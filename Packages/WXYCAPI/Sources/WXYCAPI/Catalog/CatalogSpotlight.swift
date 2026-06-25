@@ -75,11 +75,28 @@ public enum CatalogSpotlight {
     /// The `CSSearchableItem` mirroring `row`: `title` / `displayName` = album (the
     /// field Spotlight reliably matches free-text queries against),
     /// `contentDescription` = artist (plus the shelf call number when present) as
-    /// the human-readable subtitle, and `keywords` = artist, album, label, and call
-    /// number so a query on any of those can match. The searchable terms live in
-    /// `title`/`keywords` precisely because `contentDescription` is display-only —
-    /// Core Spotlight does not match queries against it — so a call number kept only
-    /// there would be unfindable.
+    /// the human-readable subtitle, `textContent` = the non-album searchable terms
+    /// (artist + label + call number), and `keywords` = artist, album, label, and
+    /// call number so a query on any of those can match. The searchable terms live
+    /// in `title`/`textContent`/`keywords` precisely because `contentDescription`
+    /// is display-only — Core Spotlight does not match queries against it — so a
+    /// call number kept only there would be unfindable.
+    ///
+    /// `textContent` carries the artist / label / call number into a field that is
+    /// **matched but never displayed** (issue #32). `keywords` is documented as
+    /// query-matched but had an iOS-17 regression where only `title`/`displayName`
+    /// were actually searched; this app's floor is iOS 18.4+, where that may or may
+    /// not be fixed — so `textContent` makes artist/label/call-number recall robust
+    /// regardless, at zero visual cost (unlike folding them into the user-visible
+    /// `displayName`). `keywords` is kept as belt-and-suspenders.
+    ///
+    /// `textContent`'s terms are already fingerprinted, so ``fingerprint(for:)``
+    /// itself is unchanged — but that is precisely why a mapping change like this
+    /// can't propagate to already-indexed rows on its own (the delta reindex skips
+    /// any row whose fingerprint is unmoved). Adding `textContent` therefore came
+    /// with a `CatalogIndexState.formatVersion` bump, which invalidates the persisted
+    /// index state so existing installs do a one-time full re-upsert and the new
+    /// field actually lands. Any future change to this mapping needs the same bump.
     ///
     /// `displayName` is set alongside `title` deliberately: on iOS 17+ Core
     /// Spotlight rejects an item that has no `displayName` as an *invalid item*
@@ -111,9 +128,16 @@ public enum CatalogSpotlight {
         // Call number is included here so a shelf-code query matches — it is
         // otherwise only in the display-only `contentDescription`. Empty/nil
         // fields are dropped.
-        attributes.keywords = [row.artistName, row.albumTitle, row.label, callNumber]
-            .compactMap { $0 }
-            .filter { !$0.isEmpty }
+        attributes.keywords = searchableTerms(row.artistName, row.albumTitle, row.label, callNumber)
+        // textContent is matched by Spotlight but never shown, so it carries the
+        // non-album searchable terms (artist, label, call number) into a reliably-
+        // matched field without altering how any result reads (issue #32) — the
+        // recall safety net should the iOS-17 keywords regression persist on the
+        // 18.4+ floor. Album already lives in title/displayName. Only the terms
+        // present are joined, so a row with no label/call number contributes no
+        // empty fragments or stray separators.
+        attributes.textContent = searchableTerms(row.artistName, row.label, callNumber)
+            .joined(separator: " ")
         // nil leaves no thumbnail → the default icon, identical to the plain mapping.
         attributes.thumbnailData = thumbnailData
         return CSSearchableItem(
@@ -121,6 +145,15 @@ public enum CatalogSpotlight {
             domainIdentifier: domainIdentifier,
             attributeSet: attributes
         )
+    }
+
+    /// The non-empty members of `terms`, in order — the cleaning the searchable
+    /// `keywords` and `textContent` fields share, so a future change to the rule
+    /// (e.g. trimming or de-duping) can't leave the two fields applying different
+    /// ones. Drops nils and empty strings so neither field carries a blank entry or
+    /// a stray separator.
+    private static func searchableTerms(_ terms: String?...) -> [String] {
+        terms.compactMap { $0 }.filter { !$0.isEmpty }
     }
 
     /// A **stable** content fingerprint over exactly the fields that feed
@@ -137,7 +170,9 @@ public enum CatalogSpotlight {
     /// `CSSearchableItem`, so re-upserting it would be wasted work. Keep this set
     /// in lockstep with ``searchableItem(for:)`` — a field that starts feeding
     /// the item but not the fingerprint would leave Spotlight stale on a change
-    /// confined to it.
+    /// confined to it. (The issue-#32 `textContent` is derived entirely from
+    /// already-fingerprinted fields — artist, label, call-number components — so it
+    /// added no new input here.)
     ///
     /// **Not** `CatalogRow.hashValue`: Swift seeds `Hashable` with a per-process
     /// random salt, so `hashValue` differs run to run and is unusable as a

@@ -78,10 +78,14 @@ jobs:
           echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
 
       - name: Build and test iOS app
-        # Skip the Spotlight client-state tolerance probe: it's enabled by default
-        # via the scheme's WXYC_SPOTLIGHT_TOLERANCE env var (so device runs pick it
-        # up automatically), but Core Spotlight rejects client-state commits on the
-        # Simulator (CSIndexError -1002), so it can only pass on a physical device.
+        # Skip the two device-only Spotlight probes. Both are enabled by default via
+        # scheme env vars (WXYC_SPOTLIGHT_TOLERANCE / WXYC_SPOTLIGHT_FIELD_RESOLUTION)
+        # so device runs pick them up automatically, but neither can pass on the
+        # Simulator: the tolerance probe trips CSIndexError -1002 on client-state
+        # commit, and the field-resolution probe relies on the Simulator's Spotlight
+        # query path, which is unreliable. They still compile here (-skip-testing
+        # skips execution, not the build) — run them by targeting a device destination
+        # and dropping the -skip-testing flags.
         run: |
           xcodebuild test \
             -project "$PROJECT" \
@@ -89,4 +93,5 @@ jobs:
             -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.device_id }}" \
             -configuration Debug \
             -skip-testing:WXYCDJTests/SpotlightClientStateToleranceTests \
+            -skip-testing:WXYCDJTests/SpotlightFieldResolutionTests \
             CODE_SIGNING_ALLOWED=NO

@@ -101,12 +101,16 @@ xcodebuild test \
   -destination "platform=iOS Simulator,id=$SIM_ID" \
   -configuration Debug \
   -skip-testing:WXYCDJTests/SpotlightClientStateToleranceTests \
+  -skip-testing:WXYCDJTests/SpotlightFieldResolutionTests \
   CODE_SIGNING_ALLOWED=NO
 ```
 
 `CODE_SIGNING_ALLOWED=NO` keeps the test step from requiring a provisioning profile. The test step needs a real simulator (not `generic/platform=iOS Simulator`) because `WXYCDJTests` is a host-app unit-test bundle.
 
-`-skip-testing:WXYCDJTests/SpotlightClientStateToleranceTests` is required on the **Simulator** (CI and local): the `WXYCDJ` scheme sets `WXYC_SPOTLIGHT_TOLERANCE=1` (in `project.yml`) so a **physical-device** test run picks up the Core Spotlight client-state tolerance probe automatically — but Core Spotlight rejects client-state commits on the Simulator with `CSIndexError -1002`, so that suite can only pass on device and must be skipped anywhere it runs against a Simulator. Run it by targeting a device destination (drop the `-skip-testing` flag).
+Two **device-only** Spotlight suites are `-skip-testing`'d on the Simulator (CI and local). Both are enabled by default via scheme env vars in `project.yml` so a **physical-device** run picks them up automatically; `-skip-testing` skips *execution*, not compilation, so they still build on the Simulator. Run either by targeting a device destination and dropping its flag.
+
+- `SpotlightClientStateToleranceTests` (`WXYC_SPOTLIGHT_TOLERANCE=1`, issue #36): Core Spotlight rejects client-state commits on the Simulator with `CSIndexError -1002`, so it can only pass on device.
+- `SpotlightFieldResolutionTests` (`WXYC_SPOTLIGHT_FIELD_RESOLUTION=1`, issue #32): measures which `CSSearchableItemAttributeSet` fields resolve a free-text `CSSearchQuery` (and that a real `CatalogRow` resolves by artist / label / call number). The Simulator's Spotlight query path is unreliable, so the measurement is only trustworthy on device — the recorded `SPOTLIGHT FIELD RESOLUTION […]` log line is the issue-#32 "measured and recorded" artifact.
 
 ## Things explicitly out of scope
 
