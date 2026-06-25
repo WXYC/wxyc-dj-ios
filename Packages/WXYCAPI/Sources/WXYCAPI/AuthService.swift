@@ -158,8 +158,9 @@ public final class AuthService {
             state = .signedOut
         } catch {
             // Transient: keep the session token (incl. any value rotated and
-            // persisted by `refreshJWT`) and enter the pending window.
-            lastError = nil
+            // persisted by `refreshJWT`) and enter the pending window. `lastError`
+            // was already cleared at the top of `signIn`, so pending carries no
+            // error — same as `restoreSession`'s transient arm.
             state = .signedIn(payload: nil)
         }
     }
@@ -201,7 +202,7 @@ public final class AuthService {
         if let cached = cachedJWT, cached.payload.expiration.timeIntervalSinceNow > Self.refreshLeeway {
             return cached.token
         }
-        guard sessionToken != nil else { throw AuthError.notSignedIn }
+        guard let tokenAtRefresh = sessionToken else { throw AuthError.notSignedIn }
         do {
             _ = try await refreshJWT()
         } catch AuthError.notSignedIn {
@@ -212,9 +213,22 @@ public final class AuthService {
             // and it also closes a pre-existing gap, where a session revoked
             // mid-use left `state` pinned at `.signedIn` with no path back short
             // of force-quit. `APIClient`'s one-shot 401 retry funnels here too.
-            clearLocalSession()
-            lastError = .notSignedIn
-            state = .signedOut
+            //
+            // Demote only if the rejected bearer is *still* the current session.
+            // This is the shared lazy-refresh chokepoint for every authed caller
+            // — interactive search/bin AND the background catalog refresh, which
+            // share one `AuthService` — so two refreshes can overlap, each having
+            // bound its bearer before suspending. If a concurrent re-sign-in (or
+            // a rotation captured by the other in-flight refresh) replaced
+            // `sessionToken` while we awaited, this 401 is for a superseded
+            // bearer: clobbering would erase a valid new session and spuriously
+            // bounce the DJ to login. Report this stale attempt as
+            // unauthenticated instead and let the caller retry the live session.
+            if sessionToken == tokenAtRefresh {
+                clearLocalSession()
+                lastError = .notSignedIn
+                state = .signedOut
+            }
             throw AuthError.notSignedIn
         }
         // A transient throw above propagates unchanged: `state` stays `.signedIn`

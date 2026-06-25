@@ -312,6 +312,93 @@ struct AuthServiceTests {
         #expect(try storage.load(.jwt) == nil)
     }
 
+    @Test func currentJWTTransientFailureLeavesStateSignedIn() async throws {
+        // A *transient* lazy-refresh failure (5xx, not 401) must propagate the
+        // error WITHOUT demoting: the session may still be good, so state stays
+        // .signedIn and the calling view shows a retryable error (no bounce to
+        // login). The complement of the lazy-401 demotion tests.
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        // Reach the pending window via a sign-in whose JWT leg 503s.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-abc"],
+            body: Data("{}".utf8)
+        ))
+        session.enqueue(StubRequestSession.Stub(statusCode: 503, body: Data()))
+        await service.signIn(username: "dj", password: "pw")
+        #expect(service.state == .signedIn(payload: nil))
+
+        // The lazy retry hits another 503 — still transient, still no demotion.
+        session.enqueue(StubRequestSession.Stub(statusCode: 503, body: Data()))
+        await #expect(throws: AuthError.serverFailure(status: 503, message: nil)) {
+            _ = try await service.currentJWT()
+        }
+
+        #expect(service.state == .signedIn(payload: nil))
+        #expect(try storage.load(.sessionToken) == "session-abc")
+    }
+
+    @Test func lazyRefresh401ForASupersededBearerDoesNotClobberANewSession() async throws {
+        // The issue-#53 concurrency guard. currentJWT() is the shared lazy-refresh
+        // chokepoint for every authed caller (interactive search/bin AND the
+        // background catalog refresh share one AuthService), so two refreshes can
+        // overlap, each bound to its own bearer. If a stale refresh resumes with a
+        // 401 *after* a concurrent re-sign-in already replaced the session, the
+        // demotion must NOT fire — clobbering would erase the valid new session
+        // and spuriously bounce the DJ to login. The GatedAuthSession parks the
+        // stale refresh's /auth/token mid-flight so the race is deterministic.
+        let session = GatedAuthSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-1", for: .sessionToken)
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        // Cold-launch restore brings session-1 to .signedIn (one instant token call).
+        session.enqueueInstant(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await service.restoreSession()
+        service.invalidateJWT()  // force the next currentJWT() to hit the network
+
+        // Arm the gate so the stale refresh's /auth/token parks, then 401s.
+        session.armGate(returning: StubRequestSession.Stub(statusCode: 401, body: Data()))
+        // The concurrent re-sign-in's responses (served instantly): a fresh session-2.
+        session.enqueueInstant(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-2"],
+            body: Data("{}".utf8)
+        ))
+        session.enqueueInstant(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+
+        // Start the stale refresh (bound to session-1); it parks at the gate.
+        let staleRefresh = Task { try? await service.currentJWT() }
+        await session.waitForGatedArrival()
+
+        // While the stale refresh is suspended, the DJ re-signs-in to session-2.
+        await service.signIn(username: "dj", password: "pw")
+        #expect(service.isSignedIn)
+        #expect(try storage.load(.sessionToken) == "session-2")
+
+        // Let the stale refresh resume: its 401 is for the superseded session-1.
+        session.releaseGate()
+        _ = await staleRefresh.value
+
+        // The guard suppressed the demotion: the new session-2 survives intact.
+        guard case let .signedIn(payload) = service.state else {
+            Issue.record("expected still signedIn, got \(service.state)")
+            return
+        }
+        #expect(payload != nil)  // session-2's real JWT — not demoted, not pending
+        #expect(try storage.load(.sessionToken) == "session-2")
+        #expect(try storage.load(.jwt) != nil)
+    }
+
     @Test func restoreSessionPullsTokenFromStorage() async throws {
         let session = StubRequestSession()
         let storage = InMemoryTokenStorage()
