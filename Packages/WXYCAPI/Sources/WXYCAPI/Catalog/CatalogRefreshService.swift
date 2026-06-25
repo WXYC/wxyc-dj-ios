@@ -4,10 +4,11 @@
 //
 //  The shared poll -> 304/200 -> store-replace -> Spotlight-reindex flow (issue
 //  #19 step 4) the foreground path and both background tasks call. An actor that
-//  single-flights overlapping refreshes, so the bulk runs off the main actor, the
-//  BGTask layer stays thin, and there is never more than one Spotlight batch open
-//  at a time. The load-bearing invariant: the poll watermark is sourced from the
-//  index commit, so it advances only after Spotlight endBatch succeeds.
+//  serializes all index touches (refreshes + issue-#44 lazy thumbnail upserts)
+//  through one chain, so the bulk runs off the main actor, the BGTask layer stays
+//  thin, and there is never more than one Spotlight batch open at a time. The
+//  load-bearing invariant: the poll watermark is sourced from the index commit, so
+//  it advances only after Spotlight endBatch succeeds.
 //
 //  Created by Jake on 06/23/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -94,11 +95,23 @@ public actor CatalogRefreshService {
     /// thumbnail upsert can chain through one slot. Released (`nil`) when the queue
     /// drains, via `endSerialOp`.
     private var inFlight: Task<Void, Never>?
-    /// In-flight serial ops. Drives `poll()`'s short-circuit and lets the tail be
-    /// released when idle. **Not** a second serialization primitive — a derived
+    /// In-flight serial ops (refresh or thumbnail upsert). Lets the tail be released
+    /// when the queue drains. **Not** a second serialization primitive — a derived
     /// counter mutated in lockstep with chain membership; the chain (`inFlight`) is
     /// the sole ordering mechanism.
     private var activeCount = 0
+    /// In-flight *refreshes* specifically (the ops that reindex + open a batch).
+    /// `poll()` defers to this, **not** `activeCount`: a lazy thumbnail upsert
+    /// neither covers the catalog work a poll would trigger nor opens a batch, so it
+    /// must not suppress the poll (issue #44 — that false-negative would skip a real
+    /// reindex schedule).
+    private var refreshInFlight = 0
+    /// Cover cache keys (`<id>-<urlhash>.jpg`) already attached to Spotlight this
+    /// session, so a re-view of an unchanged cover skips a redundant upsert. Cleared
+    /// whenever a reindex upserts rows (which re-write changed rows *without* a
+    /// thumbnail), so the "self-heal on next view" path still re-attaches a stripped
+    /// cover — keying on id alone would wedge it blank until relaunch (issue #44).
+    private var attachedThumbnailKeys: Set<String> = []
 
     public init(
         client: APIClient,
@@ -119,47 +132,58 @@ public actor CatalogRefreshService {
     /// refresh↔refresh).
     ///
     /// `Task { }` created inside this actor method inherits the actor's isolation
-    /// (`@_inheritActorContext` on `Task.init`'s operation), so the closure body —
-    /// and its `defer` — run **on the actor**: `endSerialOp()` is a synchronous,
-    /// in-actor call (a `defer` can't `await`). The only suspension points are
-    /// `await predecessor?.value` and `await work()`, which hop off and back onto
-    /// the actor. Cleanup runs in the **work task's** frame, not the caller's, so a
-    /// cancelled caller can't free the slot while the batch is still open.
+    /// (`@_inheritActorContext` on `Task.init`'s operation), so the wrapper's
+    /// continuation runs **on the actor**: `endSerialOp()` is a synchronous,
+    /// in-actor call. The only suspension points are `await predecessor?.value` and
+    /// `await work()`, which hop off and back onto the actor.
+    ///
+    /// **Counter balance is cancellation-robust.** The `activeCount += 1` is paired
+    /// with the wrapper task's `endSerialOp()`, which runs when `task` *settles*
+    /// (success, throw, **or** cancellation — `try?` swallows). Putting the decrement
+    /// in the wrapper rather than a `defer` inside `task` means it can't be skipped
+    /// by a cancellation delivered while `task` is suspended at `await
+    /// predecessor?.value` (before a `defer` would even register) — so the counter
+    /// can never wedge `> 0` and strand `poll()`/the tail.
     ///
     /// Coalescing of overlapping `refresh()` calls (the issue-#19 behavior) was
     /// **dropped** for one serial mechanism (issue #44): two overlapping refreshes
     /// now run sequentially; the second re-polls and gets a cheap `304`.
-    private func runSerial<T: Sendable>(_ work: @escaping @Sendable () async throws -> T) async throws -> T {
+    private func runSerial<T: Sendable>(isRefresh: Bool, _ work: @escaping @Sendable () async throws -> T) async throws -> T {
         let predecessor = inFlight
         activeCount += 1
+        if isRefresh { refreshInFlight += 1 }
         let task = Task<T, Error> {
             await predecessor?.value          // serialize after any predecessor index touch
-            defer { self.endSerialOp() }      // synchronous, actor-isolated
             return try await work()
         }
-        // Type-erased to chain heterogeneous ops (refresh returns Outcome, upsert
-        // returns Void) through one `Task<Void, Never>` tail; successors only need
-        // "predecessor finished", not its value.
-        inFlight = Task { _ = try? await task.value }
+        // Type-erased tail so heterogeneous ops (refresh → Outcome, upsert → Void)
+        // chain through one `Task<Void, Never>`; successors only need "predecessor
+        // settled". The wrapper also owns cleanup, so it always runs once `task`
+        // settles regardless of how the caller's await unwinds.
+        inFlight = Task {
+            _ = try? await task.value
+            self.endSerialOp(isRefresh: isRefresh)
+        }
         return try await task.value
     }
 
-    /// Runs on the actor when a serial op's work finishes (success or throw). Frees
-    /// the tail once the queue drains so `poll()` sees idle and the slot isn't retained.
-    private func endSerialOp() {
+    /// Runs on the actor when a serial op settles. Frees the tail once the queue
+    /// drains so `poll()` sees idle and the slot isn't retained.
+    private func endSerialOp(isRefresh: Bool) {
         activeCount -= 1
+        if isRefresh { refreshInFlight -= 1 }
         if activeCount == 0 { inFlight = nil }
     }
 
     /// Run one refresh cycle: poll conditionally, and on a `200` wholesale-replace
-    /// the store and diff-reindex Spotlight. Single-flighted — a second call while
-    /// one is in flight coalesces onto the first and returns its result, so the
-    /// foreground and a background task can both call it without ever overlapping a
-    /// Spotlight batch. (A back-to-back call after one completes simply re-polls and
-    /// gets a cheap `304`, since the index watermark has advanced.)
+    /// the store and diff-reindex Spotlight. Serialized through the shared chain, so
+    /// the foreground and a background task can both call it without ever overlapping
+    /// a Spotlight batch. Two overlapping refreshes run **sequentially** (issue #44
+    /// dropped the old coalescing); the second re-polls and, since the first advanced
+    /// the index watermark, gets a cheap `304`.
     @discardableResult
     public func refresh() async throws -> Outcome {
-        try await runSerial { try await self.performRefresh() }
+        try await runSerial(isRefresh: true) { try await self.performRefresh() }
     }
 
     /// Lazily cache and attach `albumID`'s Spotlight cover thumbnail (issue #44).
@@ -167,17 +191,55 @@ public actor CatalogRefreshService {
     /// or an index write error is logged and swallowed (the result is just the
     /// default icon — never a surfaced error). Resolves the cloned row and its
     /// thumbnail off the actor via the `Sendable` provider, then does a single,
-    /// **plain non-batch** upsert that never advances the watermark. Serialized
-    /// through the same chain as `refresh()` in both directions, so the upsert's
-    /// index write never overlaps a reindex batch.
+    /// **plain non-batch** upsert that never advances the watermark.
     ///
+    /// **Only the index write is serialized** through the chain — the row lookup,
+    /// network fetch, downscale, and byte read all run *before* `runSerial`, so a
+    /// slow CDN fetch never blocks (or is blocked by) a catalog refresh and many
+    /// covers can load concurrently while only their tiny upserts queue (issue #44).
     /// Foreground / user-initiated only (in-app album view or search) — never the
     /// background poll leg, which must stay a cheap conditional probe.
     public func cacheThumbnail(forAlbumID albumID: Int) async {
-        // runSerial only throws if `work` does; `performCacheThumbnail` is
-        // non-throwing, so `try?` here can never actually swallow an error — it just
-        // satisfies the generic throwing signature.
-        try? await runSerial { await self.performCacheThumbnail(forAlbumID: albumID) }
+        guard let thumbnailProvider else { return }
+        // The clone is the source of truth for the URL the reindex can re-attach;
+        // a missing row means nothing to decorate. `try?` flattens the throwing,
+        // optional-returning lookup to a single optional (SE-0230).
+        guard let row = try? await store.row(id: albumID) else { return }
+        // Resolve the cover OFF the serial chain (the provider fetches/downscales on
+        // its own actor); only the index write below is serialized. The cache key
+        // (`<id>-<urlhash>`) is the cover's identity — a *changed* cover yields a new
+        // key, so it is not deduped against the old one.
+        guard let fileURL = await thumbnailProvider.localThumbnailURL(for: row) else { return }
+        let cacheKey = fileURL.lastPathComponent
+        // Fast-path: already attached this session. Best-effort only (a stale read
+        // races a reindex's clear / a concurrent attach) — the authoritative re-check
+        // is inside the serialized `attachThumbnail` below, so a miss here at worst
+        // pays one redundant, idempotent upsert.
+        guard !attachedThumbnailKeys.contains(cacheKey) else { return }
+        guard let data = try? Data(contentsOf: fileURL) else { return }
+        do {
+            try await runSerial(isRefresh: false) {
+                try await self.attachThumbnail(cacheKey: cacheKey, row: row, data: data)
+            }
+        } catch {
+            refreshLog.debug("Thumbnail upsert failed for album \(albumID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// The serialized check-upsert-record unit for ``cacheThumbnail(forAlbumID:)``.
+    /// Runs as one `runSerial` op, so the dedup re-check, the upsert, and the insert
+    /// are never interleaved with another attach or a reindex: two concurrent views
+    /// of the same cover collapse to a single upsert (the second re-check sees the
+    /// key), and a reindex's `attachedThumbnailKeys.removeAll()` can't land between
+    /// this re-check and its insert (it is a separate serial op, ordered before or
+    /// after this whole unit, never inside it). Keeping the insert outside the serial
+    /// region — as a naive `contains`-then-`insert` straddling the await would —
+    /// reopens both races (a double upsert, and a stripped cover wedged blank until
+    /// relaunch when an insert lands after the clear).
+    private func attachThumbnail(cacheKey: String, row: CatalogRow, data: Data) async throws {
+        guard !attachedThumbnailKeys.contains(cacheKey) else { return }
+        try await makeIndexer().upsert(row: row, thumbnailData: data)
+        attachedThumbnailKeys.insert(cacheKey)
     }
 
     /// A cheap conditional probe for the background app-refresh leg (issue #19
@@ -196,21 +258,24 @@ public actor CatalogRefreshService {
     /// **short-circuits when a refresh is already in flight**: that refresh will
     /// replace the store and reindex, so the reindex leg has nothing to add, and
     /// skipping also avoids a second client handle reading the named index while
-    /// the refresh holds an open batch. A refresh that *starts during* a poll is
-    /// rare (the poll runs only in the background app-refresh task, the refresh in
-    /// the foreground or the charging-gated reindex leg) and benign — the worst
-    /// case is a stale watermark read that yields a redundant conditional GET,
-    /// never data corruption.
+    /// the refresh holds an open batch. It defers only to a *refresh*
+    /// (`refreshInFlight`), **not** to a lazy thumbnail upsert: an upsert doesn't
+    /// reindex (so it wouldn't cover the work this poll would trigger) and opens no
+    /// batch (so the client-state read is safe) — deferring to it would wrongly
+    /// skip scheduling a reindex for a genuinely changed catalog (issue #44). A
+    /// refresh that *starts during* a poll is rare (the poll runs only in the
+    /// background app-refresh task, the refresh in the foreground or the
+    /// charging-gated reindex leg) and benign — the worst case is a stale watermark
+    /// read that yields a redundant conditional GET, never data corruption.
     ///
     /// **Known cost (tracked as a follow-up).** On a `200` this still pays the
     /// full body download + ~50k-row decode just to return `true`; a body-less
     /// `HEAD`/lightweight probe would avoid it but needs a Backend-Service change.
     public func poll() async throws -> Bool {
-        // A refresh in flight already replaces the store and reindexes; the
-        // background reindex leg would only duplicate it (and a read here would
-        // touch the named index while that refresh's batch is open). Any in-flight
-        // serial index touch (refresh or a thumbnail upsert) counts.
-        if activeCount > 0 { return false }
+        // Defer only to an in-flight refresh (which replaces the store + reindexes
+        // and opens a batch). A thumbnail upsert in flight must NOT suppress the
+        // poll — it doesn't reindex, so a real catalog change would be missed.
+        if refreshInFlight > 0 { return false }
         switch try await conditionalFetch(using: makeIndexer()) {
         case .notModified:
             return false
@@ -258,28 +323,23 @@ public actor CatalogRefreshService {
             // watermark advances only when the final endBatch succeeds; a throw
             // here leaves indexedWatermark() unchanged, so the next poll re-fetches
             // the same 200 and re-derives the identical work set.
-            let summary = try await indexer.reindex(snapshot: rows, watermark: lastModified)
+            // A reindex re-upserts changed rows via the no-thumbnail mapping (the
+            // cached-only attach is the deferred PR-2 half), stripping their covers —
+            // so the attached-keys dedup must be dropped, or a stripped cover's key
+            // lingers and the "self-heal on next view" path skips the re-attach.
+            // Clear on a **throw too**: a multi-batch reindex commits batch by batch,
+            // so a failure after some batches has already stripped those covers; only
+            // clearing on success would wedge them blank until the next *successful*
+            // refresh. (Over-clearing is harmless — a redundant idempotent re-attach.)
+            let summary: ReindexSummary
+            do {
+                summary = try await indexer.reindex(snapshot: rows, watermark: lastModified)
+            } catch {
+                attachedThumbnailKeys.removeAll()
+                throw error
+            }
+            if summary.upserted > 0 { attachedThumbnailKeys.removeAll() }
             return .refreshed(rowCount: rows.count, upserted: summary.upserted, removed: summary.removed)
-        }
-    }
-
-    /// The serialized body of ``cacheThumbnail(forAlbumID:)``. Resolves the cloned
-    /// row, then its cover bytes (off the actor, via the `Sendable` provider), then
-    /// upserts the single item with the embedded `thumbnailData`. Every failure mode
-    /// — no provider, absent row, miss, unreadable file, index error — short-circuits
-    /// to a logged no-op, since thumbnail art is best-effort decoration.
-    private func performCacheThumbnail(forAlbumID albumID: Int) async {
-        guard let thumbnailProvider else { return }
-        // The clone is the source of truth for the URL the reindex can re-attach;
-        // a missing row means nothing to decorate. `try?` flattens the throwing,
-        // optional-returning lookup to a single optional (SE-0230).
-        guard let row = try? await store.row(id: albumID) else { return }
-        guard let fileURL = await thumbnailProvider.localThumbnailURL(for: row),
-              let data = try? Data(contentsOf: fileURL) else { return }
-        do {
-            try await makeIndexer().upsert(row: row, thumbnailData: data)
-        } catch {
-            refreshLog.debug("Thumbnail upsert failed for album \(albumID, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 }

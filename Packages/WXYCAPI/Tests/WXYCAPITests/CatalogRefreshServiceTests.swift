@@ -539,4 +539,132 @@ struct CatalogRefreshServiceTests {
         // Two round-trips — coalescing would have made exactly one.
         #expect(Self.catalogRequests(session).count == 2)
     }
+
+    // MARK: poll() defers to a refresh, not a thumbnail upsert (issue #44)
+
+    @Test func pollProceedsWhileAThumbnailUpsertIsInFlight() async throws {
+        // A thumbnail upsert does NOT reindex, so it must not suppress the poll —
+        // else a genuine catalog change would be missed for that cycle.
+        let (client, session) = try await Self.makeSignedInClient()
+        let store = SpyCatalogStore(rows: [Self.row(100)], watermark: nil)
+        let fileURL = try Self.writeFixture(Data([0x01]))
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let provider = FakeThumbnailProvider(urls: [100: fileURL])
+        let log = SpotlightEventLog()
+        let gate = Gate()
+        let calls = OSAllocatedUnfairLock(initialState: 0)
+        let service = CatalogRefreshService(
+            client: client, store: store,
+            makeIndexer: {
+                let n = calls.withLock { $0 += 1; return $0 }
+                // The upsert (1st indexer) pauses at its write; poll's own indexer runs free.
+                let gated = GatedSearchableIndex(log: log, gateOp: n == 1 ? .index : nil, gate: n == 1 ? gate : nil)
+                return SpotlightCatalogIndexer(index: gated)
+            },
+            thumbnailProvider: provider)
+
+        let upsertTask = Task { await service.cacheThumbnail(forAlbumID: 100) }
+        await gate.waitUntilReached()   // upsert is in flight (activeCount>0, refreshInFlight==0)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200, headers: ["Last-Modified": "W"], body: Data(Fixtures.catalogNDJSON.utf8)))
+        let changed = try await service.poll()
+
+        #expect(changed == true)                            // poll did its conditional GET
+        #expect(Self.catalogRequests(session).count == 1)   // not short-circuited
+
+        gate.proceed()
+        await upsertTask.value
+    }
+
+    @Test func pollDefersToAnInFlightRefresh() async throws {
+        // A refresh DOES reindex (and opens a batch), so the poll still defers to it.
+        let (client, session) = try await Self.makeSignedInClient()
+        let store = SpyCatalogStore(rows: [Self.row(100)], watermark: nil)
+        let log = SpotlightEventLog()
+        let gate = Gate()
+        let calls = OSAllocatedUnfairLock(initialState: 0)
+        let service = CatalogRefreshService(
+            client: client, store: store,
+            makeIndexer: {
+                let n = calls.withLock { $0 += 1; return $0 }
+                let gated = GatedSearchableIndex(log: log, gateOp: n == 1 ? .end : nil, gate: n == 1 ? gate : nil)
+                return SpotlightCatalogIndexer(index: gated)
+            })
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200, headers: ["Last-Modified": "W"], body: Data(Fixtures.catalogNDJSON.utf8)))
+
+        let refreshTask = Task { try await service.refresh() }
+        await gate.waitUntilReached()   // refresh is mid-reindex (refreshInFlight>0)
+
+        let changed = try await service.poll()
+
+        #expect(changed == false)                           // deferred to the refresh
+        #expect(Self.catalogRequests(session).count == 1)   // poll issued no GET of its own
+
+        gate.proceed()
+        _ = try await refreshTask.value
+    }
+
+    // MARK: Thumbnail dedup keyed on the cover file (issue #44)
+
+    @Test func cacheThumbnailSkipsARedundantReattachOfTheSameCover() async throws {
+        let (client, _) = try await Self.makeSignedInClient()
+        let store = SpyCatalogStore(rows: [Self.row(100)], watermark: "W")
+        let fileURL = try Self.writeFixture(Data([0x01, 0x02]))
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let provider = FakeThumbnailProvider(urls: [100: fileURL])
+        let indexer = SpyCatalogIndexer(watermark: "W", indexedRows: [Self.row(100)])
+        let service = CatalogRefreshService(
+            client: client, store: store, makeIndexer: { indexer }, thumbnailProvider: provider)
+
+        await service.cacheThumbnail(forAlbumID: 100)
+        await service.cacheThumbnail(forAlbumID: 100)   // same cover file -> deduped
+
+        #expect(provider.resolvedIDs == [100, 100])     // resolved both times (cheap cache hit)
+        #expect(indexer.upsertCalls.count == 1)         // but upserted only once
+    }
+
+    @Test func concurrentCacheThumbnailsForTheSameCoverUpsertOnce() async throws {
+        // The dedup re-check + upsert + record are one serialized unit, so two
+        // concurrent views of the same album collapse to a single upsert — a naive
+        // check-outside / insert-outside would let both through.
+        let (client, _) = try await Self.makeSignedInClient()
+        let store = SpyCatalogStore(rows: [Self.row(100)], watermark: "W")
+        let fileURL = try Self.writeFixture(Data([0x01, 0x02]))
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let provider = FakeThumbnailProvider(urls: [100: fileURL])
+        let indexer = SpyCatalogIndexer(watermark: "W", indexedRows: [Self.row(100)])
+        let service = CatalogRefreshService(
+            client: client, store: store, makeIndexer: { indexer }, thumbnailProvider: provider)
+
+        async let a: Void = service.cacheThumbnail(forAlbumID: 100)
+        async let b: Void = service.cacheThumbnail(forAlbumID: 100)
+        _ = await (a, b)
+
+        #expect(indexer.upsertCalls.count == 1)
+    }
+
+    @Test func reindexClearsTheThumbnailDedupSoAStrippedCoverReattaches() async throws {
+        // A reindex re-upserts changed rows WITHOUT a thumbnail (the cached-only
+        // attach is deferred), stripping their cover. The dedup must be cleared so
+        // the next in-app view re-attaches it — an id/file-keyed skip that survived
+        // the reindex would leave the cover blank until relaunch.
+        let (client, session) = try await Self.makeSignedInClient()
+        let store = SpyCatalogStore(rows: [Self.row(100)], watermark: nil)
+        let fileURL = try Self.writeFixture(Data([0x01, 0x02]))
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let provider = FakeThumbnailProvider(urls: [100: fileURL])
+        let indexer = SpyCatalogIndexer(watermark: nil)   // empty map -> refresh upserts rows
+        let service = CatalogRefreshService(
+            client: client, store: store, makeIndexer: { indexer }, thumbnailProvider: provider)
+
+        await service.cacheThumbnail(forAlbumID: 100)     // attach (upsert 1)
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200, headers: ["Last-Modified": "W"], body: Data(Fixtures.catalogNDJSON.utf8)))
+        _ = try await service.refresh()                   // reindex upserts -> clears the dedup
+        await service.cacheThumbnail(forAlbumID: 100)     // re-attach (upsert 2)
+
+        #expect(indexer.upsertCalls.count == 2)
+    }
 }

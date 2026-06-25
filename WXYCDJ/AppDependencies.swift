@@ -32,10 +32,10 @@ final class AppDependencies {
     /// reads it for an O(1) id→row `fallback` lookup.
     let catalogStore: (any CatalogStore)?
     /// The single shared refresh service the foreground path and both background
-    /// tasks drive. **Exactly one instance** app-wide: its actor single-flights
-    /// overlapping refreshes, which is what keeps `RealSearchableIndex`'s
-    /// `@unchecked Sendable` sound (no two Spotlight batches open at once). `nil`
-    /// when ``catalogStore`` is.
+    /// tasks drive. **Exactly one instance** app-wide: its actor serializes all
+    /// index touches (refreshes + the issue-#44 lazy thumbnail upserts) through one
+    /// chain, which is what keeps `RealSearchableIndex`'s `@unchecked Sendable` sound
+    /// (no two Spotlight batches open at once). `nil` when ``catalogStore`` is.
     let catalogRefreshService: CatalogRefreshService?
     /// Cold-launch Spotlight deep-link state (issue #19 step 7), injected via
     /// `.environment` and bound to RootView's `fullScreenCover`. The resolution
@@ -48,12 +48,6 @@ final class AppDependencies {
     /// so a stale parked drain can't clobber a freshly-tapped album when their
     /// clone lookups race across the `await`.
     private var presentationToken = 0
-    /// Album ids whose Spotlight thumbnail we've already asked the refresh service
-    /// to cache this launch (issue #44), so a search row reappearing as the DJ
-    /// scrolls re-resolves at most once. Marking on *attempt* means a transient
-    /// fetch failure isn't retried until next launch — acceptable for best-effort
-    /// cover decoration, and it keeps scroll-firing O(1).
-    private var requestedThumbnailIDs: Set<Int> = []
 
     convenience init() {
         self.init(catalogStoreURL: Self.defaultCatalogStoreURL())
@@ -158,16 +152,16 @@ final class AppDependencies {
         }
     }
 
-    /// Lazily cache + attach `albumID`'s Spotlight cover thumbnail (issue #44),
-    /// at most once per launch. **Foreground / user-initiated only** — call it when
-    /// the DJ views an album (``AlbumDetailView``) or a search row surfaces; never
-    /// from the background poll leg, which must stay a cheap conditional probe. The
-    /// real work (resolve row + fetch/downscale/cache + non-batch upsert, serialized
-    /// against reindex) lives on ``CatalogRefreshService``; this only de-dupes.
+    /// Lazily cache + attach `albumID`'s Spotlight cover thumbnail (issue #44).
+    /// **Foreground / user-initiated only** — call it when the DJ views an album
+    /// (``AlbumDetailView``) or a search row surfaces; never from the background
+    /// poll leg, which must stay a cheap conditional probe. All the work — resolve
+    /// row + fetch/downscale/cache + the per-cover dedup + non-batch upsert — lives
+    /// on ``CatalogRefreshService`` (the dedup is keyed on the cover's cache file
+    /// there, so a changed cover re-attaches and a reindex-stripped one self-heals;
+    /// an id-keyed skip here couldn't do either).
     func cacheThumbnail(forAlbumID albumID: Int) async {
-        guard let catalogRefreshService else { return }
-        guard requestedThumbnailIDs.insert(albumID).inserted else { return }
-        await catalogRefreshService.cacheThumbnail(forAlbumID: albumID)
+        await catalogRefreshService?.cacheThumbnail(forAlbumID: albumID)
     }
 
     /// The `BGAppRefreshTask` poll leg: if there's no catalog store there's
@@ -332,13 +326,11 @@ final class AppDependencies {
         return detail
     }
 
-    /// The on-device catalog clone's SQLite file:
-    /// `<Application Support>/Catalog/catalog.sqlite`. Application Support is the
-    /// home for regenerable, app-managed data (in `Library`, excluded from the
-    /// user's Documents and from iCloud backup of user content). Returns `nil` if
-    /// the directory can't be located or created, which leaves the catalog
-    /// features inert.
-    static func defaultCatalogStoreURL() -> URL? {
+    /// Locate (creating if needed) `<Application Support>/<relativePath>/`.
+    /// Application Support is the home for regenerable, app-managed data (in
+    /// `Library`, excluded from the user's Documents and from iCloud backup of user
+    /// content). Returns `nil` if the directory can't be located or created.
+    static func appSupportSubdirectory(_ relativePath: String) -> URL? {
         let fileManager = FileManager.default
         guard let appSupport = try? fileManager.url(
             for: .applicationSupportDirectory,
@@ -348,38 +340,28 @@ final class AppDependencies {
         ) else {
             return nil
         }
-        let directory = appSupport.appending(path: "Catalog", directoryHint: .isDirectory)
+        let directory = appSupport.appending(path: relativePath, directoryHint: .isDirectory)
         do {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         } catch {
-            catalogLog.error("Could not create catalog directory at \(directory.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            return nil
-        }
-        return directory.appending(path: "catalog.sqlite", directoryHint: .notDirectory)
-    }
-
-    /// The on-device Spotlight thumbnail cache directory (issue #44):
-    /// `<Application Support>/Catalog/Thumbnails/`. Mirrors ``defaultCatalogStoreURL()``
-    /// — regenerable, app-managed, not user content. Returns `nil` (-> no thumbnail
-    /// provider, inert artwork feature) if the directory can't be located or created.
-    static func defaultThumbnailDirectoryURL() -> URL? {
-        let fileManager = FileManager.default
-        guard let appSupport = try? fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        ) else {
-            return nil
-        }
-        let directory = appSupport.appending(path: "Catalog/Thumbnails", directoryHint: .isDirectory)
-        do {
-            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        } catch {
-            catalogLog.error("Could not create thumbnail directory at \(directory.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            catalogLog.error("Could not create directory at \(directory.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
             return nil
         }
         return directory
+    }
+
+    /// The on-device catalog clone's SQLite file:
+    /// `<Application Support>/Catalog/catalog.sqlite`. Returns `nil` (leaving the
+    /// catalog features inert) if the directory can't be located or created.
+    static func defaultCatalogStoreURL() -> URL? {
+        appSupportSubdirectory("Catalog")?.appending(path: "catalog.sqlite", directoryHint: .notDirectory)
+    }
+
+    /// The on-device Spotlight thumbnail cache directory (issue #44):
+    /// `<Application Support>/Catalog/Thumbnails/`. Returns `nil` (-> no thumbnail
+    /// provider, inert artwork feature) if it can't be located or created.
+    static func defaultThumbnailDirectoryURL() -> URL? {
+        appSupportSubdirectory("Catalog/Thumbnails")
     }
 
     static func resolveConfiguration(
