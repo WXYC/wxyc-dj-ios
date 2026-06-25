@@ -55,6 +55,11 @@
       </CommandLineArguments>
       <EnvironmentVariables>
          <EnvironmentVariable
+            key = "WXYC_SPOTLIGHT_FIELD_RESOLUTION"
+            value = "1"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
             key = "WXYC_SPOTLIGHT_TOLERANCE"
             value = "1"
             isEnabled = "YES">
@@ -85,6 +90,11 @@
       </CommandLineArguments>
       <EnvironmentVariables>
          <EnvironmentVariable
+            key = "WXYC_SPOTLIGHT_FIELD_RESOLUTION"
+            value = "1"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
             key = "WXYC_SPOTLIGHT_TOLERANCE"
             value = "1"
             isEnabled = "YES">
@@ -110,6 +120,11 @@
       <CommandLineArguments>
       </CommandLineArguments>
       <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "WXYC_SPOTLIGHT_FIELD_RESOLUTION"
+            value = "1"
+            isEnabled = "YES">
+         </EnvironmentVariable>
          <EnvironmentVariable
             key = "WXYC_SPOTLIGHT_TOLERANCE"
             value = "1"

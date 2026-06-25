@@ -99,6 +99,14 @@ struct CatalogSpotlightTests {
         #expect(keywords.contains("DOGA"))
         #expect(keywords.contains("Sonamos"))
         #expect(keywords.contains(row.callNumber))
+        // textContent carries the non-album searchable terms (artist, label, call
+        // number) into a matched-but-invisible field (#32) — the recall safety net
+        // independent of the keywords iOS-17 regression. Album is omitted (it lives
+        // in title/displayName).
+        let textContent = try #require(item.attributeSet.textContent)
+        #expect(textContent.contains("Juana Molina"))
+        #expect(textContent.contains("Sonamos"))
+        #expect(textContent.contains(row.callNumber))
     }
 
     @Test func searchableItemOverloadEmbedsThumbnailDataAndKeepsSearchableAttributes() throws {
@@ -115,6 +123,9 @@ struct CatalogSpotlightTests {
         #expect(item.attributeSet.displayName == "DOGA")
         #expect(item.attributeSet.artist == "Juana Molina")
         #expect(item.attributeSet.keywords?.contains("Sonamos") == true)
+        // textContent must survive the overload too — #44's lazy thumbnail upsert
+        // rebuilds the full item, and dropping textContent would regress #32 recall.
+        #expect(item.attributeSet.textContent?.contains("Juana Molina") == true)
     }
 
     @Test func searchableItemWithoutThumbnailMatchesPureMapping() throws {
@@ -126,6 +137,7 @@ struct CatalogSpotlightTests {
         #expect(nilThumb.attributeSet.thumbnailData == nil)
         #expect(plain.attributeSet.title == nilThumb.attributeSet.title)
         #expect(plain.attributeSet.keywords == nilThumb.attributeSet.keywords)
+        #expect(plain.attributeSet.textContent == nilThumb.attributeSet.textContent)
     }
 
     @Test func searchableItemOmitsLabelKeywordWhenNil() throws {
@@ -141,6 +153,23 @@ struct CatalogSpotlightTests {
         #expect(keywords == ["Chuquimamani-Condori", "Edits"])
         // No call number → contentDescription is just the artist.
         #expect(item.attributeSet.contentDescription == "Chuquimamani-Condori")
+        // No label, no call number → textContent is just the artist, with no empty
+        // fragments or stray separators.
+        #expect(item.attributeSet.textContent == "Chuquimamani-Condori")
+    }
+
+    @Test func searchableItemTextContentJoinsOnlyNonEmptyTerms() throws {
+        // Artist + call number, but no label: textContent is exactly the two present
+        // terms with a single space separator — the nil label leaves no gap (#32).
+        let row = CatalogRow(
+            id: 301, artistName: "Jessica Pratt", albumTitle: "On Your Own Love Again",
+            codeLetters: "PRA", codeNumber: 7, codeArtistNumber: 1,
+            label: nil, genreName: nil, formatName: nil,
+            onStreaming: nil, plays: nil, artworkURL: nil,
+            rotationBin: nil, rotationKillDate: nil
+        )
+        let item = CatalogSpotlight.searchableItem(for: row)
+        #expect(item.attributeSet.textContent == "Jessica Pratt \(row.callNumber)")
     }
 
     // MARK: Content fingerprint (issue #36)
