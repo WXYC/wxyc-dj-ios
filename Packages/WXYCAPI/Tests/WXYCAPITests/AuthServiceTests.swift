@@ -5,7 +5,10 @@
 //  Drives AuthService against a stub network: sign-in success grabs the
 //  session token from the set-auth-token header, the JWT exchange decodes
 //  claims, 401 on sign-in maps to invalidCredentials, and restoreSession
-//  brings a stored token back to .signedIn.
+//  brings a stored token back to .signedIn. Also pins issue #53's
+//  transient/terminal split: a real session whose JWT exchange fails
+//  transiently enters the pending window (.signedIn(payload: nil)) and
+//  re-mints the JWT lazily, while a 401 stays terminal and rolls back.
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -41,7 +44,8 @@ struct AuthServiceTests {
             Issue.record("expected signedIn, got \(service.state)")
             return
         }
-        #expect(payload.role == "dj")
+        // The happy path carries a real payload (not the issue-#53 pending nil).
+        #expect(payload?.role == "dj")
         #expect(try storage.load(.sessionToken) == "session-abc")
     }
 
@@ -98,11 +102,14 @@ struct AuthServiceTests {
 
     @Test func signInWithFailedJWTExchangeLeavesNoStoredToken() async throws {
         // The two-leg handshake: /auth/sign-in/username succeeds (session token
-        // issued + persisted), then /auth/token fails transiently. We report the
-        // sign-in as failed — so it must leave NO durable trace. Otherwise the
-        // orphaned session token sits in the Keychain and the next cold launch's
-        // restoreSession() finds it, succeeds at the JWT exchange, and skips the
-        // login screen entirely: "login failed, but reopening logs me straight in."
+        // issued + persisted), then /auth/token returns 401 — the session bearer
+        // is rejected, so the session is genuinely dead. This is the *terminal*
+        // arm (issue #53): we report the sign-in as failed and it must leave NO
+        // durable trace. Otherwise the orphaned session token sits in the
+        // Keychain and the next cold launch's restoreSession() finds it, and a
+        // failed login silently logs the user straight in on reopen. Preserves
+        // #52's leave-no-trace guarantee — re-pointed from a 503 to a 401, since
+        // a 503 is now the *transient* (pending) path, not terminal.
         let session = StubRequestSession()
         let storage = InMemoryTokenStorage()
         let service = AuthService(configuration: Self.config, storage: storage, session: session)
@@ -113,23 +120,26 @@ struct AuthServiceTests {
             headers: ["set-auth-token": "session-abc"],
             body: Data("{}".utf8)
         ))
-        // Leg 2: JWT exchange fails transiently (server down, not bad creds).
-        session.enqueue(StubRequestSession.Stub(statusCode: 503, body: Data()))
+        // Leg 2: JWT exchange returns 401 — dead session, terminal.
+        session.enqueue(StubRequestSession.Stub(statusCode: 401, body: Data()))
 
         await service.signIn(username: "dj", password: "pw")
 
         #expect(service.state == .signedOut)
-        #expect(service.lastError == .serverFailure(status: 503, message: nil))
-        // The load-bearing assertion: a failed sign-in persists nothing.
+        #expect(service.lastError == .notSignedIn)
+        // The load-bearing assertion: a terminally-failed sign-in persists nothing.
         #expect(try storage.load(.sessionToken) == nil)
         #expect(try storage.load(.jwt) == nil)
     }
 
-    @Test func signInRollsBackRotatedTokenWhenJWTDecodeFails() async throws {
-        // Narrower partial-commit path: /auth/token returns 2xx and rotates the
-        // session token (captureRotatedSessionToken persists it) but the body
-        // fails to decode. The rotated token must not survive a failed sign-in
-        // either — same "leave no trace" contract.
+    @Test func signInWithUndecodableJWTBodyEntersPendingAndKeepsSession() async throws {
+        // 2xx-but-undecodable JWT body: /auth/token returns 2xx (the server
+        // authenticated the bearer) and rotates the session token
+        // (captureRotatedSessionToken persists it) but the body fails to decode —
+        // a server-side defect, not a dead session. Under issue #53 this is now a
+        // *transient* path: enter the pending window keeping the (rotated)
+        // session token, and re-mint the JWT lazily. (Previously this rolled the
+        // sign-in back; the meaning flipped with the transient/terminal split.)
         let session = StubRequestSession()
         let storage = InMemoryTokenStorage()
         let service = AuthService(configuration: Self.config, storage: storage, session: session)
@@ -147,6 +157,155 @@ struct AuthServiceTests {
         ))
 
         await service.signIn(username: "dj", password: "pw")
+
+        // Pending: signed in with no payload yet.
+        #expect(service.state == .signedIn(payload: nil))
+        #expect(service.lastError == nil)
+        // The rotated session token is the credential and must be retained.
+        #expect(try storage.load(.sessionToken) == "session-rotated")
+        // No JWT was decoded, so none is persisted.
+        #expect(try storage.load(.jwt) == nil)
+    }
+
+    @Test func signInWithTransientServerErrorEntersPending() async throws {
+        // 200 sign-in then 503 on /auth/token: the session is established and
+        // real, the JWT exchange just hit a transient server error. Issue #53:
+        // do NOT bounce back to login — enter the pending window keeping the
+        // persisted session token, so currentJWT() can re-mint the JWT lazily.
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-abc"],
+            body: Data("{}".utf8)
+        ))
+        session.enqueue(StubRequestSession.Stub(statusCode: 503, body: Data()))
+
+        await service.signIn(username: "dj", password: "pw")
+
+        #expect(service.state == .signedIn(payload: nil))
+        #expect(service.lastError == nil)
+        #expect(try storage.load(.sessionToken) == "session-abc")
+    }
+
+    @Test func signInWithNetworkErrorOnJWTExchangeEntersPending() async throws {
+        // 200 sign-in then a transport-level failure on /auth/token (here: the
+        // stub runs out of canned responses, so session.data(for:) throws — the
+        // same shape as an offline/timeout URLError a real device would see).
+        // A non-AuthError throw from the JWT leg is transient → pending window.
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        // Only Leg 1 is stubbed; the /auth/token call throws (no more stubs).
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-abc"],
+            body: Data("{}".utf8)
+        ))
+
+        await service.signIn(username: "dj", password: "pw")
+
+        #expect(service.state == .signedIn(payload: nil))
+        #expect(service.lastError == nil)
+        #expect(try storage.load(.sessionToken) == "session-abc")
+    }
+
+    @Test func pendingSignInResolvesViaLazyJWTRefresh() async throws {
+        // After entering the pending window, the first currentJWT() re-mints the
+        // JWT: a queued 200 /auth/token succeeds, currentJWT() returns the token,
+        // and the DJ stays signed in (state untouched — no onChange churn).
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-abc"],
+            body: Data("{}".utf8)
+        ))
+        session.enqueue(StubRequestSession.Stub(statusCode: 503, body: Data()))
+        await service.signIn(username: "dj", password: "pw")
+        #expect(service.state == .signedIn(payload: nil))
+        let requestsBeforeRetry = session.recordedRequests.count
+
+        // The lazy retry: /auth/token now succeeds.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        let token = try await service.currentJWT()
+
+        #expect(!token.isEmpty)
+        #expect(service.isSignedIn)  // still signed in
+        // Exactly one extra request (the lazy /auth/token retry).
+        #expect(session.recordedRequests.count == requestsBeforeRetry + 1)
+    }
+
+    @Test func pendingSignInDemotesToSignedOutOnLazy401() async throws {
+        // After entering the pending window, if the lazy JWT retry returns 401
+        // the session is proven dead: currentJWT() demotes to .signedOut and
+        // clears the tokens, so RootView swaps MainView → LoginView rather than
+        // stranding the DJ. (The way back out of the pending window.)
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-abc"],
+            body: Data("{}".utf8)
+        ))
+        session.enqueue(StubRequestSession.Stub(statusCode: 503, body: Data()))
+        await service.signIn(username: "dj", password: "pw")
+        #expect(service.state == .signedIn(payload: nil))
+
+        // The lazy retry returns 401 — dead session.
+        session.enqueue(StubRequestSession.Stub(statusCode: 401, body: Data()))
+        await #expect(throws: AuthError.notSignedIn) {
+            _ = try await service.currentJWT()
+        }
+
+        #expect(service.state == .signedOut)
+        #expect(service.lastError == .notSignedIn)
+        #expect(try storage.load(.sessionToken) == nil)
+        #expect(try storage.load(.jwt) == nil)
+    }
+
+    @Test func signedInSessionDemotesWhenLazyRefreshHits401() async throws {
+        // The latent-gap regression: a healthy session (real payload) that the
+        // server later revokes. The next currentJWT() after the cached JWT is
+        // dropped re-exchanges, gets a 401, and demotes to .signedOut + clears
+        // tokens — closing the pre-existing gap where a revoked-mid-use session
+        // left state pinned at .signedIn forever.
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-abc"],
+            body: Data("{}".utf8)
+        ))
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await service.signIn(username: "dj", password: "pw")
+        guard case let .signedIn(payload) = service.state, payload != nil else {
+            Issue.record("expected a payload-bearing signedIn, got \(service.state)")
+            return
+        }
+
+        // Force the cached JWT stale so the next currentJWT() re-exchanges.
+        service.invalidateJWT()
+        // The session has been revoked: /auth/token now 401s.
+        session.enqueue(StubRequestSession.Stub(statusCode: 401, body: Data()))
+        await #expect(throws: AuthError.notSignedIn) {
+            _ = try await service.currentJWT()
+        }
 
         #expect(service.state == .signedOut)
         #expect(try storage.load(.sessionToken) == nil)
@@ -167,7 +326,7 @@ struct AuthServiceTests {
         await service.restoreSession()
 
         if case let .signedIn(payload) = service.state {
-            #expect(payload.email == "juana@wxyc.org")
+            #expect(payload?.email == "juana@wxyc.org")
         } else {
             Issue.record("expected signedIn, got \(service.state)")
         }
@@ -299,11 +458,13 @@ struct AuthServiceTests {
         #expect(try storage.load(.sessionToken) == "session-stable")
     }
 
-    @Test func restoreSessionWithTransientServerErrorKeepsSessionTokenInKeychain() async throws {
-        // /auth/token returning 5xx (server down, not "session expired")
-        // should leave the user at the login screen — but the persisted
-        // session token must remain so the next launch can retry. Wiping
-        // it would force a manual re-sign-in for an offline blip.
+    @Test func restoreSessionWithTransientServerErrorEntersPending() async throws {
+        // Cold launch with a stored token, /auth/token returns 5xx (server down,
+        // not "session expired"). Issue #53: the returning DJ enters the pending
+        // window (.signedIn(payload: nil)) rather than being dumped to a login
+        // screen — strictly better, especially offline, since MainView still
+        // browses the on-device catalog clone. The persisted session token stays
+        // so the JWT can be re-minted lazily, which the follow-on proves.
         let session = StubRequestSession()
         let storage = InMemoryTokenStorage()
         try storage.save("session-stored", for: .sessionToken)
@@ -313,9 +474,38 @@ struct AuthServiceTests {
 
         await service.restoreSession()
 
-        #expect(service.state == .signedOut)
-        // Keychain must still hold the token.
+        #expect(service.state == .signedIn(payload: nil))
+        // Keychain must still hold the token for the lazy retry.
         #expect(try storage.load(.sessionToken) == "session-stored")
+
+        // Follow-on: the lazy currentJWT() re-mints the JWT once the server
+        // recovers, and the DJ stays signed in.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        let token = try await service.currentJWT()
+        #expect(!token.isEmpty)
+        #expect(service.isSignedIn)
+    }
+
+    @Test func restoreSessionWith401ClearsStoredToken() async throws {
+        // Cold launch with a stored token that the server rejects (401): the
+        // session is dead. Issue #53 makes this terminal arm clear the token —
+        // previously restoreSession's catch-all kept it, so a revoked session
+        // lingered in the Keychain and 401'd on every launch forever.
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-revoked", for: .sessionToken)
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 401, body: Data()))
+
+        await service.restoreSession()
+
+        #expect(service.state == .signedOut)
+        #expect(try storage.load(.sessionToken) == nil)
+        #expect(try storage.load(.jwt) == nil)
     }
 
     @Test func currentJWTReusesCachedTokenWhenFresh() async throws {
