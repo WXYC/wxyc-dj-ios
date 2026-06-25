@@ -33,6 +33,12 @@ final class SpyCatalogIndexer: CatalogIndexing {
         let removed: Int
     }
 
+    /// One recorded `upsert(row:thumbnailData:)` — the lazy thumbnail attach (#44).
+    struct UpsertCall: Sendable, Equatable {
+        let rowID: Int
+        let thumbnailData: Data?
+    }
+
     /// Thrown when the indexer is set to fail its commit.
     struct ReindexFailure: Error {}
 
@@ -43,6 +49,7 @@ final class SpyCatalogIndexer: CatalogIndexing {
         /// the new snapshot only on a successful reindex.
         var fingerprints: [Int: UInt64]
         var reindexCalls: [ReindexCall] = []
+        var upsertCalls: [UpsertCall] = []
     }
 
     /// Whether `reindex` throws instead of committing. Fixed per instance (a
@@ -62,10 +69,19 @@ final class SpyCatalogIndexer: CatalogIndexing {
     }
 
     var reindexCalls: [ReindexCall] { state.withLock { $0.reindexCalls } }
+    var upsertCalls: [UpsertCall] { state.withLock { $0.upsertCalls } }
 
     // MARK: CatalogIndexing
 
     func indexedWatermark() -> String? { state.withLock { $0.watermark } }
+
+    /// Record the lazy thumbnail upsert. Models the real non-batch write: it
+    /// records the attach but leaves the watermark and fingerprint map untouched.
+    func upsert(row: CatalogRow, thumbnailData: Data?) async throws {
+        state.withLock {
+            $0.upsertCalls.append(UpsertCall(rowID: row.id, thumbnailData: thumbnailData))
+        }
+    }
 
     @discardableResult
     func reindex(snapshot: [CatalogRow], watermark: String?) async throws -> ReindexSummary {

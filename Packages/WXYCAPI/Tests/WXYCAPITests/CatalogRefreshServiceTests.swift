@@ -326,4 +326,217 @@ struct CatalogRefreshServiceTests {
         #expect(Self.catalogRequests(session).last?.value(forHTTPHeaderField: "If-Modified-Since") == "W")
         #expect(fake.recording.endCount == 1) // no second commit
     }
+
+    // MARK: cacheThumbnail — lazy thumbnail attach (issue #44)
+
+    /// Write `bytes` to a unique temp file and return its URL (the "cached cover").
+    private static func writeFixture(_ bytes: Data) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "thumb-\(UUID().uuidString).jpg")
+        try bytes.write(to: url)
+        return url
+    }
+
+    @Test func cacheThumbnailUpsertsTheClonedRowsItemWithTheCachedBytes() async throws {
+        let (client, _) = try await Self.makeSignedInClient()
+        let store = SpyCatalogStore(rows: [Self.row(100)], watermark: "W")
+        let bytes = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x01, 0x02])
+        let fileURL = try Self.writeFixture(bytes)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let provider = FakeThumbnailProvider(urls: [100: fileURL])
+        let indexer = SpyCatalogIndexer(watermark: "W", indexedRows: [Self.row(100)])
+        let service = CatalogRefreshService(
+            client: client, store: store, makeIndexer: { indexer }, thumbnailProvider: provider)
+
+        await service.cacheThumbnail(forAlbumID: 100)
+
+        // The row is resolved from the clone and upserted with the cached bytes.
+        #expect(provider.resolvedIDs == [100])
+        #expect(indexer.upsertCalls == [.init(rowID: 100, thumbnailData: bytes)])
+        // A thumbnail attach is not a refresh: no reindex, no store mutation, and
+        // the index watermark is untouched.
+        #expect(indexer.reindexCalls.isEmpty)
+        #expect(store.replaceCalls.isEmpty)
+        #expect(indexer.indexedWatermark() == "W")
+    }
+
+    @Test func cacheThumbnailIsANoOpWhenTheRowIsNotInTheClone() async throws {
+        let (client, _) = try await Self.makeSignedInClient()
+        let store = SpyCatalogStore()                       // empty clone
+        let provider = FakeThumbnailProvider(urls: [:])
+        let indexer = SpyCatalogIndexer(watermark: "W")
+        let service = CatalogRefreshService(
+            client: client, store: store, makeIndexer: { indexer }, thumbnailProvider: provider)
+
+        await service.cacheThumbnail(forAlbumID: 404)
+
+        // No clone row -> nothing to resolve or upsert.
+        #expect(provider.resolvedIDs.isEmpty)
+        #expect(indexer.upsertCalls.isEmpty)
+    }
+
+    @Test func cacheThumbnailIsANoOpWhenTheCoverIsUnfetchable() async throws {
+        let (client, _) = try await Self.makeSignedInClient()
+        let store = SpyCatalogStore(rows: [Self.row(100)], watermark: "W")
+        let provider = FakeThumbnailProvider(urls: [:])     // resolves to nil (miss)
+        let indexer = SpyCatalogIndexer(watermark: "W", indexedRows: [Self.row(100)])
+        let service = CatalogRefreshService(
+            client: client, store: store, makeIndexer: { indexer }, thumbnailProvider: provider)
+
+        await service.cacheThumbnail(forAlbumID: 100)
+
+        // The row was resolved, but with no cover bytes there is nothing to upsert.
+        #expect(provider.resolvedIDs == [100])
+        #expect(indexer.upsertCalls.isEmpty)
+    }
+
+    @Test func cacheThumbnailWithNoProviderIsANoOp() async throws {
+        let (client, _) = try await Self.makeSignedInClient()
+        let store = SpyCatalogStore(rows: [Self.row(100)], watermark: "W")
+        let indexer = SpyCatalogIndexer(watermark: "W", indexedRows: [Self.row(100)])
+        // No thumbnailProvider (the default) -> the catalog has no artwork feature.
+        let service = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer })
+
+        await service.cacheThumbnail(forAlbumID: 100)
+
+        #expect(indexer.upsertCalls.isEmpty)
+    }
+
+    @Test func cacheThumbnailEndToEndLeavesTheIndexWatermarkUnchanged() async throws {
+        // Acceptance criterion: the single-item upsert never advances/clears the
+        // watermark. End-to-end over the REAL indexer + a fake index seeded with
+        // client state, so the watermark read goes through the actual codec.
+        let (client, _) = try await Self.makeSignedInClient()
+        let row = Self.row(100)
+        let store = SpyCatalogStore(rows: [row], watermark: "WM")
+        let seed = CatalogIndexState(
+            watermark: "WM", fingerprints: [100: CatalogSpotlight.fingerprint(for: row)]
+        ).encode()
+        let fake = FakeSearchableIndex(initialClientState: seed)
+        let bytes = ThumbnailDownscalingTests.makeJPEG(width: 64, height: 64)
+        let fileURL = try Self.writeFixture(bytes)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let provider = FakeThumbnailProvider(urls: [100: fileURL])
+        let service = CatalogRefreshService(
+            client: client, store: store,
+            makeIndexer: { SpotlightCatalogIndexer(index: fake) },
+            thumbnailProvider: provider)
+
+        await service.cacheThumbnail(forAlbumID: 100)
+
+        // The item was upserted with the cover, as a plain non-batch write...
+        #expect(fake.recording.indexedItems.map(\.identifier) == ["album.100"])
+        #expect(fake.recording.indexedItems.first?.thumbnailData == bytes)
+        #expect(fake.recording.beginCount == 0 && fake.recording.endCount == 0)
+        // ...so the committed client state (watermark) is exactly what was seeded.
+        #expect(fake.committedIndexState?.watermark == "WM")
+    }
+
+    // MARK: Serialization — both directions (issue #44)
+
+    @Test func upsertDoesNotInterleaveWithAnInFlightReindexBatch() async throws {
+        let (client, session) = try await Self.makeSignedInClient()
+        let store = SpyCatalogStore(rows: [Self.row(100)], watermark: nil)
+        let bytes = ThumbnailDownscalingTests.makeJPEG(width: 64, height: 64)
+        let fileURL = try Self.writeFixture(bytes)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let provider = FakeThumbnailProvider(urls: [100: fileURL])
+
+        let log = SpotlightEventLog()
+        let gate = Gate()
+        let calls = OSAllocatedUnfairLock(initialState: 0)
+        let service = CatalogRefreshService(
+            client: client, store: store,
+            makeIndexer: {
+                let n = calls.withLock { $0 += 1; return $0 }
+                // The refresh (1st indexer) pauses at endBatch; later ones run free.
+                let gated = GatedSearchableIndex(log: log, gateOp: n == 1 ? .end : nil, gate: n == 1 ? gate : nil)
+                return SpotlightCatalogIndexer(index: gated)
+            },
+            thumbnailProvider: provider)
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200, headers: ["Last-Modified": "W"], body: Data(Fixtures.catalogNDJSON.utf8)))
+
+        // Start the refresh; wait until it is paused mid-batch (begin + index done,
+        // end pending).
+        let refreshTask = Task { try await service.refresh() }
+        await gate.waitUntilReached()
+
+        // Fire the upsert WHILE the refresh holds its batch open. If serialization
+        // were broken it would slip its index write between begin and end.
+        let upsertTask = Task { await service.cacheThumbnail(forAlbumID: 100) }
+        try? await Task.sleep(for: .milliseconds(30))   // window for a broken impl to interleave
+        gate.proceed()
+        _ = try await refreshTask.value
+        await upsertTask.value
+
+        // The upsert's index write lands strictly AFTER the reindex batch closed.
+        #expect(log.events == [
+            .begin, .index(["album.100", "album.200"]), .end, .index(["album.100"]),
+        ])
+    }
+
+    @Test func reindexDoesNotInterleaveWithAnInFlightUpsert() async throws {
+        let (client, session) = try await Self.makeSignedInClient()
+        let store = SpyCatalogStore(rows: [Self.row(100)], watermark: nil)
+        let bytes = ThumbnailDownscalingTests.makeJPEG(width: 64, height: 64)
+        let fileURL = try Self.writeFixture(bytes)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let provider = FakeThumbnailProvider(urls: [100: fileURL])
+
+        let log = SpotlightEventLog()
+        let gate = Gate()
+        let calls = OSAllocatedUnfairLock(initialState: 0)
+        let service = CatalogRefreshService(
+            client: client, store: store,
+            makeIndexer: {
+                let n = calls.withLock { $0 += 1; return $0 }
+                // The upsert (1st indexer) pauses at its index write; the refresh runs free.
+                let gated = GatedSearchableIndex(log: log, gateOp: n == 1 ? .index : nil, gate: n == 1 ? gate : nil)
+                return SpotlightCatalogIndexer(index: gated)
+            },
+            thumbnailProvider: provider)
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200, headers: ["Last-Modified": "W"], body: Data(Fixtures.catalogNDJSON.utf8)))
+
+        // Start the upsert; wait until it is paused at its (about-to-record) index write.
+        let upsertTask = Task { await service.cacheThumbnail(forAlbumID: 100) }
+        await gate.waitUntilReached()
+
+        // Fire the refresh WHILE the upsert is mid-write. If serialization were
+        // broken its reindex would open a batch during the upsert's write.
+        let refreshTask = Task { try await service.refresh() }
+        try? await Task.sleep(for: .milliseconds(30))
+        gate.proceed()
+        await upsertTask.value
+        _ = try await refreshTask.value
+
+        // The upsert's write completes before the reindex batch opens.
+        #expect(log.events == [
+            .index(["album.100"]), .begin, .index(["album.100", "album.200"]), .end,
+        ])
+    }
+
+    @Test func overlappingRefreshesRunSequentiallyWithoutCoalescing() async throws {
+        // Issue #44 traded refresh<->refresh coalescing for one serial chain: two
+        // overlapping refreshes now run in sequence (the second a cheap 304), not
+        // collapsed onto a single round-trip returning .refreshed to both.
+        let (client, session) = try await Self.makeSignedInClient()
+        let store = SpyCatalogStore()
+        let indexer = SpyCatalogIndexer(watermark: nil)
+        let service = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer })
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200, headers: ["Last-Modified": "W"], body: Data(Fixtures.catalogNDJSON.utf8)))
+        session.enqueue(StubRequestSession.Stub(statusCode: 304))
+
+        async let a = service.refresh()
+        async let b = service.refresh()
+        let outcomes = try await [a, b]
+
+        // One did the 200; the other re-polled (watermark advanced) and got a 304.
+        #expect(outcomes.contains(.refreshed(rowCount: 2, upserted: 2, removed: 0)))
+        #expect(outcomes.contains(.upToDate))
+        // Two round-trips — coalescing would have made exactly one.
+        #expect(Self.catalogRequests(session).count == 2)
+    }
 }

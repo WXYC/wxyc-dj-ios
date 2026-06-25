@@ -15,6 +15,7 @@ import WXYCAPI
 struct SearchResultRow: View {
     let row: AlbumSearchResult
     let onAdd: () -> Void
+    @Environment(AppDependencies.self) private var deps
 
     var body: some View {
         HStack(spacing: 12) {
@@ -43,6 +44,10 @@ struct SearchResultRow: View {
                 .foregroundStyle(.tint)
         }
         .padding(.vertical, 4)
+        // Surfacing a result is a "populated by use" signal: lazily cache its
+        // Spotlight cover so a later home-screen hit shows art (issue #44). The
+        // AppDependencies dedup makes a re-appearance on scroll O(1).
+        .onAppear { Task { await deps.cacheThumbnail(forAlbumID: row.id) } }
     }
 
     @ViewBuilder

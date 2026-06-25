@@ -87,6 +87,48 @@ struct SpotlightCatalogIndexerTests {
         #expect(try await indexer.indexedWatermark() == nil)
     }
 
+    // MARK: Single-item non-batch upsert (issue #44 lazy thumbnail attach)
+
+    @Test func upsertWritesOneItemWithThumbnailDataAndTouchesNoClientState() async throws {
+        // The lazy thumbnail attach (#44) upserts ONE row's item with embedded
+        // cover bytes as a plain, NON-batch index write — it must not open a batch
+        // or commit client state, so a thumbnail attach never advances the catalog
+        // watermark (which would let the next poll 304 past a not-yet-reindexed
+        // catalog).
+        let seed = Self.seed(rows: [Self.row(1)], watermark: "OLD")
+        let fake = FakeSearchableIndex(initialClientState: seed)
+        let indexer = SpotlightCatalogIndexer(index: fake)
+        let bytes = Data([0xFF, 0xD8, 0xFF, 0xE0])
+
+        try await indexer.upsert(row: Self.row(1), thumbnailData: bytes)
+
+        let rec = fake.recording
+        #expect(rec.indexedItems.map(\.identifier) == ["album.1"])
+        #expect(rec.indexedItems.first?.thumbnailData == bytes)
+        // The full attribute set, never a thumbnail-only partial item (which would
+        // drop displayName/keywords -> -1001 / search regression, cf. #32).
+        #expect(rec.indexedItems.first?.title == "Album 1")
+        #expect(rec.indexedItems.first?.keywords?.isEmpty == false)
+        // No batch, no client-state commit -> the watermark is untouched.
+        #expect(rec.beginCount == 0)
+        #expect(rec.endCount == 0)
+        #expect(try await indexer.indexedWatermark() == "OLD")
+    }
+
+    @Test func upsertWithoutThumbnailStillWritesTheFullItem() async throws {
+        // A nil thumbnail (unfetchable cover) still upserts the searchable item —
+        // the row is never dropped; it just shows the default icon.
+        let fake = FakeSearchableIndex()
+        let indexer = SpotlightCatalogIndexer(index: fake)
+
+        try await indexer.upsert(row: Self.row(7), thumbnailData: nil)
+
+        let rec = fake.recording
+        #expect(rec.indexedItems.map(\.identifier) == ["album.7"])
+        #expect(rec.indexedItems.first?.thumbnailData == nil)
+        #expect(rec.beginCount == 0 && rec.endCount == 0)
+    }
+
     // MARK: Delta — unchanged rows are skipped
 
     @Test func unchangedSnapshotUpsertsNothingButStillAdvancesWatermark() async throws {
