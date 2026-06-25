@@ -45,8 +45,9 @@ struct SearchResultRow: View {
         }
         .padding(.vertical, 4)
         // Surfacing a result is a "populated by use" signal: lazily cache its
-        // Spotlight cover so a later home-screen hit shows art (issue #44). The
-        // AppDependencies dedup makes a re-appearance on scroll O(1).
+        // Spotlight cover so a later home-screen hit shows art (issue #44). A
+        // re-appearance on scroll is cheap — the refresh service dedups an
+        // already-attached cover (and the provider serves a cache hit).
         .onAppear { Task { await deps.cacheThumbnail(forAlbumID: row.id) } }
     }
 

@@ -41,6 +41,9 @@ public actor DiskThumbnailProvider: ThumbnailProviding {
     private let session: any RequestSession
     private let maxPixelDimension: Int
     private let fileManager = FileManager.default
+    /// Upper bound on a cover response we'll decode (a real cover is at most a few
+    /// hundred KB; ~25 MB leaves generous headroom while rejecting absurd bodies).
+    private static let maxResponseBytes = 25 * 1024 * 1024
     /// In-flight fetches keyed by cache filename, so a fast re-view (the same album
     /// surfaced twice) coalesces onto one network round-trip instead of double-fetching.
     private var inFlight: [String: Task<URL?, Never>] = [:]
@@ -87,6 +90,15 @@ public actor DiskThumbnailProvider: ThumbnailProviding {
             let (data, response) = try await session.data(for: URLRequest(url: url))
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 thumbnailLog.debug("thumbnail fetch non-2xx for \(url.absoluteString, privacy: .public)")
+                return nil
+            }
+            // A cover is at most a few hundred KB; reject anything wildly larger
+            // before handing it to ImageIO, so a misbehaving/hostile CDN response
+            // can't drive a large-image decode. (The download itself isn't streamed-
+            // capped — acceptable for the vetted Discogs/iTunes CDNs; backend-hosted
+            // uri150 thumbnails would remove the exposure, see WXYC/Backend-Service#1486.)
+            guard data.count <= Self.maxResponseBytes else {
+                thumbnailLog.debug("thumbnail response too large (\(data.count) bytes) for \(url.absoluteString, privacy: .public)")
                 return nil
             }
             guard let jpeg = ThumbnailDownscaler.downscaledJPEG(from: data, maxPixelDimension: maxPixelDimension) else {

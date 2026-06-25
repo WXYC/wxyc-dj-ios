@@ -36,6 +36,9 @@ public enum ThumbnailDownscaler {
         maxPixelDimension: Int = defaultMaxPixelDimension,
         compressionQuality: Double = 0.8
     ) -> Data? {
+        // A non-positive cap would make `kCGImageSourceThumbnailMaxPixelSize` mean
+        // "no maximum", silently re-encoding at full resolution — fail closed instead.
+        guard maxPixelDimension > 0 else { return nil }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               CGImageSourceGetCount(source) > 0 else { return nil }
 
@@ -58,6 +61,10 @@ public enum ThumbnailDownscaler {
             kCGImageDestinationLossyCompressionQuality: compressionQuality
         ] as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { return nil }
+        // A finalize that "succeeds" but yields no bytes must not be treated as a
+        // valid thumbnail: caching empty Data writes a zero-byte file that would be
+        // served as a permanent cache hit and never re-fetched.
+        guard !output.isEmpty else { return nil }
         return output as Data
     }
 }

@@ -81,4 +81,12 @@ struct ThumbnailDownscalingTests {
         #expect(ThumbnailDownscaler.downscaledJPEG(from: Data("not an image".utf8)) == nil)
         #expect(ThumbnailDownscaler.downscaledJPEG(from: Data()) == nil)
     }
+
+    @Test func returnsNilForNonPositiveMaxDimension() {
+        // A 0/negative cap would make kCGImageSourceThumbnailMaxPixelSize mean "no
+        // maximum" and silently re-encode at full resolution — fail closed instead.
+        let image = Self.makeJPEG(width: 400, height: 400)
+        #expect(ThumbnailDownscaler.downscaledJPEG(from: image, maxPixelDimension: 0) == nil)
+        #expect(ThumbnailDownscaler.downscaledJPEG(from: image, maxPixelDimension: -10) == nil)
+    }
 }
