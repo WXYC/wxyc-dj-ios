@@ -91,5 +91,9 @@ public struct KeychainTokenStorage: TokenStorage {
     public func clearAll() throws {
         try clear(.sessionToken)
         try clear(.jwt)
+        // Issue #57: the grace-window anchors are terminal-cleared too, so a
+        // 401/manual sign-out leaves nothing for the offline restore to revive.
+        try clear(.lastValidatedAt)
+        try clear(.payload)
     }
 }
