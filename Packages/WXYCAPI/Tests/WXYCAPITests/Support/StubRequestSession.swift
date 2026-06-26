@@ -3,7 +3,8 @@
 //  WXYCAPITests
 //
 //  A scripted RequestSession that returns canned (Data, HTTPURLResponse)
-//  pairs in FIFO order. Records every request issued.
+//  pairs in FIFO order — or throws a canned transport error, for exercising
+//  the offline / outcome-hook paths (#56, #57). Records every request issued.
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -35,8 +36,16 @@ public final class StubRequestSession: RequestSession {
         }
     }
 
+    /// A scripted outcome: either a canned HTTP response or a thrown transport
+    /// error (simulating `URLSession.data(for:)` failing before any response —
+    /// the signal ``APIClient`` maps to `noteOutcome(success: false)`).
+    private enum Outcome {
+        case response(Stub)
+        case failure(any Error)
+    }
+
     private struct State {
-        var stubs: [Stub] = []
+        var outcomes: [Outcome] = []
         var recorded: [URLRequest] = []
     }
 
@@ -45,7 +54,13 @@ public final class StubRequestSession: RequestSession {
     public init() {}
 
     public func enqueue(_ stub: Stub) {
-        state.withLock { $0.stubs.append(stub) }
+        state.withLock { $0.outcomes.append(.response(stub)) }
+    }
+
+    /// Enqueue a transport error to be thrown for the next request, in FIFO order
+    /// alongside response stubs. Defaults to a not-connected `URLError`.
+    public func enqueue(failure error: any Error = URLError(.notConnectedToInternet)) {
+        state.withLock { $0.outcomes.append(.failure(error)) }
     }
 
     public var recordedRequests: [URLRequest] {
@@ -53,20 +68,25 @@ public final class StubRequestSession: RequestSession {
     }
 
     public func data(for request: URLRequest) async throws -> (Data, URLResponse) {
-        let stub: Stub = try state.withLock { state in
+        let outcome: Outcome = try state.withLock { state in
             state.recorded.append(request)
-            guard !state.stubs.isEmpty else {
+            guard !state.outcomes.isEmpty else {
                 throw StubError.noMoreStubs
             }
-            return state.stubs.removeFirst()
+            return state.outcomes.removeFirst()
         }
-        let response = HTTPURLResponse(
-            url: request.url!,
-            statusCode: stub.statusCode,
-            httpVersion: "HTTP/1.1",
-            headerFields: stub.headers
-        )!
-        return (stub.body, response)
+        switch outcome {
+        case .failure(let error):
+            throw error
+        case .response(let stub):
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: stub.statusCode,
+                httpVersion: "HTTP/1.1",
+                headerFields: stub.headers
+            )!
+            return (stub.body, response)
+        }
     }
 
     public enum StubError: Error, Sendable {

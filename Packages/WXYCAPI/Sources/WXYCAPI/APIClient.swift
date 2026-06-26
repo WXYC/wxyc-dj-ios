@@ -51,15 +51,23 @@ public final class APIClient: Sendable {
     private let configuration: WXYCAPIConfiguration
     private let session: any RequestSession
     private let authService: AuthService
+    /// Reports each request's transport result to the connectivity layer (#56):
+    /// `true` when the server answered (any HTTP status — we reached it), `false`
+    /// on a thrown transport error. `nil` outside the app (e.g. unit tests that
+    /// don't observe connectivity). Kept actor-free here; `AppDependencies`
+    /// supplies a closure that hops to `ConnectivityMonitor` on the main actor.
+    private let onOutcome: (@Sendable (Bool) -> Void)?
 
     public init(
         configuration: WXYCAPIConfiguration,
         session: any RequestSession = URLSession.shared,
-        authService: AuthService
+        authService: AuthService,
+        onOutcome: (@Sendable (Bool) -> Void)? = nil
     ) {
         self.configuration = configuration
         self.session = session
         self.authService = authService
+        self.onOutcome = onOutcome
     }
 
     public func searchLibrary(artist: String?, title: String?, limit: Int = 25) async throws -> [AlbumSearchResult] {
@@ -291,8 +299,15 @@ public final class APIClient: Sendable {
 
     private func fire(_ request: URLRequest) async throws -> (Data, URLResponse) {
         do {
-            return try await session.data(for: request)
+            let result = try await session.data(for: request)
+            // The server answered (any status code) — we reached it, so the
+            // connection is up regardless of what the response says.
+            onOutcome?(true)
+            return result
         } catch {
+            // A thrown error from the transport means we never reached the
+            // server (no network, captive portal, DNS, timeout): report offline.
+            onOutcome?(false)
             throw APIError.network(error.localizedDescription)
         }
     }

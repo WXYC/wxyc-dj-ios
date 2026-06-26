@@ -14,6 +14,7 @@
 //
 
 import Foundation
+import os
 import Testing
 @testable import WXYCAPI
 
@@ -21,6 +22,15 @@ import Testing
 @MainActor
 struct APIClientTests {
     private static let config = WXYCAPIConfiguration.localDevelopment
+
+    /// Thread-safe sink for the `APIClient` outcome hook (#56): records each
+    /// `true`/`false` transport result in order. `Sendable` (lock-backed) so it
+    /// can be captured in the `@Sendable` outcome closure.
+    private final class OutcomeRecorder: Sendable {
+        private let storage = OSAllocatedUnfairLock<[Bool]>(initialState: [])
+        var values: [Bool] { storage.withLock { $0 } }
+        func record(_ success: Bool) { storage.withLock { $0.append(success) } }
+    }
 
     /// Stand up an AuthService already pinned to .signedIn with a fresh JWT, plus the APIClient under test.
     private static func makeSignedInClient() async throws -> (APIClient, AuthService, StubRequestSession) {
@@ -35,6 +45,30 @@ struct APIClientTests {
         await auth.restoreSession()
         let client = APIClient(configuration: config, session: session, authService: auth)
         return (client, auth, session)
+    }
+
+    /// Like ``makeSignedInClient()`` but wires the outcome hook to a recorder so
+    /// the connectivity correction (#56) can be asserted. The session-token
+    /// restore runs through `AuthService`, not `APIClient.fire`, so it never
+    /// pollutes the recorder.
+    private static func makeSignedInClientWithRecorder() async throws -> (APIClient, StubRequestSession, OutcomeRecorder) {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let auth = AuthService(configuration: config, storage: storage, session: session)
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await auth.restoreSession()
+        let recorder = OutcomeRecorder()
+        let client = APIClient(
+            configuration: config,
+            session: session,
+            authService: auth,
+            onOutcome: { recorder.record($0) }
+        )
+        return (client, session, recorder)
     }
 
     @Test func searchLibraryComposesQueryAndAttachesBearer() async throws {
@@ -369,5 +403,47 @@ struct APIClientTests {
         }
         #expect(rows.count == 2)
         #expect(lastModified == nil)
+    }
+
+    // MARK: - Connectivity outcome hook (#56)
+
+    @Test func outcomeHookReportsSuccessWhenServerAnswers() async throws {
+        let (client, session, recorder) = try await Self.makeSignedInClientWithRecorder()
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data("[\(Fixtures.juanaMolinaSearchResult)]".utf8)
+        ))
+
+        _ = try await client.searchLibrary(artist: "Juana", title: nil)
+
+        #expect(recorder.values == [true])
+    }
+
+    @Test func outcomeHookReportsSuccessEvenOnServerErrorStatus() async throws {
+        // A 500 still means we *reached* the server — connectivity is up — so the
+        // hook reports success even though the call throws .http.
+        let (client, session, recorder) = try await Self.makeSignedInClientWithRecorder()
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 500,
+            body: Data(#"{"message":"boom"}"#.utf8)
+        ))
+
+        await #expect(throws: APIError.self) {
+            _ = try await client.searchLibrary(artist: "Juana", title: nil)
+        }
+
+        #expect(recorder.values == [true])
+    }
+
+    @Test func outcomeHookReportsFailureOnTransportError() async throws {
+        let (client, session, recorder) = try await Self.makeSignedInClientWithRecorder()
+        // The transport throws before any response — the offline signal.
+        session.enqueue(failure: URLError(.notConnectedToInternet))
+
+        await #expect(throws: APIError.self) {
+            _ = try await client.searchLibrary(artist: "Juana", title: nil)
+        }
+
+        #expect(recorder.values == [false])
     }
 }
