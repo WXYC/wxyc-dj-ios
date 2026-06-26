@@ -37,6 +37,13 @@ struct RootView: View {
                 MainView()
             }
         }
+        // Offline banner (issue #56): overlays the primary screens while offline
+        // and auto-hides when ConnectivityMonitor flips back online. The banner
+        // renders nothing when online, so the inset reserves no space. Hoisted
+        // onto the always-mounted Group so it's live in every auth state.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            OfflineBanner()
+        }
         // A Spotlight tap delivers an NSUserActivity carrying the item's
         // "album.<id>" identifier; handleSpotlightContinuation parses it and
         // either presents immediately (signed in) or stashes for replay.
