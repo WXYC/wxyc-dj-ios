@@ -76,6 +76,17 @@ public final class AuthService {
     private var sessionToken: String?
     private var cachedJWT: (token: String, payload: JWTPayload)?
 
+    /// Monotonic session-*generation* counter. Bumped whenever the session is
+    /// cleared (`clearLocalSession`) or a brand-new one is established (`signIn`),
+    /// but **not** on a `set-auth-token` rotation (`captureRotatedSessionToken`),
+    /// which re-issues the bearer *within* the same generation. `refreshJWT`
+    /// captures it before awaiting `/auth/token` and re-checks it after, so a
+    /// `signOut` (or re-sign-in) that lands during an in-flight refresh can't be
+    /// resurrected by the 2xx success path re-persisting a stale rotation/JWT
+    /// (issue #66). The generation framing is what keeps a benign concurrent
+    /// double-refresh — where only the bearer rotated — from spuriously failing.
+    private var sessionEpoch: UInt64 = 0
+
     private static let refreshLeeway: TimeInterval = 60
 
     public init(
@@ -133,6 +144,7 @@ public final class AuthService {
             token = try await performSignIn(username: username, password: password)
             try storage.save(token, for: .sessionToken)
             sessionToken = token
+            sessionEpoch &+= 1  // a new generation, so a stale refresh of any prior session can't clobber it (issue #66)
         } catch let error as AuthError {
             clearLocalSession()
             lastError = error
@@ -186,6 +198,7 @@ public final class AuthService {
     private func clearLocalSession() {
         sessionToken = nil
         cachedJWT = nil
+        sessionEpoch &+= 1  // a new generation: invalidate any in-flight refresh (issue #66)
         try? storage.clearAll()
     }
 
@@ -276,6 +289,7 @@ public final class AuthService {
 
     private func refreshJWT() async throws -> JWTPayload {
         guard let token = sessionToken else { throw AuthError.notSignedIn }
+        let epochAtRefresh = sessionEpoch
         let url = configuration.authBaseURL.appending(path: "token")
         var request = URLRequest(url: url, timeoutInterval: configuration.timeout)
         request.httpMethod = "GET"
@@ -290,6 +304,17 @@ public final class AuthService {
             if http.statusCode == 401 { throw AuthError.notSignedIn }
             throw AuthError.serverFailure(status: http.statusCode, message: nil)
         }
+        // Bail before persisting anything if the session was cleared or replaced
+        // (signOut / re-sign-in) while we awaited (issue #66). Otherwise this 2xx
+        // resurrects a torn-down session: `captureRotatedSessionToken` writes the
+        // rolling-renewal bearer back to the Keychain and we cache+persist the
+        // JWT — leaving `state == .signedOut` but a live token that the next cold
+        // launch's `restoreSession()` silently signs back in (defeating signOut,
+        // violating #52's leave-no-trace). The success-path mirror of
+        // `currentJWT`'s 401-path guard. A *rotation* captured by a concurrent
+        // refresh keeps the same generation, so a benign overlapping
+        // double-refresh still persists for both callers.
+        guard sessionEpoch == epochAtRefresh else { throw AuthError.notSignedIn }
         captureRotatedSessionToken(from: http)
         let decoded = try JSONCoders.decoder.decode(JWTResponse.self, from: data)
         let payload = try JWTDecoder.decode(decoded.token)

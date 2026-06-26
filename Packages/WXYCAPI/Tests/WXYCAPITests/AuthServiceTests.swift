@@ -399,6 +399,112 @@ struct AuthServiceTests {
         #expect(try storage.load(.jwt) != nil)
     }
 
+    @Test func signOutDuringInFlightRefreshIsNotResurrectedByRotationHeader() async throws {
+        // Issue #66 — the success-path mirror of the lazy-401 guard above. The
+        // refresh binds its bearer and suspends at /auth/token; if a signOut runs
+        // during that suspension (clearing the token, the Keychain, and state),
+        // the refresh must NOT resume on a 2xx and re-persist the session. The
+        // dangerous variant carries a rolling-renewal `set-auth-token` rotation
+        // header: captureRotatedSessionToken would see it differ from the now-nil
+        // sessionToken and write it back to the Keychain — leaving state ==
+        // .signedOut but a live bearer persisted, which the next cold launch's
+        // restoreSession() silently signs back in. That defeats signOut and
+        // violates #52's leave-no-trace contract (security-relevant on a shared
+        // device). The GatedAuthSession parks the refresh mid-flight so the
+        // signOut interleaves deterministically.
+        let session = GatedAuthSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-1", for: .sessionToken)
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        // Cold-launch restore brings session-1 to .signedIn (one instant token call).
+        session.enqueueInstant(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await service.restoreSession()
+        service.invalidateJWT()  // force the next currentJWT() to hit the network
+
+        // Arm the gate so the refresh's /auth/token parks, then returns a 2xx
+        // that BOTH rotates the session (set-auth-token) and carries a valid JWT.
+        session.armGate(returning: StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-2"],
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+
+        // Start the refresh (bound to session-1); it parks at the gate.
+        let refresh = Task { try? await service.currentJWT() }
+        await session.waitForGatedArrival()
+
+        // While the refresh is suspended, the DJ signs out: token + Keychain
+        // cleared, state .signedOut.
+        await service.signOut()
+        #expect(service.state == .signedOut)
+
+        // Let the refresh resume on its 2xx + rotation header.
+        session.releaseGate()
+        _ = await refresh.value
+
+        // The load-bearing assertions: the signed-out session stays signed out
+        // with an EMPTY Keychain — the rotation header did not resurrect it.
+        #expect(service.state == .signedOut)
+        #expect(try storage.load(.sessionToken) == nil)
+        #expect(try storage.load(.jwt) == nil)
+    }
+
+    @Test func benignConcurrentDoubleRefreshDoesNotSpuriouslyFail() async throws {
+        // Issue #66 regression guard. The fix must reject a signOut/replace that
+        // races a refresh WITHOUT regressing the benign overlapping double-refresh
+        // — two authed callers (interactive search/bin AND the background catalog
+        // refresh share one AuthService) racing a refresh, where the first merely
+        // *rotates* the session while the second is awaiting. A naive
+        // `guard sessionToken == boundToken` would make the second spuriously
+        // throw .notSignedIn even though the session is alive. The epoch guard
+        // doesn't bump on rotation, so both callers still resolve a JWT.
+        let session = GatedAuthSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-1", for: .sessionToken)
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        // Cold-launch restore brings session-1 to .signedIn.
+        session.enqueueInstant(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await service.restoreSession()
+        service.invalidateJWT()
+
+        // Refresh A parks at the gate (bound to session-1); it resumes LAST, after
+        // refresh B has already rotated the live session to session-2.
+        session.armGate(returning: StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        // Refresh B (served instantly) rotates session-1 → session-2.
+        session.enqueueInstant(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-2"],
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+
+        let refreshA = Task { try await service.currentJWT() }
+        await session.waitForGatedArrival()
+
+        // While A is parked, B runs to completion and rotates the session.
+        let bToken = try await service.currentJWT()
+        #expect(!bToken.isEmpty)
+        #expect(try storage.load(.sessionToken) == "session-2")
+
+        // A resumes: the live session was rotated to session-2 (same generation),
+        // not cleared. A must still resolve a JWT — no spurious .notSignedIn.
+        session.releaseGate()
+        let aToken = try await refreshA.value  // rethrows if A spuriously failed
+        #expect(!aToken.isEmpty)
+        #expect(service.isSignedIn)
+        #expect(try storage.load(.sessionToken) == "session-2")
+    }
+
     @Test func restoreSessionPullsTokenFromStorage() async throws {
         let session = StubRequestSession()
         let storage = InMemoryTokenStorage()
