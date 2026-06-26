@@ -113,12 +113,27 @@ public final class AuthService {
             state = .signedOut
         } catch {
             // Transient (5xx / network / undecodable body): the session may
-            // still be good. Keep the stored token and enter the pending window;
-            // `currentJWT()` re-mints the JWT lazily on first use (issue #53).
-            // Strictly better than dumping a returning DJ to a LoginView they
-            // may not be able to complete offline — cached catalog browsing
-            // works, and a recovered network self-heals on the next refresh.
-            state = .signedIn(payload: nil)
+            // still be good, but we couldn't confirm it. Consult the offline
+            // grace policy (issue #57) — within the 30-day window since the last
+            // confirmed server contact, restore the cached identity so a
+            // returning DJ lands in the app (browsing the on-device catalog
+            // clone) instead of a LoginView they may not be able to complete
+            // offline; the JWT re-mints lazily once the network recovers. Past
+            // the window, fall through to the login screen. A network failure
+            // never clears tokens here: the next online launch's restore can
+            // still recover the session (success) or terminally clear it (401).
+            let decision = OfflineSessionPolicy.decide(
+                hasStoredSession: sessionToken != nil,
+                cachedPayload: loadPersistedPayload(),
+                lastValidatedAt: loadLastValidatedAt(),
+                now: Date()
+            )
+            switch decision {
+            case .signedIn(let payload):
+                state = .signedIn(payload: payload)
+            case .signedOut:
+                state = .signedOut
+            }
         }
     }
 
@@ -295,7 +310,43 @@ public final class AuthService {
         let payload = try JWTDecoder.decode(decoded.token)
         cachedJWT = (decoded.token, payload)
         try? storage.save(decoded.token, for: .jwt)
+        // Issue #57: a successful exchange is a confirmed server contact, so
+        // reset the offline grace window and refresh the durable payload. This
+        // is the single chokepoint for sign-in, cold-launch restore, and the
+        // lazy refresh — every path that proves the session is live flows here.
+        persistValidationAnchors(payload: payload)
         return payload
+    }
+
+    // MARK: - Offline grace anchors (issue #57)
+
+    /// Persist the offline grace anchors: the wall-clock of this confirmed
+    /// server contact and a durable copy of the payload. Best-effort — a
+    /// storage failure degrades to a shorter grace, never blocks the refresh.
+    private func persistValidationAnchors(payload: JWTPayload) {
+        try? storage.save(String(Date().timeIntervalSince1970), for: .lastValidatedAt)
+        if let json = Self.encodePayload(payload) {
+            try? storage.save(json, for: .payload)
+        }
+    }
+
+    private func loadLastValidatedAt() -> Date? {
+        guard let raw = (try? storage.load(.lastValidatedAt)) ?? nil,
+              let seconds = TimeInterval(raw) else { return nil }
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    private func loadPersistedPayload() -> JWTPayload? {
+        guard let json = (try? storage.load(.payload)) ?? nil,
+              let data = json.data(using: .utf8),
+              let payload = try? JSONCoders.decoder.decode(JWTPayload.self, from: data)
+        else { return nil }
+        return payload
+    }
+
+    private static func encodePayload(_ payload: JWTPayload) -> String? {
+        guard let data = try? JSONCoders.encoder.encode(payload) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     /// better-auth's bearer plugin emits `set-auth-token` on every response
