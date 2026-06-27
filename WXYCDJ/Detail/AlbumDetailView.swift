@@ -156,7 +156,9 @@ struct AlbumDetailView: View {
             if let year = m.releaseYear {
                 metadataRow("Year", value: String(year))
             }
-            if infoLoaded, let label = m.label, !label.isEmpty, label != info?.label {
+            if Self.shouldShowMetadataLabel(
+                metadataLabel: m.label, catalogLabel: catalogLabel, infoLoaded: infoLoaded
+            ), let label = m.label {
                 metadataRow("Label", value: label)
             }
             if let date = m.fullReleaseDate, !date.isEmpty {
@@ -240,7 +242,10 @@ struct AlbumDetailView: View {
     /// rotation; a non-cohort bin (e.g. `"N"`) is still in rotation but carries no
     /// `H`/`M`/`L`/`S` badge, so render a plain "In rotation" label rather than
     /// collapsing it to out-of-rotation. The kill date is the raw `"YYYY-MM-DD"`
-    /// string the export carries (no `Date` round-trip offline).
+    /// string the export carries; ``WXYCDateFormatting/dateOnly(fromISOString:locale:)``
+    /// renders it in the same GMT-anchored abbreviated form as the online
+    /// ``rotationSection`` (no leaked ISO string), passing through verbatim if it
+    /// somehow isn't a calendar date.
     private func offlineRotationSection(_ row: CatalogRow) -> some View {
         Section("Rotation") {
             HStack {
@@ -253,7 +258,7 @@ struct AlbumDetailView: View {
                 Spacer()
             }
             if let kill = row.rotationKillDate {
-                metadataRow("Kill date", value: kill)
+                metadataRow("Kill date", value: WXYCDateFormatting.dateOnly(fromISOString: kill))
             }
         }
     }
@@ -393,13 +398,39 @@ struct AlbumDetailView: View {
         // row, suppress the section header entirely.
         if m.releaseYear != nil { return true }
         if m.fullReleaseDate?.isEmpty == false { return true }
-        // Only consider the label divergence once the catalog row has
-        // settled. Otherwise the label row briefly renders, then collapses
-        // when /library/info arrives with the same label.
-        if infoLoaded, let label = m.label, !label.isEmpty, label != info?.label {
+        // Same gate as the rendered "Label" row, so the section header and its
+        // contents agree (no empty "Release" header when only the label would
+        // show but it's a dedup'd duplicate).
+        if Self.shouldShowMetadataLabel(
+            metadataLabel: m.label, catalogLabel: catalogLabel, infoLoaded: infoLoaded
+        ) {
             return true
         }
         return false
+    }
+
+    /// The catalog row's label as actually established for the header — the
+    /// `/library/info` label when online, else the resolved fallback/clone label
+    /// offline. The LML "Label" row dedups against **this**, not `info?.label`
+    /// alone: offline `info` is nil, so deduping against `info?.label` compared
+    /// against `nil` and always re-showed a label identical to the one the header
+    /// already renders (a visible duplicate).
+    private var catalogLabel: String? {
+        info?.label ?? resolution.catalogRow?.label
+    }
+
+    /// Whether LML's best-effort `metadataLabel` earns its own Release-section
+    /// "Label" row. Shown only once the catalog row has settled (`infoLoaded`,
+    /// else it would render-then-collapse when `/library/info` lands), when the
+    /// label is non-empty, and when it actually **diverges** from the catalog
+    /// label already shown in the header (`catalogLabel`) — a matching label is a
+    /// redundant duplicate. Pure + `static` so it's unit-testable without
+    /// rendering (see `AlbumDetailFallbackTests`).
+    static func shouldShowMetadataLabel(
+        metadataLabel: String?, catalogLabel: String?, infoLoaded: Bool
+    ) -> Bool {
+        guard infoLoaded, let label = metadataLabel, !label.isEmpty else { return false }
+        return label != catalogLabel
     }
 
     private func hasStreamingLinks(_ m: AlbumMetadata) -> Bool {

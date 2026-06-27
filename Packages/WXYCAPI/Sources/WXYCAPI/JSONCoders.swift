@@ -64,4 +64,26 @@ public enum WXYCDateFormatting {
         style.timeZone = .gmt
         return style
     }()
+
+    /// GMT-anchored ISO-8601 calendar-date parse (`YYYY-MM-DD`), mirroring the
+    /// `dateOnly` branch of ``JSONCoders/decoder`` so a string parses to the
+    /// exact same midnight-GMT `Date` that `/library/info` rotation dates decode
+    /// to. Kept private — callers want the rendered string via ``dateOnly(fromISOString:locale:)``.
+    private static let dateOnlyParseStyle = Date.ISO8601FormatStyle(timeZone: .gmt)
+        .year().month().day()
+        .dateSeparator(.dash)
+
+    /// Renders a raw `YYYY-MM-DD` wire string (e.g. ``CatalogRow/rotationKillDate``,
+    /// which the catalog export ships as a bare string rather than a `Date`) using
+    /// the same GMT-anchored abbreviated form as a decoded rotation `Date` — so the
+    /// offline catalog-clone render matches the online `/library/info` render
+    /// instead of leaking the raw ISO string. A value that doesn't parse as a
+    /// calendar date passes through **verbatim** (data-safety: never blank the
+    /// field, never crash on a dirty value — same fail-soft posture as the
+    /// row-survival decoding in ``CatalogRow``). `locale` is injectable so tests
+    /// can pin the en_US_POSIX rendering; it defaults to the device locale.
+    public static func dateOnly(fromISOString raw: String, locale: Locale = .current) -> String {
+        guard let date = try? Date(raw, strategy: dateOnlyParseStyle) else { return raw }
+        return date.formatted(dateOnlyFormatStyle.locale(locale))
+    }
 }
