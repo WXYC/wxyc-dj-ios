@@ -172,5 +172,55 @@ struct AlbumDetailFallbackTests {
         // "N" is still in rotation per the server predicate, but has no H/M/L/S cohort.
         #expect(rotationRow.isInRotation() == true)
         #expect(rotationRow.rotationCohort == nil)
+        // The clone-only failed render is still framed as saved data.
+        #expect(resolution.note == .savedData)
+    }
+
+    // MARK: Release-section "Label" dedup (online and offline)
+
+    @Test("LML label is shown only when it differs from the catalog label")
+    func metadataLabelShownWhenDiffersFromCatalog() {
+        // Online (catalog label from /library/info) and offline (catalog label
+        // from the fallback / clone) must dedup against the SAME catalog label —
+        // the one the header actually renders — so a matching LML label is never
+        // duplicated in the Release section.
+        #expect(AlbumDetailView.shouldShowMetadataLabel(
+            metadataLabel: "Drag City", catalogLabel: "Sonamos", infoLoaded: true))
+        #expect(!AlbumDetailView.shouldShowMetadataLabel(
+            metadataLabel: "Sonamos", catalogLabel: "Sonamos", infoLoaded: true))
+    }
+
+    @Test("offline: LML label matching the clone label is NOT duplicated")
+    func metadataLabelDedupsAgainstCloneOffline() {
+        // The regression: offline `info` is nil, so the old `m.label != info?.label`
+        // gate compared against nil and always showed the label. With the catalog
+        // label sourced from the clone, an identical LML label is suppressed.
+        let cloneLabel = Self.dogaRow().label // "Sonamos"
+        #expect(!AlbumDetailView.shouldShowMetadataLabel(
+            metadataLabel: "Sonamos", catalogLabel: cloneLabel, infoLoaded: true))
+    }
+
+    @Test("LML label is withheld until the catalog row has settled")
+    func metadataLabelWithheldBeforeInfoLoaded() {
+        // Before the catalog row settles we can't know if the LML label diverges,
+        // so withhold it to avoid a render-then-collapse flicker.
+        #expect(!AlbumDetailView.shouldShowMetadataLabel(
+            metadataLabel: "Drag City", catalogLabel: nil, infoLoaded: false))
+    }
+
+    @Test("an empty or nil LML label is never shown")
+    func emptyMetadataLabelIsNotShown() {
+        #expect(!AlbumDetailView.shouldShowMetadataLabel(
+            metadataLabel: "", catalogLabel: "Sonamos", infoLoaded: true))
+        #expect(!AlbumDetailView.shouldShowMetadataLabel(
+            metadataLabel: nil, catalogLabel: "Sonamos", infoLoaded: true))
+    }
+
+    @Test("LML label shows when there is no catalog label at all")
+    func metadataLabelShownWhenNoCatalogLabel() {
+        // No catalog label to dedup against (neither info nor clone carried one),
+        // but the row has settled — the LML label is the only label, so show it.
+        #expect(AlbumDetailView.shouldShowMetadataLabel(
+            metadataLabel: "Drag City", catalogLabel: nil, infoLoaded: true))
     }
 }
