@@ -128,7 +128,7 @@ final class AppDependencies {
 
     /// Build the configuration + auth + API client shared by every initializer.
     /// `onOutcome` is the connectivity correction hook (issue #56): each request's
-    /// transport result feeds ``ConnectivityMonitor/noteOutcome(success:)``.
+    /// transport result feeds ``ConnectivityMonitor/ingest(isOnline:)``.
     private static func makeCore(
         onOutcome: @escaping @Sendable (Bool) -> Void
     ) -> (WXYCAPIConfiguration, AuthService, APIClient) {
@@ -143,13 +143,14 @@ final class AppDependencies {
     }
 
     /// The `@Sendable` closure the WXYCAPI-layer ``APIClient`` calls with each
-    /// transport result. Hops to the main actor to update the `@MainActor`
-    /// monitor, keeping WXYCAPI free of any MainActor coupling. Captures the
-    /// monitor (not `self`) so it can be built before the rest of the root.
+    /// transport result. Feeds the monitor's `nonisolated`, **ordered**
+    /// ``ConnectivityMonitor/ingest(isOnline:)`` directly — no `Task { @MainActor }`
+    /// wrapper, which would let two near-simultaneous outcomes (or an outcome
+    /// racing a path update) apply out of submission order on the main actor and
+    /// break last-write-wins. Captures the monitor (not `self`) so it can be built
+    /// before the rest of the root; keeps WXYCAPI free of any MainActor coupling.
     private static func outcomeHandler(for connectivity: ConnectivityMonitor) -> @Sendable (Bool) -> Void {
-        { success in
-            Task { @MainActor in connectivity.noteOutcome(success: success) }
-        }
+        { success in connectivity.ingest(isOnline: success) }
     }
 
     /// Begin tracking the live network path. Called once at launch (not from the
@@ -197,15 +198,25 @@ final class AppDependencies {
     }
 
     /// Refresh ``lastCatalogSyncText`` from the catalog watermark. A `nil` store
-    /// or never-populated clone leaves it `nil`, so the banner shows "Never
-    /// synced". Parsing/formatting is the pure ``formatSyncDate(_:)``.
+    /// leaves it `nil`, so the banner shows "Never synced". Parsing/formatting is
+    /// the pure ``formatSyncDate(_:)``.
+    ///
+    /// A *successful* read of a never-populated clone returns `nil` (the store
+    /// reports no watermark), which correctly shows "Never synced". A read that
+    /// **throws** (a transient SQLite lock / I/O error) preserves the previous
+    /// value instead of wiping it — otherwise a single flaky read after a good
+    /// sync would regress a live banner to "Never synced".
     private func updateLastCatalogSyncText() async {
         guard let catalogStore else {
             lastCatalogSyncText = nil
             return
         }
-        let watermark = try? await catalogStore.lastModified()
-        lastCatalogSyncText = watermark.map(Self.formatSyncDate)
+        do {
+            let watermark = try await catalogStore.lastModified()
+            lastCatalogSyncText = watermark.map(Self.formatSyncDate)
+        } catch {
+            catalogLog.debug("Last-synced watermark read failed; keeping previous value: \(Self.catalogErrorDetail(error), privacy: .public)")
+        }
     }
 
     /// Format the catalog's verbatim RFC 1123 `Last-Modified` watermark

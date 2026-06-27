@@ -47,3 +47,60 @@ struct FormatSyncDateTests {
         #expect(AppDependencies.formatSyncDate(garbage) == garbage)
     }
 }
+
+/// A `CatalogStore` whose `lastModified()` returns a settable watermark or, once
+/// armed, throws — so the "last synced" line's resilience to a transient
+/// watermark-read failure can be driven through `refreshCatalog()`. An `actor`,
+/// so it's `Sendable` and race-free.
+private actor FlakyWatermarkStore: CatalogStore {
+    private var watermark: String?
+    private var throwOnRead = false
+
+    init(watermark: String?) { self.watermark = watermark }
+
+    /// Arm the next (and every subsequent) `lastModified()` to throw.
+    func startThrowing() { throwOnRead = true }
+
+    func lastModified() async throws -> String? {
+        if throwOnRead { throw URLError(.cannotOpenFile) }
+        return watermark
+    }
+
+    // Unused by updateLastCatalogSyncText.
+    func row(id: Int) async throws -> CatalogRow? { nil }
+    func count() async throws -> Int { 0 }
+    func replace(rows: [CatalogRow], lastModified: String?) async throws { watermark = lastModified }
+}
+
+@Suite("AppDependencies.lastCatalogSyncText")
+@MainActor
+struct LastCatalogSyncTextTests {
+    /// A successful watermark read formats into the banner's "last synced" line.
+    @Test func goodReadPopulatesSyncText() async {
+        let store = FlakyWatermarkStore(watermark: "Wed, 24 Jun 2026 12:00:00 GMT")
+        let deps = AppDependencies(catalogStore: store)
+
+        await deps.refreshCatalog()
+
+        #expect(deps.lastCatalogSyncText?.contains("2026") == true)
+    }
+
+    /// A *transient* watermark-read failure after a good sync must NOT wipe the
+    /// previously-good "last synced" line back to "Never synced" — the regression
+    /// this guards against was `try?` flattening the throw to `nil` and then
+    /// unconditionally overwriting the stored value.
+    @Test func transientReadFailurePreservesPreviousSyncText() async {
+        let store = FlakyWatermarkStore(watermark: "Wed, 24 Jun 2026 12:00:00 GMT")
+        let deps = AppDependencies(catalogStore: store)
+
+        await deps.refreshCatalog()
+        let afterGoodSync = deps.lastCatalogSyncText
+        #expect(afterGoodSync != nil)
+
+        await store.startThrowing()
+        await deps.refreshCatalog()
+
+        // Preserved, not wiped to nil.
+        #expect(deps.lastCatalogSyncText == afterGoodSync)
+    }
+}

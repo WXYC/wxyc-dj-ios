@@ -32,6 +32,20 @@ struct ConnectivityMonitorTests {
         for _ in 0..<5 { await Task.yield() }
     }
 
+    /// Yield (bounded) until `condition` holds, draining the `signals` consumer's
+    /// enqueued main-actor work. Returns once satisfied; the bound just prevents a
+    /// hang if a regression means it never becomes true (the caller's `#expect`
+    /// then fails). Used where an unknown number of consumer hops must complete —
+    /// unlike a fixed yield count, this waits long enough without masking a
+    /// reorder (a reorder settles on the wrong value, so the condition stays false
+    /// and the test fails).
+    private func drain(until condition: @MainActor () -> Bool) async {
+        for _ in 0..<1000 {
+            if condition() { return }
+            await Task.yield()
+        }
+    }
+
     // MARK: Initial state
 
     @Test func startsOptimisticallyOnline() {
@@ -125,7 +139,7 @@ struct ConnectivityMonitorTests {
         monitor.noteOutcome(success: true)  // offline -> online: EDGE
         monitor.noteOutcome(success: true)  // online -> online: no edge
 
-        await settle()
+        await drain(until: { box.count == 1 })
         #expect(box.count == 1)
         collector.cancel()
     }
@@ -173,13 +187,86 @@ struct ConnectivityMonitorTests {
         }
         await settle()
 
+        // Drain between the two reconnect edges: the stream coalesces newest-1, so
+        // a consumer that keeps pace (the realistic case — reconnects are seconds
+        // apart) sees one wake per transition; the late-subscriber backlog test
+        // covers the coalescing direction.
         monitor.noteOutcome(success: false) // -> offline
         monitor.noteOutcome(success: true)  // EDGE 1
+        await drain(until: { box.count == 1 })
+
         monitor.noteOutcome(success: false) // -> offline
         monitor.noteOutcome(success: true)  // EDGE 2
+        await drain(until: { box.count == 2 })
 
-        await settle()
         #expect(box.count == 2)
+        collector.cancel()
+    }
+
+    // MARK: Ordered ingestion (last-write-wins across off-actor signals)
+
+    /// The production ingress (path callback + APIClient outcome hook) lands on
+    /// arbitrary threads, so it funnels through ``ConnectivityMonitor/ingest(isOnline:)``
+    /// rather than each spawning its own `Task { @MainActor }` — independently
+    /// created tasks have no FIFO guarantee on the main actor, so a stale signal
+    /// could otherwise apply after a fresher one and break last-write-wins. A
+    /// burst of ingests must settle to the **last** value submitted.
+    @Test func ingestAppliesSignalsInSubmissionOrder() async {
+        let monitor = ConnectivityMonitor()
+        // Submit a long alternating burst from a non-isolated context, ending on
+        // `false`. The single serial consumer applies them in submission order,
+        // so the last value wins; if any pair reordered, the final state could be
+        // `true` and `drain(until:)` would never see `false`.
+        for i in 0..<50 { monitor.ingest(isOnline: i % 2 == 0) }
+        monitor.ingest(isOnline: false)
+        await drain(until: { monitor.isOnline == false })
+        #expect(monitor.isOnline == false)
+    }
+
+    /// The other direction: a burst ending on `true` settles online, and the
+    /// reconnect edge fires for the final offline→online crossing.
+    @Test func ingestEndingOnlineSettlesOnlineWithReconnectEdge() async {
+        let monitor = ConnectivityMonitor()
+        let box = EdgeBox()
+        let collector = Task { @MainActor in
+            for await _ in monitor.reconnects { box.count += 1 }
+        }
+        await settle()
+
+        monitor.ingest(isOnline: false)
+        monitor.ingest(isOnline: true)
+        await drain(until: { monitor.isOnline == true && box.count == 1 })
+
+        #expect(monitor.isOnline == true)
+        #expect(box.count == 1)
+        collector.cancel()
+    }
+
+    // MARK: Reconnect-stream buffering for a late subscriber (#61)
+
+    /// `reconnects` coalesces for a *late* subscriber (the documented #61
+    /// `BinSyncService` attaches after launch): a subscriber that starts after
+    /// several historical reconnects must NOT receive the whole backlog at once
+    /// (which would fire one queued-bin flush per historical edge). The stream is
+    /// buffered newest-1, so a late subscriber sees at most one pending edge, not
+    /// the full history.
+    @Test func reconnectsDoesNotReplayFullBacklogToALateSubscriber() async {
+        let monitor = ConnectivityMonitor()
+        // Generate several reconnect edges with NO subscriber attached.
+        for _ in 0..<5 {
+            monitor.noteOutcome(success: false)
+            monitor.noteOutcome(success: true) // each pair = one offline->online edge
+        }
+
+        // Now attach a late subscriber and drain whatever is buffered.
+        let box = EdgeBox()
+        let collector = Task { @MainActor in
+            for await _ in monitor.reconnects { box.count += 1 }
+        }
+        await settle()
+
+        // A newest-1 buffer replays at most one edge, not all five.
+        #expect(box.count <= 1)
         collector.cancel()
     }
 }
