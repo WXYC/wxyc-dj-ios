@@ -16,7 +16,7 @@
 
 import Foundation
 
-public enum TokenSlot: String, Sendable {
+public enum TokenSlot: String, Sendable, CaseIterable {
     case sessionToken = "wxyc.dj-tool.session-token"
     case jwt = "wxyc.dj-tool.jwt"
     /// Wall-clock of the last confirmed server contact (a successful JWT

@@ -609,8 +609,14 @@ struct AuthServiceTests {
             Issue.record("expected signedIn, got \(second.state)")
             return
         }
-        #expect(payload != nil)  // the cached identity, not the issue-#53 pending nil
+        // The full cached identity round-trips through storage (sub/email/role +
+        // a finite exp), not just email and not the issue-#53 pending nil. Pins
+        // the JWTPayload encode/decode fidelity on the offline-restore path.
+        #expect(payload != nil)
+        #expect(payload?.sub == "42")
         #expect(payload?.email == "juana@wxyc.org")
+        #expect(payload?.role == "dj")
+        #expect(payload?.exp.timeIntervalSince1970.isFinite == true)
         // Tokens retained for a later online self-heal.
         #expect(try storage.load(.sessionToken) == "session-abc")
         #expect((try storage.load(.payload)) != nil)
@@ -676,6 +682,47 @@ struct AuthServiceTests {
         #expect((try storage.load(.payload)) == nil)
     }
 
+    @Test func restoreSessionOfflineWithCorruptedAnchorSignsOut() async throws {
+        // Issue #57 fail-closed: a non-numeric / non-finite .lastValidatedAt
+        // (storage corruption or tampering) must read as "no usable anchor" and
+        // sign out, never crash or grant grace. Covers loadLastValidatedAt's
+        // TimeInterval(raw)==nil and !isFinite branches end-to-end through
+        // restoreSession. Tokens are retained (transient, not a 401).
+        for corrupt in ["not-a-number", "inf", "infinity", ""] {
+            let session = StubRequestSession()
+            let storage = InMemoryTokenStorage()
+            try storage.save("session-abc", for: .sessionToken)
+            let payload = JWTPayload(sub: "42", email: "juana@wxyc.org", role: "dj", exp: Date().addingTimeInterval(600))
+            try storage.save(String(data: try JSONCoders.encoder.encode(payload), encoding: .utf8)!, for: .payload)
+            try storage.save(corrupt, for: .lastValidatedAt)
+            let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+            // No stub → /auth/token throws a transport error (transient).
+            await service.restoreSession()
+
+            #expect(service.state == .signedOut, "corrupt anchor \"\(corrupt)\" should fail closed")
+            #expect(try storage.load(.sessionToken) == "session-abc")
+        }
+    }
+
+    @Test func restoreSessionOfflineWithCorruptedPayloadSignsOut() async throws {
+        // Issue #57 fail-closed: a garbage .payload blob (truncated JSON or a
+        // schema-drifted shape) makes loadPersistedPayload return nil, so the
+        // policy can't grant grace — sign out rather than revive a partial
+        // identity. Tokens retained (transient).
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        try storage.save("{ this is not valid json", for: .payload)
+        try storage.save(String(Date().timeIntervalSince1970), for: .lastValidatedAt)
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        await service.restoreSession()
+
+        #expect(service.state == .signedOut)
+        #expect(try storage.load(.sessionToken) == "session-abc")
+    }
+
     @Test func signInPersistsGraceAnchorsAndRefreshUpdatesThem() async throws {
         // Issue #57: a successful sign-in persists lastValidatedAt + the durable
         // payload, and a later successful refresh advances lastValidatedAt — so
@@ -716,6 +763,49 @@ struct AuthServiceTests {
         let t2raw = try #require((try storage.load(.lastValidatedAt)))
         let t2 = try #require(TimeInterval(t2raw))
         #expect(t2 > t1)  // the grace window reset on the refresh
+    }
+
+    @Test func signInClearsAStaleIdentitysGraceAnchorsOnEntry() async throws {
+        // Issue #57 hardening: signIn must not let a *prior* DJ's grace anchors
+        // (.payload + .lastValidatedAt) survive into a new DJ's session. If DJ A
+        // is signed in (anchors = A) and signIn is then called for DJ B whose
+        // session establishes (leg 1) but whose JWT exchange fails transiently
+        // (leg 2) — so B never persists its own anchors — A's durable payload
+        // would otherwise linger alongside B's session token. A later offline
+        // restore would then pair B's bearer with A's cached identity. signIn
+        // clears the anchors at entry, so the stale identity can't be revived.
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+
+        // DJ A: full sign-in seeds anchors through the production path.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-A"],
+            body: Data("{}".utf8)
+        ))
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+        await service.signIn(username: "dj-a", password: "pw")
+        #expect((try storage.load(.payload)) != nil)
+        #expect((try storage.load(.lastValidatedAt)) != nil)
+
+        // DJ B: leg 1 establishes a new session, leg 2 (the JWT exchange) fails
+        // transiently — only one stub, so the /auth/token call throws.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-B"],
+            body: Data("{}".utf8)
+        ))
+        await service.signIn(username: "dj-b", password: "pw")
+
+        // B's session token is live, but A's anchors must be gone — not lingering.
+        #expect(try storage.load(.sessionToken) == "session-B")
+        #expect(service.state == .signedIn(payload: nil))  // pending window for B
+        #expect((try storage.load(.payload)) == nil)
+        #expect((try storage.load(.lastValidatedAt)) == nil)
     }
 
     @Test func invalidateJWTLeavesDurablePayloadIntact() async throws {

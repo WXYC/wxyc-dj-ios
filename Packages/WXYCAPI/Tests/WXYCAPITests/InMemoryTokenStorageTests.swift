@@ -34,12 +34,17 @@ struct InMemoryTokenStorageTests {
         #expect(try storage.load(.jwt) == "j")
     }
 
-    @Test func clearAllEmpties() throws {
+    @Test func clearAllEmptiesEverySlot() throws {
+        // Seed EVERY slot (via CaseIterable) and assert clearAll wipes them all,
+        // so a newly-added TokenSlot can't silently survive clearAll. This is the
+        // leave-no-trace contract the 401/sign-out paths depend on.
         let storage = InMemoryTokenStorage()
-        try storage.save("s", for: .sessionToken)
-        try storage.save("j", for: .jwt)
+        for slot in TokenSlot.allCases {
+            try storage.save("value-\(slot.rawValue)", for: slot)
+        }
         try storage.clearAll()
-        #expect(try storage.load(.sessionToken) == nil)
-        #expect(try storage.load(.jwt) == nil)
+        for slot in TokenSlot.allCases {
+            #expect(try storage.load(slot) == nil, "clearAll left \(slot) behind")
+        }
     }
 }

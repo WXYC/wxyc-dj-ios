@@ -114,12 +114,18 @@ public final class AuthService {
         } catch {
             // Transient (5xx / network / undecodable body): the session may
             // still be good, but we couldn't confirm it. Consult the offline
-            // grace policy (issue #57) — within the 30-day window since the last
-            // confirmed server contact, restore the cached identity so a
-            // returning DJ lands in the app (browsing the on-device catalog
-            // clone) instead of a LoginView they may not be able to complete
-            // offline; the JWT re-mints lazily once the network recovers. Past
-            // the window, fall through to the login screen. A network failure
+            // grace policy (issue #57). On `.signedIn` — a within-window anchor
+            // and a cached payload — restore the cached identity so a returning
+            // DJ lands in the app (browsing the on-device catalog clone) instead
+            // of a LoginView they may not be able to complete offline; for that
+            // branch `currentJWT()` re-mints the JWT lazily once the network
+            // recovers, *keeping* the already-signed-in state. On `.signedOut`
+            // — anchors absent (a legacy install, or a sign-in that only ever
+            // reached the pending window) or the window elapsed — fall through to
+            // the login screen; note this branch is NOT self-healing mid-session
+            // (a later `currentJWT()` success does not promote `.signedOut` ->
+            // `.signedIn`), so recovery is on the next relaunch (the now-online
+            // restore succeeds) or a manual sign-in. Either way a network failure
             // never clears tokens here: the next online launch's restore can
             // still recover the session (success) or terminally clear it (401).
             let decision = OfflineSessionPolicy.decide(
@@ -140,6 +146,14 @@ public final class AuthService {
     public func signIn(username: String, password: String) async {
         state = .signingIn
         lastError = nil
+
+        // Issue #57: drop any prior DJ's grace anchors before establishing a new
+        // session. They belong to the *previous* identity; if this sign-in's JWT
+        // leg fails transiently (leg 2 below), it enters the pending window
+        // WITHOUT persisting fresh anchors, so a stale `.payload` left here would
+        // later let an offline restore pair this session's bearer with the old
+        // DJ's cached identity. A successful refreshJWT re-persists both anchors.
+        clearGraceAnchors()
 
         // Leg 1 — establish the session. Any failure here is terminal: there is
         // no session to keep, so roll back and stop before the JWT exchange.
@@ -330,9 +344,22 @@ public final class AuthService {
         }
     }
 
+    /// Drop the offline grace anchors without touching the session/JWT slots.
+    /// Used at `signIn` entry so a new session can't inherit the previous DJ's
+    /// cached identity (the terminal paths clear these via `storage.clearAll()`).
+    private func clearGraceAnchors() {
+        try? storage.clear(.lastValidatedAt)
+        try? storage.clear(.payload)
+    }
+
     private func loadLastValidatedAt() -> Date? {
         guard let raw = (try? storage.load(.lastValidatedAt)) ?? nil,
-              let seconds = TimeInterval(raw) else { return nil }
+              let seconds = TimeInterval(raw),
+              // Reject a non-finite parse (`TimeInterval("inf")` succeeds): an
+              // infinite anchor would otherwise read as in-window forever. The
+              // policy guards this too, but stop it at the storage boundary.
+              seconds.isFinite
+        else { return nil }
         return Date(timeIntervalSince1970: seconds)
     }
 

@@ -100,6 +100,38 @@ struct OfflineSessionPolicyTests {
         #expect(decision == .signedOut)
     }
 
+    @Test func futureAnchorReadsAsInWindow() {
+        // Documented leniency: a `lastValidatedAt` in the future (clock skew,
+        // negative elapsed) reads as in-window. Pins the behavior the doc
+        // comment promises so a later "harden against skew" can't silently
+        // flip it to a sign-out.
+        let decision = OfflineSessionPolicy.decide(
+            hasStoredSession: true,
+            cachedPayload: Self.payload(),
+            lastValidatedAt: Self.now.addingTimeInterval(60),
+            now: Self.now,
+            window: Self.window
+        )
+        #expect(decision == .signedIn(Self.payload()))
+    }
+
+    @Test func nonFiniteAnchorSignsOut() {
+        // A corrupted/tampered anchor that parses to a non-finite Date
+        // (`Date(timeIntervalSince1970: .infinity)`) must NOT pin the DJ to
+        // signed-in forever: `now.timeIntervalSince(+inf-date)` is `-inf`, which
+        // is `< window`, so without a finite-elapsed guard the bounded window is
+        // defeated. Fail closed.
+        let farFuture = Date(timeIntervalSince1970: .infinity)
+        let decision = OfflineSessionPolicy.decide(
+            hasStoredSession: true,
+            cachedPayload: Self.payload(),
+            lastValidatedAt: farFuture,
+            now: Self.now,
+            window: Self.window
+        )
+        #expect(decision == .signedOut)
+    }
+
     @Test func defaultWindowIsThirtyDays() {
         #expect(OfflineSessionPolicy.defaultWindow == 30 * 24 * 60 * 60)
     }
