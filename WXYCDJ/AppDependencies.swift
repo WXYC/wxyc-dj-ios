@@ -47,6 +47,12 @@ final class AppDependencies {
     /// behind a multi-second catalog replace. `nil` only if the SQLite store
     /// couldn't be opened — the bin then degrades to online-only.
     let binStore: (any BinStore)?
+    /// Online-first / offline-fallback library search router (issue #58). Reads
+    /// ``connectivity`` to decide server-vs-local per request and searches the
+    /// ``catalogStore`` FTS index when offline or when the request fails.
+    /// Constructed once over the shared API client, store, and monitor; handed to
+    /// each ``SearchViewModel``.
+    let librarySearch: LibrarySearch
     /// The single shared refresh service the foreground path and both background
     /// tasks drive. **Exactly one instance** app-wide: its actor serializes all
     /// index touches (refreshes + the issue-#44 lazy thumbnail upserts) through one
@@ -122,6 +128,7 @@ final class AppDependencies {
         // store — its own DB + actor — so an offline bin read never waits behind a
         // catalog replace. Degrades to online-only (nil) if the file can't open.
         self.binStore = Self.openBinStore(at: binStoreURL)
+        self.librarySearch = LibrarySearch(api: api, catalogStore: catalogStore, connectivity: connectivity)
     }
 
     /// Open the bin snapshot store at `url`, logging and degrading to `nil` on
@@ -152,6 +159,7 @@ final class AppDependencies {
         self.catalogStore = catalogStore
         self.catalogRefreshService = nil
         self.binStore = nil
+        self.librarySearch = LibrarySearch(api: api, catalogStore: catalogStore, connectivity: connectivity)
     }
 
     /// Build the configuration + auth + API client shared by every initializer.

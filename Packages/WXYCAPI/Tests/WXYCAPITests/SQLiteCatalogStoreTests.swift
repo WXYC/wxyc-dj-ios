@@ -167,4 +167,130 @@ struct SQLiteCatalogStoreTests {
             #expect(try await store.lastModified() == nil)
         }
     }
+
+    // MARK: Full-text search (issue #58)
+
+    /// Nilüfer Yanya — the diacritic-bearing canonical name (id 300). The
+    /// `remove_diacritics 2` tokenizer must fold "Nilüfer" so a plain-ASCII
+    /// "nilufer" query still matches.
+    static func niluferRow() -> CatalogRow {
+        CatalogRow(
+            id: 300, artistName: "Nilüfer Yanya", albumTitle: "Painless",
+            codeLetters: "YAN", codeNumber: 2, codeArtistNumber: 1,
+            label: "ATO Records", genreName: "Rock", formatName: "LP",
+            onStreaming: true, plays: 8, artworkURL: nil,
+            rotationBin: nil, rotationKillDate: nil
+        )
+    }
+
+    /// Chuquimamani-Condori (id 400) with a call number whose letters ("ZZQ")
+    /// appear in neither the artist nor the album, so a "zzq" query exercises the
+    /// call_number index column unambiguously.
+    static func chuquiRow() -> CatalogRow {
+        CatalogRow(
+            id: 400, artistName: "Chuquimamani-Condori", albumTitle: "Edits",
+            codeLetters: "ZZQ", codeNumber: 3, codeArtistNumber: 1,
+            label: "self-released", genreName: "Electronic", formatName: "LP",
+            onStreaming: false, plays: 5, artworkURL: nil,
+            rotationBin: nil, rotationKillDate: nil
+        )
+    }
+
+    @Test func searchMatchesByArtistPrefix() async throws {
+        let rows = try Self.fixtureRows()
+        try await Self.withStore { store in
+            try await store.replace(rows: rows, lastModified: nil)
+            let hits = try await store.search(query: "juana", limit: 25)
+            #expect(hits.map(\.id) == [100])
+        }
+    }
+
+    @Test func searchMatchesByAlbumPrefix() async throws {
+        let rows = try Self.fixtureRows()
+        try await Self.withStore { store in
+            try await store.replace(rows: rows, lastModified: nil)
+            // "On Your Own Love Again" → token "love" matches the album column.
+            let hits = try await store.search(query: "love", limit: 25)
+            #expect(hits.map(\.id) == [200])
+        }
+    }
+
+    @Test func searchIsDiacriticInsensitive() async throws {
+        let rows = try Self.fixtureRows() + [Self.niluferRow()]
+        try await Self.withStore { store in
+            try await store.replace(rows: rows, lastModified: nil)
+            let hits = try await store.search(query: "nilufer", limit: 25)
+            #expect(hits.map(\.id) == [300])
+        }
+    }
+
+    @Test func searchMatchesByCallNumber() async throws {
+        let rows = try Self.fixtureRows() + [Self.chuquiRow()]
+        try await Self.withStore { store in
+            try await store.replace(rows: rows, lastModified: nil)
+            let hits = try await store.search(query: "zzq", limit: 25)
+            #expect(hits.map(\.id) == [400])
+        }
+    }
+
+    @Test func searchReturnsFullRow() async throws {
+        let rows = try Self.fixtureRows()
+        try await Self.withStore { store in
+            try await store.replace(rows: rows, lastModified: nil)
+            let hits = try await store.search(query: "juana", limit: 25)
+            // The match loads the stored BLOB, not just the indexed text — the
+            // full CatalogRow round-trips so the caller can build a result.
+            #expect(hits.first == rows[0])
+        }
+    }
+
+    @Test func emptyQuerySearchReturnsEmpty() async throws {
+        let rows = try Self.fixtureRows()
+        try await Self.withStore { store in
+            try await store.replace(rows: rows, lastModified: nil)
+            #expect(try await store.search(query: "   ", limit: 25).isEmpty)
+            #expect(try await store.search(query: "", limit: 25).isEmpty)
+        }
+    }
+
+    @Test func punctuationOnlyQueryDoesNotThrowAndReturnsEmpty() async throws {
+        let rows = try Self.fixtureRows()
+        try await Self.withStore { store in
+            try await store.replace(rows: rows, lastModified: nil)
+            // The query builder quotes/escapes punctuation, so it can never
+            // inject MATCH syntax — a punctuation-only query is a clean miss.
+            #expect(try await store.search(query: "& \"", limit: 25).isEmpty)
+        }
+    }
+
+    @Test func searchRespectsLimit() async throws {
+        // Two rows whose albums both contain "love"; limit 1 returns one.
+        let pratt = try Self.fixtureRows()[1]   // "On Your Own Love Again"
+        let lover = CatalogRow(
+            id: 500, artistName: "Stereolab", albumTitle: "Love Theme",
+            codeLetters: "STE", codeNumber: 1, codeArtistNumber: 1,
+            label: "Duophonic", genreName: "Electronic", formatName: "LP",
+            onStreaming: true, plays: 20, artworkURL: nil,
+            rotationBin: nil, rotationKillDate: nil
+        )
+        try await Self.withStore { store in
+            try await store.replace(rows: [pratt, lover], lastModified: nil)
+            #expect(try await store.search(query: "love", limit: 2).count == 2)
+            #expect(try await store.search(query: "love", limit: 1).count == 1)
+        }
+    }
+
+    @Test func replaceRebuildsIndexSoRemovedRowStopsMatching() async throws {
+        let rows = try Self.fixtureRows()   // Juana (100), Jessica Pratt (200)
+        try await Self.withStore { store in
+            try await store.replace(rows: rows, lastModified: nil)
+            #expect(try await store.search(query: "juana", limit: 25).map(\.id) == [100])
+
+            // Drop Juana; the FTS index is rebuilt in the same transaction, so
+            // the stale term can no longer match.
+            try await store.replace(rows: [rows[1]], lastModified: nil)
+            #expect(try await store.search(query: "juana", limit: 25).isEmpty)
+            #expect(try await store.search(query: "pratt", limit: 25).map(\.id) == [200])
+        }
+    }
 }

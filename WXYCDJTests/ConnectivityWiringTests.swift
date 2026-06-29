@@ -70,6 +70,7 @@ private actor FlakyWatermarkStore: CatalogStore {
     func row(id: Int) async throws -> CatalogRow? { nil }
     func count() async throws -> Int { 0 }
     func replace(rows: [CatalogRow], lastModified: String?) async throws { watermark = lastModified }
+    func search(query: String, limit: Int) async throws -> [CatalogRow] { [] }
 }
 
 @Suite("AppDependencies.lastCatalogSyncText")
