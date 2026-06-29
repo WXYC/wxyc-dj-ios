@@ -170,6 +170,29 @@ struct BinViewModelTests {
         #expect(viewModel.state == .loading)
     }
 
+    @Test func coldLaunchEmptyPersistedOfflineShowsEmptyNotError() async throws {
+        let (client, session) = try await SignedInClient.make()
+        // A previously-persisted *empty* bin. The store's snapshot-present marker
+        // makes this `[]` (authoritative emptiness), distinct from a never-written
+        // `nil` (modelled by SpyBinStore(initial: []) vs SpyBinStore()).
+        let store = SpyBinStore(initial: [])
+        let viewModel = BinViewModel(api: client, binStore: store)
+
+        // Cold launch loads the empty-but-present snapshot: authoritative
+        // emptiness, so `.loaded` (BinView renders the "Bin is empty" tray) — not
+        // `.loading`, and definitely not `.error`.
+        await viewModel.loadSnapshot()
+        #expect(viewModel.state == .loaded)
+        #expect(viewModel.entries.isEmpty)
+
+        // Offline, the refresh fails: a known-empty bin keeps showing the empty
+        // state instead of regressing to "Couldn't load bin".
+        session.enqueue(StubRequestSession.Stub(statusCode: 500, body: Data(#"{"error":"boom"}"#.utf8)))
+        await viewModel.refresh()
+        #expect(viewModel.state == .loaded)
+        #expect(viewModel.entries.isEmpty)
+    }
+
     /// Two WXYC-representative bin entries modelling a previously-persisted
     /// snapshot. Juana added 2025-11-01, Pratt 2025-11-02, so a newest-first sort
     /// puts Pratt first — mirroring the `djBinResponseJSON` fixture's ordering.
