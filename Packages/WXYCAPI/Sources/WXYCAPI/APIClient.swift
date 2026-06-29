@@ -151,30 +151,42 @@ public final class APIClient: Sendable {
         _ = try await sendRaw(path: "/djs/bin", method: "DELETE", query: items, body: nil)
     }
 
-    /// POST `{authBaseURL}/device/verify` — authorize (or deny) a pending RFC
-    /// 8628 device authorization the browser initiated (ADR 0002). Carries the
-    /// DJ's current JWT via the standard `Authorization: Bearer …` chain (incl.
-    /// the one-shot 401-retry). The body is the `user_code` parsed out of the
-    /// scanned `dj.wxyc.org/auth/device?user_code=…` URL plus an
-    /// `approve`/`deny` action.
+    /// POST `{authBaseURL}/device/approve` — authorize a pending RFC 8628
+    /// device authorization the browser initiated (ADR 0002 / api.yaml issue
+    /// #195). Carries the DJ's current JWT via the standard
+    /// `Authorization: Bearer …` chain (incl. the one-shot 401-retry). Body is
+    /// the camelCase `userCode` parsed out of the scanned
+    /// `dj.wxyc.org/auth/device?user_code=…` URL.
     ///
-    /// Returns silently on a 2xx accept. A 400 carrying an `error` body —
-    /// `access_denied`, `expired_token`, `invalid_grant` — maps to
-    /// ``QRSignInError/accessDenied(reason:)``; any other non-2xx surfaces as
-    /// ``QRSignInError/transport`` wrapping the underlying ``APIError``.
+    /// Returns on a 2xx accept. Typed failure codes from the
+    /// ``DeviceAuthActionErrorCode`` enum map to ``QRSignInError``:
+    /// `400 expired_token` → `.expiredCode`, `400 invalid_request` →
+    /// `.invalidCode`, `401 unauthorized` → `.notSignedIn`,
+    /// `403 access_denied` → `.accessDenied` (ownership or role gate — server
+    /// is the source of truth even when the proactive client role gate
+    /// already passed). Anything else surfaces as ``QRSignInError/transport``.
     ///
-    /// The server is the source of truth for the role gate, so a `dj`-or-above
-    /// JWT may still be refused server-side (a freshly-downgraded role, a
-    /// stale token) — handle the throw the same way the proactive client gate
-    /// renders the prototype's denial card.
-    ///
-    /// Targets the **auth** base URL, not the API base URL (better-auth's
-    /// device-authorization plugin is mounted under `/auth/device/*`).
-    public func verifyDeviceCode(userCode: String, approve: Bool) async throws {
-        let body = DeviceVerifyRequest(
-            userCode: userCode,
-            action: approve ? .approve : .deny
-        )
+    /// Targets the **auth** base URL — better-auth's device-authorization
+    /// plugin is mounted under `/auth/device/*`, not the data API tree.
+    @discardableResult
+    public func approveDevice(userCode: String) async throws -> Bool {
+        try await sendDeviceAction(path: "device/approve", userCode: userCode)
+    }
+
+    /// POST `{authBaseURL}/device/deny` — reject a pending device
+    /// authorization. Same transport / error mapping as ``approveDevice``;
+    /// not role-gated server-side (ownership check only).
+    @discardableResult
+    public func denyDevice(userCode: String) async throws -> Bool {
+        try await sendDeviceAction(path: "device/deny", userCode: userCode)
+    }
+
+    /// Shared implementation for ``approveDevice`` and ``denyDevice``: encode
+    /// the `userCode` body, POST it to `path` against the auth base URL,
+    /// decode `{ success }` on success, or map a typed
+    /// ``DeviceAuthActionErrorCode`` to the right ``QRSignInError`` case.
+    private func sendDeviceAction(path: String, userCode: String) async throws -> Bool {
+        let body = DeviceAuthActionRequest(userCode: userCode)
         let encoded: Data
         do {
             encoded = try JSONCoders.encoder.encode(body)
@@ -183,24 +195,36 @@ public final class APIClient: Sendable {
         }
         do {
             let (data, http) = try await performAuthBaseURL(
-                path: "device/verify",
+                path: path,
                 method: "POST",
                 body: encoded
             )
-            if (200..<300).contains(http.statusCode) { return }
-            if http.statusCode == 400,
-               let parsed = try? JSONCoders.decoder.decode(DeviceVerifyErrorBody.self, from: data),
-               !parsed.error.isEmpty {
-                throw QRSignInError.accessDenied(reason: parsed.errorDescription ?? "")
+            if (200..<300).contains(http.statusCode) {
+                let decoded = try JSONCoders.decoder.decode(DeviceAuthActionResponse.self, from: data)
+                return decoded.success
+            }
+            // Try to surface the typed error code per the api.yaml envelope.
+            if let parsed = try? JSONCoders.decoder.decode(DeviceAuthActionErrorBody.self, from: data),
+               let code = DeviceAuthActionErrorCode(rawValue: parsed.error) {
+                let reason = parsed.errorDescription ?? ""
+                switch code {
+                case .accessDenied: throw QRSignInError.accessDenied(reason: reason)
+                case .unauthorized: throw QRSignInError.notSignedIn
+                case .expiredToken: throw QRSignInError.expiredCode(reason: reason)
+                case .invalidRequest: throw QRSignInError.invalidCode(reason: reason)
+                }
             }
             if http.statusCode == 401 {
-                throw QRSignInError.transport(.unauthorized)
+                throw QRSignInError.notSignedIn
             }
             let message = (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data))?.message
             throw QRSignInError.transport(.http(status: http.statusCode, message: message))
         } catch let error as QRSignInError {
             throw error
         } catch let error as APIError {
+            // Map .unauthorized to .notSignedIn so callers see the same case
+            // whether the 401 came from the transport layer or the body.
+            if case .unauthorized = error { throw QRSignInError.notSignedIn }
             throw QRSignInError.transport(error)
         } catch {
             throw QRSignInError.transport(.network(error.localizedDescription))

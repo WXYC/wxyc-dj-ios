@@ -80,7 +80,8 @@ All endpoints live in Backend-Service (`apps/backend/routes/`) except the auth s
 | Remove from bin | DELETE | `/djs/bin?album_id=` | JWT |
 | Album metadata (LML) | GET | `/proxy/metadata/album?artistName=&releaseTitle=` | JWT |
 | Bulk catalog export | GET | `/library/catalog` (conditional GET, gzipped NDJSON) | JWT |
-| Authorize browser sign-in | POST | `/auth/device/verify` (ADR 0002 — RFC 8628) | JWT |
+| Approve a browser sign-in | POST | `/auth/device/approve` (ADR 0002 — RFC 8628) | JWT |
+| Deny a browser sign-in | POST | `/auth/device/deny` | JWT |
 
 The bin endpoints derive the DJ from the JWT's `sub` claim, so the client never sends `dj_id`. The JWT is short-lived; `AuthService.currentJWT()` refreshes via `/auth/token` automatically and `APIClient` retries once on a 401.
 
@@ -137,9 +138,11 @@ A DJ's most common Spotlight query is an **artist name** (also label and shelf c
 
 ### QR sign-in for the shared control-room computer ([ADR 0002](docs/adr/0002-qr-device-authorization-shared-computer-signin.md))
 
-The studio computer is shared and the keyboard is awkward and shoulder-surfable. The dj.wxyc.org browser shows a QR pointing at `https://dj.wxyc.org/auth/device?user_code=…`; tapping the account icon in the iOS app's toolbar → "Scan QR to sign in browser" opens an in-app scanner, parses the `user_code`, runs the proactive client-side role gate (`dj`+ only — server is still source of truth), drops an approval card, and after `LAContext.evaluatePolicy(.deviceOwnerAuthentication, …)` POSTs `/auth/device/verify` to mint a 12-hour browser session.
+The studio computer is shared and the keyboard is awkward and shoulder-surfable. The dj.wxyc.org browser shows a QR pointing at `https://dj.wxyc.org/auth/device?user_code=…`; tapping the account icon in the iOS app's toolbar → "Scan QR to sign in browser" opens an in-app scanner, parses the `user_code`, runs the proactive client-side role gate (`dj`+ only — server is still source of truth), drops an approval card, and after `LAContext.evaluatePolicy(.deviceOwnerAuthentication, …)` POSTs `/auth/device/approve` (or `/auth/device/deny` for a reject) to mint a 12-hour browser session.
 
-The menu entry is gated by `WXYCQRSignInEnabled` in the bundle Info.plist — defaults to `false` and stays off until Backend-Service ships the verify endpoint. Flipping the key in `project.yml` and rebuilding is the entire rollout. See `WXYCDJ/QRSignIn/` for the scanner + flow view + view model and `Packages/WXYCAPI/Sources/WXYCAPI/Auth/QRDeviceVerify.swift` for the typed error / DTO surface.
+Wire shape (matches `wxyc-shared/api.yaml` issue #195): request body `{ "userCode": "DXFP-92QR" }` (camelCase — intentionally asymmetric with the snake_case `GET /auth/device?user_code=…` status lookup), success body `{ "success": true }`, error body `{ "error": "invalid_request" | "expired_token" | "unauthorized" | "access_denied", "error_description": "…" }`. The four error codes route to typed `QRSignInError` cases (`.invalidCode`, `.expiredCode`, `.notSignedIn`, `.accessDenied`); anything else wraps as `.transport(APIError)`.
+
+The menu entry is gated by `WXYCQRSignInEnabled` in the bundle Info.plist — defaults to `false` and stays off until Backend-Service ships the approve/deny endpoints. Flipping the key in `project.yml` and rebuilding is the entire rollout. See `WXYCDJ/QRSignIn/` for the scanner + flow view + view model and `Packages/WXYCAPI/Sources/WXYCAPI/Auth/QRDeviceVerify.swift` for the typed error / DTO surface.
 
 ### Spotlight deep link
 

@@ -42,8 +42,11 @@ struct QRSignInViewModelTests {
         let (api, auth, session) = try await Self.makeSignedIn()
         let biometrics = StubBiometricAuthenticator()
         biometrics.enqueue(.success(true))
-        // Verify gets a 200.
-        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data()))
+        // /auth/device/approve gets a 200 with the api.yaml { success } body.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"success":true}"#.utf8)
+        ))
 
         let vm = QRSignInViewModel(api: api, authService: auth, biometrics: biometrics)
         #expect(vm.state == .scanning)
@@ -54,6 +57,7 @@ struct QRSignInViewModelTests {
         await vm.approve()
         #expect(vm.state == .succeeded)
         #expect(biometrics.callCount == 1)
+        #expect(session.recordedRequests.last?.url?.path == "/auth/device/approve")
     }
 
     @Test func roleGatedMember() async throws {
@@ -72,11 +76,12 @@ struct QRSignInViewModelTests {
         let (api, auth, session) = try await Self.makeSignedIn()
         let biometrics = StubBiometricAuthenticator()
         biometrics.enqueue(.success(true))
-        // Verify returns 400 access_denied.
+        // Approve returns 403 access_denied — the auth-service role gate
+        // catches a freshly-downgraded role that passed the client-side gate.
         session.enqueue(StubRequestSession.Stub(
-            statusCode: 400,
+            statusCode: 403,
             headers: ["Content-Type": "application/json"],
-            body: Data(#"{"error":"access_denied","error_description":"code expired"}"#.utf8)
+            body: Data(#"{"error":"access_denied","error_description":"role lost"}"#.utf8)
         ))
 
         let vm = QRSignInViewModel(api: api, authService: auth, biometrics: biometrics)
@@ -84,7 +89,7 @@ struct QRSignInViewModelTests {
         await vm.approve()
 
         if case .error(let message) = vm.state {
-            #expect(message == "code expired")
+            #expect(message == "role lost")
         } else {
             Issue.record("expected .error; got \(vm.state)")
         }
@@ -100,27 +105,33 @@ struct QRSignInViewModelTests {
         await vm.approve()
 
         #expect(vm.state == .approving(userCode: "DXFP-92QR"))
-        // No verify was issued — the recorded list contains only the
-        // restoreSession refresh.
-        #expect(session.recordedRequests.allSatisfy { $0.url?.path != "/auth/device/verify" })
+        // No approve/deny was issued — the recorded list contains only the
+        // restoreSession JWT refresh.
+        #expect(session.recordedRequests.allSatisfy { request in
+            let path = request.url?.path ?? ""
+            return path != "/auth/device/approve" && path != "/auth/device/deny"
+        })
     }
 
     @Test func rejectSendsDenyAction() async throws {
         let (api, auth, session) = try await Self.makeSignedIn()
         let biometrics = StubBiometricAuthenticator()
-        // Verify returns 200 for the deny.
-        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data()))
+        // /auth/device/deny returns 200 with the api.yaml { success } body.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"success":true}"#.utf8)
+        ))
 
         let vm = QRSignInViewModel(api: api, authService: auth, biometrics: biometrics)
         vm.handleScannedPayload(Self.payload)
         await vm.reject()
 
         #expect(vm.state == .rejected)
-        let verifyRequest = try #require(session.recordedRequests.last)
-        #expect(verifyRequest.url?.path == "/auth/device/verify")
-        let body = try #require(verifyRequest.httpBody)
+        let denyRequest = try #require(session.recordedRequests.last)
+        #expect(denyRequest.url?.path == "/auth/device/deny")
+        let body = try #require(denyRequest.httpBody)
         let decoded = try JSONSerialization.jsonObject(with: body) as? [String: String]
-        #expect(decoded?["action"] == "deny")
+        #expect(decoded?["userCode"] == "DXFP-92QR")
         // No biometric on reject.
         #expect(biometrics.callCount == 0)
     }

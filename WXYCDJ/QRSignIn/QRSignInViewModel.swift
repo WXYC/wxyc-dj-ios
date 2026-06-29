@@ -156,8 +156,13 @@ final class QRSignInViewModel {
     private func sendVerify(userCode: String, approve: Bool) async {
         state = .verifying(userCode: userCode, approve: approve)
         do {
-            try await api.verifyDeviceCode(userCode: userCode, approve: approve)
-            state = approve ? .succeeded : .rejected
+            if approve {
+                _ = try await api.approveDevice(userCode: userCode)
+                state = .succeeded
+            } else {
+                _ = try await api.denyDevice(userCode: userCode)
+                state = .rejected
+            }
         } catch let error as QRSignInError {
             state = .error(message: error.localizedMessage)
         } catch let error as APIError {
