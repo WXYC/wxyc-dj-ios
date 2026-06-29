@@ -22,6 +22,7 @@
 //
 
 import Foundation
+import os
 import Testing
 @testable import WXYCAPI
 
@@ -29,6 +30,16 @@ import Testing
 @MainActor
 struct AuthServiceTests {
     private static let config = WXYCAPIConfiguration.localDevelopment
+
+    /// Thread-safe sink for the `AuthService` connectivity outcome hook (#71):
+    /// records each `true`/`false` transport result in order. `Sendable`
+    /// (lock-backed) so it can be captured in the `@Sendable` outcome closure —
+    /// the same shape `APIClientTests` uses for `APIClient.onOutcome`.
+    private final class OutcomeRecorder: Sendable {
+        private let storage = OSAllocatedUnfairLock<[Bool]>(initialState: [])
+        var values: [Bool] { storage.withLock { $0 } }
+        func record(_ success: Bool) { storage.withLock { $0.append(success) } }
+    }
 
     @Test func signInSuccessReachesSignedIn() async throws {
         let session = StubRequestSession()
@@ -958,5 +969,162 @@ struct AuthServiceTests {
         _ = try await service.currentJWT()
         // restoreSession used 1 request; the cache must have suppressed any further.
         #expect(session.recordedRequests.count == 1)
+    }
+
+    // MARK: - Connectivity outcome hook (issue #71)
+
+    @Test func refreshTransportThrowReportsOfflineOutcome() async throws {
+        // A `/auth/token` exchange that fails on the transport (no network /
+        // captive portal) must feed the connectivity hook a `false` — the gap
+        // #71 closes, since this throw happens inside currentJWT()/refreshJWT(),
+        // before any APIClient.fire() could report it. Driven via restoreSession
+        // so the refresh leg is the *only* transport call (no sign-in handshake
+        // ahead of it to pollute the recorder).
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let recorder = OutcomeRecorder()
+        let service = AuthService(
+            configuration: Self.config,
+            storage: storage,
+            session: session,
+            onOutcome: { recorder.record($0) }
+        )
+
+        session.enqueue(failure: URLError(.notConnectedToInternet))
+        await service.restoreSession()
+
+        #expect(recorder.values == [false])
+    }
+
+    @Test func refreshUnauthorizedReportsOnlineOutcome() async throws {
+        // A `401` on `/auth/token` is terminal for the *session* (the bearer was
+        // rejected), but the server still answered — so for *connectivity* it's a
+        // positive outcome: we reached the backend. The hook must report `true`,
+        // mirroring APIClient.fire()'s "any HTTP status = reachable" rule, even as
+        // restoreSession() clears the dead session and lands on .signedOut.
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let recorder = OutcomeRecorder()
+        let service = AuthService(
+            configuration: Self.config,
+            storage: storage,
+            session: session,
+            onOutcome: { recorder.record($0) }
+        )
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 401))
+        await service.restoreSession()
+
+        #expect(recorder.values == [true])
+        #expect(service.state == .signedOut)   // terminal arm still fired
+    }
+
+    @Test func refreshSuccessReportsOnlineOutcome() async throws {
+        // The happy path: a `200` JWT exchange is a confirmed server contact, so
+        // the hook reports `true` (and the DJ is signed in).
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let recorder = OutcomeRecorder()
+        let service = AuthService(
+            configuration: Self.config,
+            storage: storage,
+            session: session,
+            onOutcome: { recorder.record($0) }
+        )
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await service.restoreSession()
+
+        #expect(recorder.values == [true])
+        #expect(service.isSignedIn)
+    }
+
+    @Test func signInTransportThrowReportsOfflineOutcome() async throws {
+        // Issue #71 wraps the transport generally, so the sign-in leg
+        // (`/auth/sign-in/username`) feeds connectivity too: a foreground sign-in
+        // that can't reach the server is just as much an offline signal as a
+        // refresh failure. The thrown URLError reports `false`; the auth state
+        // machine is unchanged (terminal leg-1 failure -> .signedOut, no trace).
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let recorder = OutcomeRecorder()
+        let service = AuthService(
+            configuration: Self.config,
+            storage: storage,
+            session: session,
+            onOutcome: { recorder.record($0) }
+        )
+
+        session.enqueue(failure: URLError(.notConnectedToInternet))
+        await service.signIn(username: "dj", password: "pw")
+
+        #expect(recorder.values == [false])
+        #expect(service.state == .signedOut)
+    }
+
+    @Test func signOutTransportReportsOnlineOutcome() async throws {
+        // The best-effort `/auth/sign-out` POST is also routed through the hook:
+        // a server that answered the sign-out is reachable, so it reports `true`.
+        // (The sign-out outcome is the *second* value — the first is the
+        // restoreSession success that put us in a signed-in state to sign out of.)
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let recorder = OutcomeRecorder()
+        let service = AuthService(
+            configuration: Self.config,
+            storage: storage,
+            session: session,
+            onOutcome: { recorder.record($0) }
+        )
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await service.restoreSession()
+        #expect(recorder.values == [true])   // restore leg
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200))
+        await service.signOut()
+
+        #expect(recorder.values == [true, true])   // + sign-out leg
+        #expect(service.state == .signedOut)
+    }
+
+    @Test(arguments: [URLError(.cancelled) as any Error & Sendable, CancellationError()])
+    func refreshCancellationDoesNotReportAnOutcome(cancellation: any Error & Sendable) async throws {
+        // A cancelled Task is a deliberate abandonment, not "offline": the auth
+        // transport is reachable from cancellable call sites — the search debounce
+        // (`searchTask.cancel()`) and the background-refresh expiration handler
+        // (`work.cancel()`) both cancel a JWT-refresh leg in flight — so it must
+        // NOT be mistaken for evidence the server is unreachable. Covers both
+        // forms `send()` treats as a cancellation: URLSession's
+        // `URLError.cancelled` and a raw `CancellationError`.
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let recorder = OutcomeRecorder()
+        let service = AuthService(
+            configuration: Self.config,
+            storage: storage,
+            session: session,
+            onOutcome: { recorder.record($0) }
+        )
+
+        session.enqueue(failure: cancellation)
+        await service.restoreSession()
+
+        #expect(recorder.values == [])   // no connectivity signal
+        // The error still propagated to restoreSession's transient arm (it was
+        // rethrown, not swallowed): with no grace anchors persisted, that arm
+        // lands `.signedOut`.
+        #expect(service.state == .signedOut)
     }
 }
