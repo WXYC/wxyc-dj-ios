@@ -46,6 +46,13 @@ public actor SQLiteCatalogStore: CatalogStore {
     private let connection: Connection
     private var db: OpaquePointer { connection.db }
 
+    /// Set once ``ensureSearchIndex()`` has confirmed the FTS index covers the
+    /// catalog rows for this connection (issue #58). A latch, not a gate: once
+    /// true, the cheap per-search reconciliation check is skipped, because every
+    /// ``replace(rows:lastModified:)`` rebuilds the index alongside the rows and
+    /// so preserves the invariant.
+    private var searchIndexEnsured = false
+
     /// Open (creating if needed) the catalog database at `url` and ensure the
     /// schema exists. Throws ``CatalogStoreError/open(_:)`` if the file can't be
     /// opened.
@@ -161,6 +168,7 @@ public actor SQLiteCatalogStore: CatalogStore {
 
     public func search(query: String, limit: Int) throws -> [CatalogRow] {
         guard let match = FTSQuery.match(for: query) else { return [] }
+        try ensureSearchIndex()
         var ids: [Int] = []
         let stmt = try Self.prepare(
             db, "SELECT rowid FROM catalog_fts WHERE catalog_fts MATCH ? ORDER BY rank LIMIT ?;"
@@ -191,6 +199,66 @@ public actor SQLiteCatalogStore: CatalogStore {
     }
 
     // MARK: Private SQLite helpers
+
+    /// Backfill the FTS index from the existing catalog rows when it doesn't yet
+    /// cover them — the one-time migration for installs that cloned the catalog
+    /// before issue #58 added the index. Such a store has a populated `catalog`
+    /// table but an empty `catalog_fts` (the `CREATE … IF NOT EXISTS` in `init`
+    /// makes the table, but only ``replace(rows:lastModified:)`` — which runs on a
+    /// `200` — fills it, so a `304` refresh would otherwise leave offline search
+    /// returning nothing indefinitely). It rebuilds the index from the rows
+    /// without touching the watermark, so the conditional-GET path is undisturbed.
+    ///
+    /// Steady state pays only two `COUNT`s (the index and rows are rebuilt
+    /// together by `replace`, so they always match), then latches; a fresh/empty
+    /// store is a no-op. Runs inside the actor (off the main thread) and only when
+    /// offline search is actually exercised, so it never delays launch.
+    private func ensureSearchIndex() throws {
+        guard !searchIndexEnsured else { return }
+        let db = connection.db
+        let catalogCount = try Self.scalarInt(db, "SELECT COUNT(*) FROM catalog;")
+        let indexCount = try Self.scalarInt(db, "SELECT COUNT(*) FROM catalog_fts;")
+        if catalogCount != indexCount {
+            let rows = try Self.allRows(db)
+            try Self.exec(db, "BEGIN IMMEDIATE;")
+            do {
+                try Self.rebuildSearchIndex(db, rows: rows)
+                try Self.exec(db, "COMMIT;")
+            } catch {
+                try? Self.exec(db, "ROLLBACK;")
+                throw error
+            }
+        }
+        searchIndexEnsured = true
+    }
+
+    /// Run a single-column, single-row integer query (e.g. a `COUNT(*)`).
+    private static func scalarInt(_ db: OpaquePointer, _ sql: String) throws -> Int {
+        let stmt = try prepare(db, sql)
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { throw error(db, "step scalar \(sql.prefix(40))") }
+        return Int(sqlite3_column_int64(stmt, 0))
+    }
+
+    /// Decode every stored `CatalogRow` BLOB. Used by the FTS backfill — the
+    /// `catalog` table is the source of truth, and the searchable text (artist /
+    /// album / call number) is only recoverable by decoding the rows.
+    private static func allRows(_ db: OpaquePointer) throws -> [CatalogRow] {
+        let stmt = try prepare(db, "SELECT row FROM catalog;")
+        defer { sqlite3_finalize(stmt) }
+        var rows: [CatalogRow] = []
+        loop: while true {
+            switch sqlite3_step(stmt) {
+            case SQLITE_ROW:
+                if let row = try decodeRow(stmt) { rows.append(row) }
+            case SQLITE_DONE:
+                break loop
+            default:
+                throw error(db, "step all rows")
+            }
+        }
+        return rows
+    }
 
     /// Rebuild the contentless FTS index from `rows`, inside the caller's open
     /// transaction. A `content=''` fts5 table rejects `DELETE FROM`, so the whole

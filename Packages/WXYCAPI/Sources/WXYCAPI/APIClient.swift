@@ -304,6 +304,19 @@ public final class APIClient: Sendable {
             // connection is up regardless of what the response says.
             onOutcome?(true)
             return result
+        } catch let error as URLError where error.code == .cancelled {
+            // A cancelled request says nothing about connectivity — the caller
+            // superseded the call (the issue-#58 search debounce cancels the
+            // in-flight task on every keystroke), it didn't fail to reach the
+            // server. Reporting offline here would wrongly route later searches
+            // to the local clone while the device is online, and a local search
+            // issues no request, so nothing would restore the flag. Surface the
+            // failure without latching the monitor.
+            throw APIError.network(error.localizedDescription)
+        } catch is CancellationError {
+            // Same rationale for structured-concurrency cancellation surfaced as
+            // CancellationError (a RequestSession may map it that way).
+            throw APIError.network("Request cancelled")
         } catch {
             // A thrown error from the transport means we never reached the
             // server (no network, captive portal, DNS, timeout): report offline.

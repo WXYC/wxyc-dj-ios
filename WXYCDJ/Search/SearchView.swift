@@ -76,7 +76,19 @@ struct SearchView: View {
                 }
             }
         case .empty:
-            ContentUnavailableView.search(text: viewModel.query)
+            if viewModel.source == .local {
+                // The offline FTS clone (or a failed live request falling back to
+                // it) found nothing. Frame it as the saved library so a miss here
+                // doesn't read as a confirmed "not in the WXYC library" — the live
+                // catalog wasn't consulted (issue #58).
+                ContentUnavailableView {
+                    Label("No saved matches", systemImage: "wifi.slash")
+                } description: {
+                    Text("Nothing in the saved library matches \u{201C}\(viewModel.query)\u{201D}.")
+                }
+            } else {
+                ContentUnavailableView.search(text: viewModel.query)
+            }
         case .results:
             List {
                 // When the offline FTS clone served these results, lead with a
