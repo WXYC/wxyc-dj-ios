@@ -26,6 +26,17 @@ final class AppDependencies {
     let configuration: WXYCAPIConfiguration
     let authService: AuthService
     let api: APIClient
+    /// Biometric authenticator used by the QR sign-in flow (ADR 0002). Built
+    /// over `LAContext.evaluatePolicy(.deviceOwnerAuthentication, ...)` by
+    /// default; tests inject a stub via the dedicated initializer. Holding it
+    /// on the composition root keeps view models free of any
+    /// LocalAuthentication import.
+    let biometrics: any BiometricAuthenticator
+    /// Feature gate for the QR-sign-in menu entry (ADR 0002). Reads
+    /// `WXYCQRSignInEnabled` from the Info.plist (`false` until the
+    /// Backend-Service `/auth/device/verify` endpoint ships); flipping the
+    /// key on rebuild is the entire deployment switch.
+    let qrSignInEnabled: Bool
     /// App-wide online/offline signal (issue #56), corrected by real transport
     /// outcomes from both the ``APIClient`` hook and the ``AuthService`` hook
     /// (issue #71 — so a JWT-refresh-leg failure that never reaches `APIClient`
@@ -80,18 +91,32 @@ final class AppDependencies {
         )
     }
 
+    /// Read the QR-sign-in feature gate from the bundle. Default is `false`
+    /// (the v1 ship state) — a missing or non-bool value also reads as off,
+    /// so an upstream typo never silently enables the feature.
+    private static func resolveQRSignInEnabled() -> Bool {
+        Bundle.main.object(forInfoDictionaryKey: "WXYCQRSignInEnabled") as? Bool ?? false
+    }
+
     /// Designated initializer. `catalogStoreURL` is the SQLite clone's path and
     /// `binStoreURL` the bin snapshot's path (both injected in tests; the
     /// defaults point under Application Support). A `nil` URL, or a store that
     /// fails to open, leaves that feature inert. `binStoreURL` defaults to `nil`
     /// so existing catalog-only test call sites don't open a real bin store.
-    init(catalogStoreURL: URL?, binStoreURL: URL? = nil) {
+    init(
+        catalogStoreURL: URL?,
+        binStoreURL: URL? = nil,
+        biometrics: any BiometricAuthenticator = LocalAuthenticationAuthenticator(),
+        qrSignInEnabled: Bool? = nil
+    ) {
         let connectivity = ConnectivityMonitor()
         self.connectivity = connectivity
         let (configuration, authService, api) = Self.makeCore(onOutcome: Self.outcomeHandler(for: connectivity))
         self.configuration = configuration
         self.authService = authService
         self.api = api
+        self.biometrics = biometrics
+        self.qrSignInEnabled = qrSignInEnabled ?? Self.resolveQRSignInEnabled()
 
         // Catalog clone + Spotlight index. Store construction can fail (disk
         // unwritable); degrade to no catalog features rather than crash. One
@@ -151,13 +176,19 @@ final class AppDependencies {
     /// so a unit test can supply a store whose `row(id:)` suspends on demand to
     /// drive `present`'s most-recent-wins token latch across the `await` —
     /// the one branch the sequential-await tests can't reach.
-    init(catalogStore: any CatalogStore) {
+    init(
+        catalogStore: any CatalogStore,
+        biometrics: any BiometricAuthenticator = LocalAuthenticationAuthenticator(),
+        qrSignInEnabled: Bool = false
+    ) {
         let connectivity = ConnectivityMonitor()
         self.connectivity = connectivity
         let (configuration, authService, api) = Self.makeCore(onOutcome: Self.outcomeHandler(for: connectivity))
         self.configuration = configuration
         self.authService = authService
         self.api = api
+        self.biometrics = biometrics
+        self.qrSignInEnabled = qrSignInEnabled
         self.catalogStore = catalogStore
         self.catalogRefreshService = nil
         self.binStore = nil

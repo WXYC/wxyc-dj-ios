@@ -18,6 +18,10 @@ struct SearchView: View {
     @Environment(AuthService.self) private var auth
     @State private var viewModel: SearchViewModel?
     @State private var searchText: String = ""
+    /// Drives the QR sign-in fullScreenCover. The fullScreenCover is hoisted
+    /// onto the always-mounted Group so it's registered in every view state
+    /// (idle / results / etc.), matching the navigationDestination pattern.
+    @State private var showQR = false
 
     var body: some View {
         Group {
@@ -41,23 +45,19 @@ struct SearchView: View {
         }
         .navigationTitle("Library")
         .searchable(text: $searchText, prompt: "Artist or album")
-        .toolbar { signOutMenu }
+        .toolbar {
+            AccountMenuToolbar(
+                onScanQR: { showQR = true },
+                onSignOut: { Task { await auth.signOut() } },
+                qrSignInEnabled: deps.qrSignInEnabled
+            )
+        }
+        .fullScreenCover(isPresented: $showQR) {
+            QRSignInFlowView()
+        }
         .onAppear {
             if viewModel == nil {
                 viewModel = SearchViewModel(search: deps.librarySearch, api: deps.api)
-            }
-        }
-    }
-
-    @ToolbarContentBuilder
-    private var signOutMenu: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            Menu {
-                Button("Sign Out", role: .destructive) {
-                    Task { await auth.signOut() }
-                }
-            } label: {
-                Image(systemName: "person.crop.circle")
             }
         }
     }

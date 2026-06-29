@@ -75,12 +75,14 @@ enum Fixtures {
         }
         """
 
-    /// JWT with payload {"sub":"42","email":"juana@wxyc.org","role":"dj","exp": <Date>}.
-    /// Signature is a placeholder; the client doesn't verify it.
-    static func jwt(expiresIn seconds: TimeInterval = 600) -> String {
+    /// JWT with payload {"sub":"42","email":"juana@wxyc.org","role":<role>,"exp": <Date>}.
+    /// Signature is a placeholder; the client doesn't verify it. Role defaults
+    /// to "dj"; the QR-signin tests override with "member" to exercise the
+    /// client-side role gate.
+    static func jwt(expiresIn seconds: TimeInterval = 600, role: String = "dj") -> String {
         let exp = Int(Date().addingTimeInterval(seconds).timeIntervalSince1970)
         let header = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
-        let payloadJSON = #"{"sub":"42","email":"juana@wxyc.org","role":"dj","exp":\#(exp)}"#
+        let payloadJSON = #"{"sub":"42","email":"juana@wxyc.org","role":"\#(role)","exp":\#(exp)}"#
         let payload = Data(payloadJSON.utf8).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")

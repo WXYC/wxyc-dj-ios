@@ -59,6 +59,17 @@ targets:
         BGTaskSchedulerPermittedIdentifiers:
           - org.wxyc.dj.catalog.refresh
           - org.wxyc.dj.catalog.reindex
+        # QR sign-in (ADR 0002): camera for the in-app QR scanner, Face ID for
+        # the biometric gate around Approve. NSCameraUsageDescription is the
+        # purpose string TCC shows the first time the scanner mounts;
+        # NSFaceIDUsageDescription is required when LAContext.evaluatePolicy
+        # may use Face ID.
+        NSCameraUsageDescription: "WXYC DJ scans the QR code on dj.wxyc.org to sign you into the studio computer's browser without typing a password."
+        NSFaceIDUsageDescription: "Face ID confirms it's you before authorizing the browser sign-in."
+        # Feature gate for the menu entry that opens the QR scanner. Default
+        # `false` until Backend-Service ships /auth/device/verify; flipping to
+        # `true` in this file (and rebuild) is the entire rollout.
+        WXYCQRSignInEnabled: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.wxyc.dj

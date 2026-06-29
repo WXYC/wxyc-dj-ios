@@ -151,6 +151,62 @@ public final class APIClient: Sendable {
         _ = try await sendRaw(path: "/djs/bin", method: "DELETE", query: items, body: nil)
     }
 
+    /// POST `{authBaseURL}/device/verify` — authorize (or deny) a pending RFC
+    /// 8628 device authorization the browser initiated (ADR 0002). Carries the
+    /// DJ's current JWT via the standard `Authorization: Bearer …` chain (incl.
+    /// the one-shot 401-retry). The body is the `user_code` parsed out of the
+    /// scanned `dj.wxyc.org/auth/device?user_code=…` URL plus an
+    /// `approve`/`deny` action.
+    ///
+    /// Returns silently on a 2xx accept. A 400 carrying an `error` body —
+    /// `access_denied`, `expired_token`, `invalid_grant` — maps to
+    /// ``QRSignInError/accessDenied(reason:)``; any other non-2xx surfaces as
+    /// ``QRSignInError/transport`` wrapping the underlying ``APIError``.
+    ///
+    /// The server is the source of truth for the role gate, so a `dj`-or-above
+    /// JWT may still be refused server-side (a freshly-downgraded role, a
+    /// stale token) — handle the throw the same way the proactive client gate
+    /// renders the prototype's denial card.
+    ///
+    /// Targets the **auth** base URL, not the API base URL (better-auth's
+    /// device-authorization plugin is mounted under `/auth/device/*`).
+    public func verifyDeviceCode(userCode: String, approve: Bool) async throws {
+        let body = DeviceVerifyRequest(
+            userCode: userCode,
+            action: approve ? .approve : .deny
+        )
+        let encoded: Data
+        do {
+            encoded = try JSONCoders.encoder.encode(body)
+        } catch {
+            throw QRSignInError.transport(.network(error.localizedDescription))
+        }
+        do {
+            let (data, http) = try await performAuthBaseURL(
+                path: "device/verify",
+                method: "POST",
+                body: encoded
+            )
+            if (200..<300).contains(http.statusCode) { return }
+            if http.statusCode == 400,
+               let parsed = try? JSONCoders.decoder.decode(DeviceVerifyErrorBody.self, from: data),
+               !parsed.error.isEmpty {
+                throw QRSignInError.accessDenied(reason: parsed.errorDescription ?? "")
+            }
+            if http.statusCode == 401 {
+                throw QRSignInError.transport(.unauthorized)
+            }
+            let message = (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data))?.message
+            throw QRSignInError.transport(.http(status: http.statusCode, message: message))
+        } catch let error as QRSignInError {
+            throw error
+        } catch let error as APIError {
+            throw QRSignInError.transport(error)
+        } catch {
+            throw QRSignInError.transport(.network(error.localizedDescription))
+        }
+    }
+
     private func getJSON<T: Decodable>(_ path: String, query: [URLQueryItem]) async throws -> T {
         let data = try await sendRaw(path: path, method: "GET", query: query, body: nil)
         return try decode(T.self, from: data)
@@ -275,6 +331,41 @@ public final class APIClient: Sendable {
             return try await perform(
                 path: path, method: method, query: query, body: body,
                 extraHeaders: extraHeaders, isRetry: true
+            )
+        }
+        return (data, http)
+    }
+
+    /// Variant of ``perform(path:method:query:body:extraHeaders:isRetry:)`` that
+    /// resolves `path` against the **auth** base URL (``WXYCAPIConfiguration/authBaseURL``)
+    /// rather than the API base URL. Used by ``verifyDeviceCode(userCode:approve:)``,
+    /// since better-auth's device-authorization plugin mounts under `/auth/device/*`,
+    /// not the data API tree. Reuses the same Bearer + 401-retry chain so a
+    /// stale JWT recovers transparently.
+    private func performAuthBaseURL(
+        path: String,
+        method: String,
+        body: Data?,
+        isRetry: Bool = false
+    ) async throws -> (Data, HTTPURLResponse) {
+        let token = try await currentJWT()
+        let url = configuration.authBaseURL.appending(path: path)
+        var request = URLRequest(url: url, timeoutInterval: configuration.timeout)
+        request.httpMethod = method
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let body {
+            request.httpBody = body
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        let (data, response) = try await fire(request)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.network("Non-HTTP response")
+        }
+        if http.statusCode == 401, !isRetry {
+            await authService.invalidateJWT()
+            return try await performAuthBaseURL(
+                path: path, method: method, body: body, isRetry: true
             )
         }
         return (data, http)

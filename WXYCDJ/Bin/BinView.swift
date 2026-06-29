@@ -14,7 +14,12 @@ import WXYCAPI
 
 struct BinView: View {
     @Environment(AppDependencies.self) private var deps
+    @Environment(AuthService.self) private var auth
     @State private var viewModel: BinViewModel?
+    /// Drives the QR sign-in fullScreenCover. Both tabs each host their own
+    /// cover so a DJ in either tab can reach the account menu — the user can
+    /// only be on one tab at a time, so the two covers never compete.
+    @State private var showQR = false
 
     var body: some View {
         Group {
@@ -32,6 +37,16 @@ struct BinView: View {
             AlbumDetailView(albumId: route.id, fallback: route.fallback)
         }
         .navigationTitle("My Bin")
+        .toolbar {
+            AccountMenuToolbar(
+                onScanQR: { showQR = true },
+                onSignOut: { Task { await auth.signOut() } },
+                qrSignInEnabled: deps.qrSignInEnabled
+            )
+        }
+        .fullScreenCover(isPresented: $showQR) {
+            QRSignInFlowView()
+        }
         .onAppear {
             if viewModel == nil {
                 let vm = BinViewModel(api: deps.api, binStore: deps.binStore)

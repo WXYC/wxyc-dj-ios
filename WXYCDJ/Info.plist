@@ -25,6 +25,10 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NSCameraUsageDescription</key>
+	<string>WXYC DJ scans the QR code on dj.wxyc.org to sign you into the studio computer's browser without typing a password.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Face ID confirms it's you before authorizing the browser sign-in.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -43,5 +47,7 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>WXYCQRSignInEnabled</key>
+	<false/>
 </dict>
 </plist>
