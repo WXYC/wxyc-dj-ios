@@ -73,6 +73,23 @@ public final class AuthService {
     private let storage: any TokenStorage
     private let session: any RequestSession
 
+    /// Reports each auth-transport result to the connectivity layer (issue #71),
+    /// mirroring ``APIClient``'s `onOutcome`: `true` when the server answered (any
+    /// HTTP status — we reached it, even a `401`), `false` on a thrown transport
+    /// error (no network / captive portal / DNS / timeout) — but **not** a
+    /// cancellation, which reports nothing (see ``send(_:)``). `nil` outside the
+    /// app (unit tests that don't observe connectivity).
+    ///
+    /// Pure observation — invoked around every `session.data(for:)` (see
+    /// ``send(_:)``), which rethrows the original error untouched, so it never
+    /// alters the issue-#53/#66 auth state machine; it only feeds the same signal
+    /// a failed ``APIClient`` request does. `AppDependencies` supplies a closure
+    /// that hops to `ConnectivityMonitor.ingest(isOnline:)` (the `nonisolated`,
+    /// ordered funnel), keeping `AuthService` free of any `ConnectivityMonitor`
+    /// coupling — the hook is an opaque `(Bool) -> Void`, exactly as the
+    /// ``APIClient`` hook is wired.
+    private let onOutcome: (@Sendable (Bool) -> Void)?
+
     private var sessionToken: String?
     private var cachedJWT: (token: String, payload: JWTPayload)?
 
@@ -92,11 +109,13 @@ public final class AuthService {
     public init(
         configuration: WXYCAPIConfiguration = .production,
         storage: any TokenStorage = KeychainTokenStorage(),
-        session: any RequestSession = URLSession.shared
+        session: any RequestSession = URLSession.shared,
+        onOutcome: (@Sendable (Bool) -> Void)? = nil
     ) {
         self.configuration = configuration
         self.storage = storage
         self.session = session
+        self.onOutcome = onOutcome
     }
 
     public func restoreSession() async {
@@ -287,6 +306,39 @@ public final class AuthService {
         try? storage.clear(.jwt)
     }
 
+    /// Perform an auth-transport request, reporting the connectivity outcome
+    /// (issue #71) before returning or rethrowing. A completed exchange — any HTTP
+    /// status, even a `401` — proves the server was reachable (`true`); a thrown
+    /// transport error means we never reached it (`false`). A **cancellation** is
+    /// neither — it's a deliberate abandonment (the search debounce / background-
+    /// refresh expiration cancel a JWT-refresh leg in flight), so it reports
+    /// nothing and just rethrows, leaving the connectivity state untouched.
+    /// Mirrors ``APIClient/fire(_:)``'s cancellation handling, but **rethrows the
+    /// original error untouched** (no `AuthError`/`APIError.network` wrapping), so
+    /// every caller's existing error handling — and the issue-#53/#66 state
+    /// machine — is byte-for-byte unchanged. Pure observation: the only added
+    /// effect is the `onOutcome` call.
+    private func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        do {
+            let result = try await session.data(for: request)
+            onOutcome?(true)
+            return result
+        } catch {
+            // A cancelled request says nothing about connectivity — the caller
+            // superseded the call (the issue-#58 search debounce cancels the
+            // in-flight task on every keystroke; the background-refresh expiration
+            // handler cancels its work), it didn't fail to reach the server — so
+            // don't latch the monitor. Covers both forms a cancelled `data(for:)`
+            // takes: URLSession's `URLError.cancelled` and a `CancellationError` a
+            // `RequestSession` may surface. Any other error is a real transport
+            // failure → offline. The original error always rethrows untouched, so
+            // the issue-#53/#66 state machine is unchanged.
+            let isCancellation = (error as? URLError)?.code == .cancelled || error is CancellationError
+            if !isCancellation { onOutcome?(false) }
+            throw error
+        }
+    }
+
     private func performSignIn(username: String, password: String) async throws -> String {
         let url = configuration.authBaseURL.appending(path: "sign-in/username")
         var request = URLRequest(url: url, timeoutInterval: configuration.timeout)
@@ -295,7 +347,7 @@ public final class AuthService {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.httpBody = try JSONCoders.encoder.encode(SignInRequest(username: username, password: password))
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await send(request)
         guard let http = response as? HTTPURLResponse else {
             throw AuthError.network(message: "Non-HTTP response")
         }
@@ -325,7 +377,7 @@ public final class AuthService {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await send(request)
         guard let http = response as? HTTPURLResponse else {
             throw AuthError.network(message: "Non-HTTP response")
         }
@@ -420,6 +472,6 @@ public final class AuthService {
         var request = URLRequest(url: url, timeoutInterval: configuration.timeout)
         request.httpMethod = "POST"
         request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
-        _ = try await session.data(for: request)
+        _ = try await send(request)
     }
 }

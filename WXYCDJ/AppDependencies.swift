@@ -26,10 +26,12 @@ final class AppDependencies {
     let configuration: WXYCAPIConfiguration
     let authService: AuthService
     let api: APIClient
-    /// App-wide online/offline signal (issue #56), corrected by real request
-    /// outcomes via the ``APIClient`` hook below. Started against the live
-    /// `NWPathMonitor` from ``startConnectivityMonitoring()`` at launch; left
-    /// unstarted (optimistically online) in unit tests.
+    /// App-wide online/offline signal (issue #56), corrected by real transport
+    /// outcomes from both the ``APIClient`` hook and the ``AuthService`` hook
+    /// (issue #71 — so a JWT-refresh-leg failure that never reaches `APIClient`
+    /// still latches offline). Started against the live `NWPathMonitor` from
+    /// ``startConnectivityMonitoring()`` at launch; left unstarted (optimistically
+    /// online) in unit tests.
     let connectivity: ConnectivityMonitor
     /// Human-readable "last synced" timestamp for the offline banner (issue #56),
     /// derived from the catalog watermark (``CatalogStore/lastModified()``) at the
@@ -163,8 +165,14 @@ final class AppDependencies {
     }
 
     /// Build the configuration + auth + API client shared by every initializer.
-    /// `onOutcome` is the connectivity correction hook (issue #56): each request's
-    /// transport result feeds ``ConnectivityMonitor/ingest(isOnline:)``.
+    /// `onOutcome` is the connectivity correction hook: each transport result
+    /// feeds ``ConnectivityMonitor/ingest(isOnline:)``. The **same** closure is
+    /// handed to both ``APIClient`` (issue #56 — data-endpoint requests) and
+    /// ``AuthService`` (issue #71 — the `/auth/*` transport, incl. the JWT-refresh
+    /// leg that resolves *before* `APIClient` ever calls `fire()`). Sharing one
+    /// closure keeps every outcome in the monitor's single ordered `ingest` FIFO,
+    /// so an auth-transport failure and a data-request outcome can't apply
+    /// out-of-order and break last-write-wins.
     private static func makeCore(
         onOutcome: @escaping @Sendable (Bool) -> Void
     ) -> (WXYCAPIConfiguration, AuthService, APIClient) {
@@ -173,13 +181,14 @@ final class AppDependencies {
             authString: bundle.object(forInfoDictionaryKey: "WXYCAuthBaseURL") as? String,
             apiString: bundle.object(forInfoDictionaryKey: "WXYCAPIBaseURL") as? String
         )
-        let authService = AuthService(configuration: configuration)
+        let authService = AuthService(configuration: configuration, onOutcome: onOutcome)
         let api = APIClient(configuration: configuration, authService: authService, onOutcome: onOutcome)
         return (configuration, authService, api)
     }
 
-    /// The `@Sendable` closure the WXYCAPI-layer ``APIClient`` calls with each
-    /// transport result. Feeds the monitor's `nonisolated`, **ordered**
+    /// The `@Sendable` closure the WXYCAPI layer (``APIClient`` for data requests,
+    /// ``AuthService`` for the `/auth/*` transport) calls with each transport
+    /// result. Feeds the monitor's `nonisolated`, **ordered**
     /// ``ConnectivityMonitor/ingest(isOnline:)`` directly — no `Task { @MainActor }`
     /// wrapper, which would let two near-simultaneous outcomes (or an outcome
     /// racing a path update) apply out of submission order on the main actor and
