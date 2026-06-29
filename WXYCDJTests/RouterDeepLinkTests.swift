@@ -260,4 +260,5 @@ private actor GatedCatalogStore: CatalogStore {
     func replace(rows: [CatalogRow], lastModified: String?) async throws {
         rowsByID = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
     }
+    func search(query: String, limit: Int) async throws -> [CatalogRow] { [] }
 }

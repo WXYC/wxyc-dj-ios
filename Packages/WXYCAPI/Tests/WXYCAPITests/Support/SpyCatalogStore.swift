@@ -58,4 +58,27 @@ final class SpyCatalogStore: CatalogStore {
             st.replaceCalls.append(ReplaceCall(rowIDs: rows.map(\.id).sorted(), lastModified: lastModified))
         }
     }
+
+    /// A simple diacritic-insensitive substring filter over artist / album /
+    /// call number — enough fidelity for the `LibrarySearch` orchestrator tests,
+    /// which only assert *which* store served the results, not FTS ranking. An
+    /// empty/whitespace query returns `[]`, matching the real store and
+    /// ``FTSQuery``. Results are id-ordered for determinism, capped at `limit`.
+    func search(query: String, limit: Int) -> [CatalogRow] {
+        let needle = query.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return [] }
+        return state.withLock { st in
+            st.rows.values
+                .filter { row in
+                    let haystack = [row.artistName, row.albumTitle, row.callNumber]
+                        .joined(separator: " ")
+                        .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
+                    return haystack.contains(needle)
+                }
+                .sorted { $0.id < $1.id }
+                .prefix(limit)
+                .map { $0 }
+        }
+    }
 }

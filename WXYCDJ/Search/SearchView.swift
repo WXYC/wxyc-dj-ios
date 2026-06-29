@@ -44,7 +44,7 @@ struct SearchView: View {
         .toolbar { signOutMenu }
         .onAppear {
             if viewModel == nil {
-                viewModel = SearchViewModel(api: deps.api)
+                viewModel = SearchViewModel(search: deps.librarySearch, api: deps.api)
             }
         }
     }
@@ -77,16 +77,27 @@ struct SearchView: View {
             }
         case .empty:
             ContentUnavailableView.search(text: viewModel.query)
-        case .error(let message):
-            ContentUnavailableView("Couldn't search", systemImage: "exclamationmark.triangle",
-                                   description: Text(message))
         case .results:
-            List(viewModel.results) { row in
-                // Carry the live row as the route's fallback so the detail
-                // header renders instantly while /library/info + LML load.
-                NavigationLink(value: AlbumRoute(id: row.id, fallback: row)) {
-                    SearchResultRow(row: row) {
-                        Task { _ = await viewModel.addToBin(row) }
+            List {
+                // When the offline FTS clone served these results, lead with a
+                // quiet note so the DJ knows they're looking at the saved library
+                // (bm25 ranking, artist/album/call-number only — no track hints).
+                if viewModel.source == .local {
+                    Section {
+                        Label("Showing saved library", systemImage: "wifi.slash")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Section {
+                    ForEach(viewModel.results) { row in
+                        // Carry the live row as the route's fallback so the detail
+                        // header renders instantly while /library/info + LML load.
+                        NavigationLink(value: AlbumRoute(id: row.id, fallback: row)) {
+                            SearchResultRow(row: row) {
+                                Task { _ = await viewModel.addToBin(row) }
+                            }
+                        }
                     }
                 }
             }
