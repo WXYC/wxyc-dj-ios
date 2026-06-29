@@ -446,4 +446,35 @@ struct APIClientTests {
 
         #expect(recorder.values == [false])
     }
+
+    @Test func outcomeHookIgnoresCancelledRequest() async throws {
+        // A cancelled request is *not* a connectivity signal — it means the
+        // caller superseded the call (the issue-#58 search debounce cancels the
+        // in-flight task on every keystroke), not that the server was
+        // unreachable. Latching offline here would wrongly route later searches
+        // to the local clone while the device is actually online, with no
+        // self-recovery (a local search makes no request, so no later success
+        // restores the flag). The call still throws so the caller bails.
+        let (client, session, recorder) = try await Self.makeSignedInClientWithRecorder()
+        session.enqueue(failure: URLError(.cancelled))
+
+        await #expect(throws: APIError.self) {
+            _ = try await client.searchLibrary(artist: "Juana", title: nil)
+        }
+
+        #expect(recorder.values.isEmpty)
+    }
+
+    @Test func outcomeHookIgnoresCancellationError() async throws {
+        // Same rationale as the URLError(.cancelled) case, for a RequestSession
+        // that surfaces structured-concurrency cancellation as CancellationError.
+        let (client, session, recorder) = try await Self.makeSignedInClientWithRecorder()
+        session.enqueue(failure: CancellationError())
+
+        await #expect(throws: APIError.self) {
+            _ = try await client.searchLibrary(artist: "Juana", title: nil)
+        }
+
+        #expect(recorder.values.isEmpty)
+    }
 }

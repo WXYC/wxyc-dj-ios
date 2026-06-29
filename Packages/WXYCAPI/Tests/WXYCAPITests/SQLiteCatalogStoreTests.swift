@@ -11,6 +11,7 @@
 //
 
 import Foundation
+import SQLite3
 import Testing
 @testable import WXYCAPI
 
@@ -292,5 +293,52 @@ struct SQLiteCatalogStoreTests {
             #expect(try await store.search(query: "juana", limit: 25).isEmpty)
             #expect(try await store.search(query: "pratt", limit: 25).map(\.id) == [200])
         }
+    }
+
+    /// Migration self-heal (issue #58 review): a clone written by a pre-#58 build
+    /// has the `catalog` rows but no FTS index. The index is created empty on
+    /// open, and only `replace()` (which runs on a `200`) fills it — so a `304`
+    /// refresh would leave offline search returning nothing indefinitely. The
+    /// store must backfill the index from the existing rows on first use, without
+    /// disturbing the watermark (which would corrupt the conditional-GET path).
+    @Test func backfillsSearchIndexForPre58CloneOnFirstSearch() async throws {
+        let url = Self.tempURL()
+        defer { Self.removeFile(url) }
+        let rows = try Self.fixtureRows()   // Juana (100), Jessica Pratt (200)
+        let watermark = "Mon, 01 Jun 2026 12:00:00 GMT"
+
+        // First "launch": a current build populates catalog + FTS together.
+        do {
+            let store = try SQLiteCatalogStore(url: url)
+            try await store.replace(rows: rows, lastModified: watermark)
+        }
+        // Reproduce a pre-#58 clone: the rows persist, the FTS index does not.
+        Self.dropSearchIndex(at: url)
+
+        // Second "launch": searching must find the existing rows immediately,
+        // without waiting for a server `200` to call `replace()`.
+        do {
+            let reopened = try SQLiteCatalogStore(url: url)
+            #expect(try await reopened.search(query: "juana", limit: 25).map(\.id) == [100])
+            #expect(try await reopened.search(query: "pratt", limit: 25).map(\.id) == [200])
+            // The backfill is index-only: the watermark is untouched, so a
+            // conditional GET still short-circuits to 304.
+            #expect(try await reopened.lastModified() == watermark)
+        }
+    }
+
+    /// Drop the FTS virtual table from the database at `url` via a throwaway raw
+    /// connection — reproducing the on-disk shape a pre-#58 build left behind
+    /// (catalog rows, no `catalog_fts`). The `SQLiteCatalogStore` owning `url`
+    /// must already be closed.
+    static func dropSearchIndex(at url: URL) {
+        var handle: OpaquePointer?
+        guard sqlite3_open_v2(url.path(percentEncoded: false), &handle, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK,
+              let handle else {
+            if let handle { sqlite3_close(handle) }
+            return
+        }
+        defer { sqlite3_close(handle) }
+        sqlite3_exec(handle, "DROP TABLE IF EXISTS catalog_fts;", nil, nil, nil)
     }
 }
