@@ -42,6 +42,11 @@ final class AppDependencies {
     /// in-app-only search rather than crashing. The Spotlight deep-link (step 7)
     /// reads it for an O(1) id→row `fallback` lookup.
     let catalogStore: (any CatalogStore)?
+    /// The per-DJ bin snapshot store (issue #60). Its **own** SQLite DB + actor,
+    /// deliberately independent of ``catalogStore`` so a bin read never queues
+    /// behind a multi-second catalog replace. `nil` only if the SQLite store
+    /// couldn't be opened — the bin then degrades to online-only.
+    let binStore: (any BinStore)?
     /// The single shared refresh service the foreground path and both background
     /// tasks drive. **Exactly one instance** app-wide: its actor serializes all
     /// index touches (refreshes + the issue-#44 lazy thumbnail upserts) through one
@@ -61,13 +66,18 @@ final class AppDependencies {
     private var presentationToken = 0
 
     convenience init() {
-        self.init(catalogStoreURL: Self.defaultCatalogStoreURL())
+        self.init(
+            catalogStoreURL: Self.defaultCatalogStoreURL(),
+            binStoreURL: Self.defaultBinStoreURL()
+        )
     }
 
-    /// Designated initializer. `catalogStoreURL` is the SQLite clone's path
-    /// (injected in tests; the default points under Application Support). A `nil`
-    /// URL, or a store that fails to open, leaves the catalog features inert.
-    init(catalogStoreURL: URL?) {
+    /// Designated initializer. `catalogStoreURL` is the SQLite clone's path and
+    /// `binStoreURL` the bin snapshot's path (both injected in tests; the
+    /// defaults point under Application Support). A `nil` URL, or a store that
+    /// fails to open, leaves that feature inert. `binStoreURL` defaults to `nil`
+    /// so existing catalog-only test call sites don't open a real bin store.
+    init(catalogStoreURL: URL?, binStoreURL: URL? = nil) {
         let connectivity = ConnectivityMonitor()
         self.connectivity = connectivity
         let (configuration, authService, api) = Self.makeCore(onOutcome: Self.outcomeHandler(for: connectivity))
@@ -107,6 +117,23 @@ final class AppDependencies {
             self.catalogStore = nil
             self.catalogRefreshService = nil
         }
+
+        // The bin snapshot store (issue #60). Opened independently of the catalog
+        // store — its own DB + actor — so an offline bin read never waits behind a
+        // catalog replace. Degrades to online-only (nil) if the file can't open.
+        self.binStore = Self.openBinStore(at: binStoreURL)
+    }
+
+    /// Open the bin snapshot store at `url`, logging and degrading to `nil` on
+    /// failure (disk unwritable) so the composition root never crashes.
+    private static func openBinStore(at url: URL?) -> (any BinStore)? {
+        guard let url else { return nil }
+        do {
+            return try SQLiteBinStore(url: url)
+        } catch {
+            catalogLog.error("Bin store unavailable at \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public). Falling back to online-only bin.")
+            return nil
+        }
     }
 
     /// Test seam: build the composition root around an injected catalog store and
@@ -124,6 +151,7 @@ final class AppDependencies {
         self.api = api
         self.catalogStore = catalogStore
         self.catalogRefreshService = nil
+        self.binStore = nil
     }
 
     /// Build the configuration + auth + API client shared by every initializer.
@@ -436,6 +464,14 @@ final class AppDependencies {
     /// catalog features inert) if the directory can't be located or created.
     static func defaultCatalogStoreURL() -> URL? {
         appSupportSubdirectory("Catalog")?.appending(path: "catalog.sqlite", directoryHint: .notDirectory)
+    }
+
+    /// The on-device bin snapshot's SQLite file (issue #60):
+    /// `<Application Support>/Bin/bin.sqlite`. A **separate** directory + DB from
+    /// `Catalog/` — the bin store is its own independent actor. Returns `nil`
+    /// (leaving the bin online-only) if the directory can't be located or created.
+    static func defaultBinStoreURL() -> URL? {
+        appSupportSubdirectory("Bin")?.appending(path: "bin.sqlite", directoryHint: .notDirectory)
     }
 
     /// The on-device Spotlight thumbnail cache directory (issue #44):

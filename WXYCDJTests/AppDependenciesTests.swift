@@ -119,6 +119,47 @@ struct AppDependenciesCatalogWiringTests {
     }
 }
 
+/// The bin snapshot wiring (issue #60): where the bin SQLite store lives (its own
+/// directory + DB, separate from the catalog), that an openable URL wires a store,
+/// and that a nil URL degrades the bin to online-only rather than crashing.
+@Suite("AppDependencies.binWiring")
+@MainActor
+struct AppDependenciesBinWiringTests {
+    @Test func defaultBinStoreURLLivesUnderApplicationSupportInItsOwnDirectory() throws {
+        let url = try #require(AppDependencies.defaultBinStoreURL())
+
+        #expect(url.lastPathComponent == "bin.sqlite")
+        // Its own "Bin" directory — deliberately not under "Catalog".
+        #expect(url.pathComponents.contains("Bin"))
+        #expect(!url.pathComponents.contains("Catalog"))
+    }
+
+    @Test func openableBinURLWiresStoreIndependentOfCatalog() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "bin-deps-wiring-\(UUID().uuidString).sqlite")
+        defer {
+            let base = url.path(percentEncoded: false)
+            try? FileManager.default.removeItem(at: url)
+            for suffix in ["-journal", "-wal", "-shm"] {
+                try? FileManager.default.removeItem(at: URL(filePath: base + suffix))
+            }
+        }
+
+        // No catalog store, but an openable bin URL -> the bin store is wired
+        // independently of the catalog clone.
+        let deps = AppDependencies(catalogStoreURL: nil, binStoreURL: url)
+
+        #expect(deps.catalogStore == nil)
+        #expect(deps.binStore != nil)
+    }
+
+    @Test func nilBinURLLeavesBinOnlineOnly() {
+        let deps = AppDependencies(catalogStoreURL: nil, binStoreURL: nil)
+
+        #expect(deps.binStore == nil)
+    }
+}
+
 /// `catalogErrorDetail` is the verbose error formatter the catalog-refresh
 /// failure log uses instead of `localizedDescription`, so a Core Spotlight
 /// rejection names its domain + numeric code (e.g. `CSIndexErrorDomain -1001`
