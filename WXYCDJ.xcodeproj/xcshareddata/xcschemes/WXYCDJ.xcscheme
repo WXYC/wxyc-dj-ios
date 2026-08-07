@@ -56,6 +56,23 @@
             </BuildableReference>
          </TestableReference>
       </Testables>
+<<<<<<< HEAD
+      <CommandLineArguments>
+      </CommandLineArguments>
+      <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "WXYC_SPOTLIGHT_FIELD_RESOLUTION"
+            value = "1"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "WXYC_SPOTLIGHT_TOLERANCE"
+            value = "1"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+      </EnvironmentVariables>
+=======
+>>>>>>> 2f40c14b2a238d7dde1c418fa5c4ba00b727b16a
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
@@ -78,6 +95,11 @@
          </BuildableReference>
       </BuildableProductRunnable>
       <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "WXYC_SPOTLIGHT_FIELD_RESOLUTION"
+            value = "1"
+            isEnabled = "YES">
+         </EnvironmentVariable>
          <EnvironmentVariable
             key = "WXYC_SPOTLIGHT_TOLERANCE"
             value = "1"
@@ -102,6 +124,11 @@
          </BuildableReference>
       </BuildableProductRunnable>
       <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "WXYC_SPOTLIGHT_FIELD_RESOLUTION"
+            value = "1"
+            isEnabled = "YES">
+         </EnvironmentVariable>
          <EnvironmentVariable
             key = "WXYC_SPOTLIGHT_TOLERANCE"
             value = "1"

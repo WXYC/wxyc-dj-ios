@@ -73,19 +73,49 @@ public final class AuthService {
     private let storage: any TokenStorage
     private let session: any RequestSession
 
+    /// Reports each auth-transport result to the connectivity layer (issue #71),
+    /// mirroring ``APIClient``'s `onOutcome`: `true` when the server answered (any
+    /// HTTP status — we reached it, even a `401`), `false` on a thrown transport
+    /// error (no network / captive portal / DNS / timeout) — but **not** a
+    /// cancellation, which reports nothing (see ``send(_:)``). `nil` outside the
+    /// app (unit tests that don't observe connectivity).
+    ///
+    /// Pure observation — invoked around every `session.data(for:)` (see
+    /// ``send(_:)``), which rethrows the original error untouched, so it never
+    /// alters the issue-#53/#66 auth state machine; it only feeds the same signal
+    /// a failed ``APIClient`` request does. `AppDependencies` supplies a closure
+    /// that hops to `ConnectivityMonitor.ingest(isOnline:)` (the `nonisolated`,
+    /// ordered funnel), keeping `AuthService` free of any `ConnectivityMonitor`
+    /// coupling — the hook is an opaque `(Bool) -> Void`, exactly as the
+    /// ``APIClient`` hook is wired.
+    private let onOutcome: (@Sendable (Bool) -> Void)?
+
     private var sessionToken: String?
     private var cachedJWT: (token: String, payload: JWTPayload)?
+
+    /// Monotonic session-*generation* counter. Bumped whenever the session is
+    /// cleared (`clearLocalSession`) or a brand-new one is established (`signIn`),
+    /// but **not** on a `set-auth-token` rotation (`captureRotatedSessionToken`),
+    /// which re-issues the bearer *within* the same generation. `refreshJWT`
+    /// captures it before awaiting `/auth/token` and re-checks it after, so a
+    /// `signOut` (or re-sign-in) that lands during an in-flight refresh can't be
+    /// resurrected by the 2xx success path re-persisting a stale rotation/JWT
+    /// (issue #66). The generation framing is what keeps a benign concurrent
+    /// double-refresh — where only the bearer rotated — from spuriously failing.
+    private var sessionEpoch: UInt64 = 0
 
     private static let refreshLeeway: TimeInterval = 60
 
     public init(
         configuration: WXYCAPIConfiguration = .production,
         storage: any TokenStorage = KeychainTokenStorage(),
-        session: any RequestSession = URLSession.shared
+        session: any RequestSession = URLSession.shared,
+        onOutcome: (@Sendable (Bool) -> Void)? = nil
     ) {
         self.configuration = configuration
         self.storage = storage
         self.session = session
+        self.onOutcome = onOutcome
     }
 
     public func restoreSession() async {
@@ -113,18 +143,47 @@ public final class AuthService {
             state = .signedOut
         } catch {
             // Transient (5xx / network / undecodable body): the session may
-            // still be good. Keep the stored token and enter the pending window;
-            // `currentJWT()` re-mints the JWT lazily on first use (issue #53).
-            // Strictly better than dumping a returning DJ to a LoginView they
-            // may not be able to complete offline — cached catalog browsing
-            // works, and a recovered network self-heals on the next refresh.
-            state = .signedIn(payload: nil)
+            // still be good, but we couldn't confirm it. Consult the offline
+            // grace policy (issue #57). On `.signedIn` — a within-window anchor
+            // and a cached payload — restore the cached identity so a returning
+            // DJ lands in the app (browsing the on-device catalog clone) instead
+            // of a LoginView they may not be able to complete offline; for that
+            // branch `currentJWT()` re-mints the JWT lazily once the network
+            // recovers, *keeping* the already-signed-in state. On `.signedOut`
+            // — anchors absent (a legacy install, or a sign-in that only ever
+            // reached the pending window) or the window elapsed — fall through to
+            // the login screen; note this branch is NOT self-healing mid-session
+            // (a later `currentJWT()` success does not promote `.signedOut` ->
+            // `.signedIn`), so recovery is on the next relaunch (the now-online
+            // restore succeeds) or a manual sign-in. Either way a network failure
+            // never clears tokens here: the next online launch's restore can
+            // still recover the session (success) or terminally clear it (401).
+            let decision = OfflineSessionPolicy.decide(
+                hasStoredSession: sessionToken != nil,
+                cachedPayload: loadPersistedPayload(),
+                lastValidatedAt: loadLastValidatedAt(),
+                now: Date()
+            )
+            switch decision {
+            case .signedIn(let payload):
+                state = .signedIn(payload: payload)
+            case .signedOut:
+                state = .signedOut
+            }
         }
     }
 
     public func signIn(username: String, password: String) async {
         state = .signingIn
         lastError = nil
+
+        // Issue #57: drop any prior DJ's grace anchors before establishing a new
+        // session. They belong to the *previous* identity; if this sign-in's JWT
+        // leg fails transiently (leg 2 below), it enters the pending window
+        // WITHOUT persisting fresh anchors, so a stale `.payload` left here would
+        // later let an offline restore pair this session's bearer with the old
+        // DJ's cached identity. A successful refreshJWT re-persists both anchors.
+        clearGraceAnchors()
 
         // Leg 1 — establish the session. Any failure here is terminal: there is
         // no session to keep, so roll back and stop before the JWT exchange.
@@ -133,6 +192,7 @@ public final class AuthService {
             token = try await performSignIn(username: username, password: password)
             try storage.save(token, for: .sessionToken)
             sessionToken = token
+            sessionEpoch &+= 1  // a new generation, so a stale refresh of any prior session can't clobber it (issue #66)
         } catch let error as AuthError {
             clearLocalSession()
             lastError = error
@@ -186,6 +246,7 @@ public final class AuthService {
     private func clearLocalSession() {
         sessionToken = nil
         cachedJWT = nil
+        sessionEpoch &+= 1  // a new generation: invalidate any in-flight refresh (issue #66)
         try? storage.clearAll()
     }
 
@@ -245,6 +306,39 @@ public final class AuthService {
         try? storage.clear(.jwt)
     }
 
+    /// Perform an auth-transport request, reporting the connectivity outcome
+    /// (issue #71) before returning or rethrowing. A completed exchange — any HTTP
+    /// status, even a `401` — proves the server was reachable (`true`); a thrown
+    /// transport error means we never reached it (`false`). A **cancellation** is
+    /// neither — it's a deliberate abandonment (the search debounce / background-
+    /// refresh expiration cancel a JWT-refresh leg in flight), so it reports
+    /// nothing and just rethrows, leaving the connectivity state untouched.
+    /// Mirrors ``APIClient/fire(_:)``'s cancellation handling, but **rethrows the
+    /// original error untouched** (no `AuthError`/`APIError.network` wrapping), so
+    /// every caller's existing error handling — and the issue-#53/#66 state
+    /// machine — is byte-for-byte unchanged. Pure observation: the only added
+    /// effect is the `onOutcome` call.
+    private func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        do {
+            let result = try await session.data(for: request)
+            onOutcome?(true)
+            return result
+        } catch {
+            // A cancelled request says nothing about connectivity — the caller
+            // superseded the call (the issue-#58 search debounce cancels the
+            // in-flight task on every keystroke; the background-refresh expiration
+            // handler cancels its work), it didn't fail to reach the server — so
+            // don't latch the monitor. Covers both forms a cancelled `data(for:)`
+            // takes: URLSession's `URLError.cancelled` and a `CancellationError` a
+            // `RequestSession` may surface. Any other error is a real transport
+            // failure → offline. The original error always rethrows untouched, so
+            // the issue-#53/#66 state machine is unchanged.
+            let isCancellation = (error as? URLError)?.code == .cancelled || error is CancellationError
+            if !isCancellation { onOutcome?(false) }
+            throw error
+        }
+    }
+
     private func performSignIn(username: String, password: String) async throws -> String {
         let url = configuration.authBaseURL.appending(path: "sign-in/username")
         var request = URLRequest(url: url, timeoutInterval: configuration.timeout)
@@ -253,7 +347,7 @@ public final class AuthService {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.httpBody = try JSONCoders.encoder.encode(SignInRequest(username: username, password: password))
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await send(request)
         guard let http = response as? HTTPURLResponse else {
             throw AuthError.network(message: "Non-HTTP response")
         }
@@ -276,13 +370,14 @@ public final class AuthService {
 
     private func refreshJWT() async throws -> JWTPayload {
         guard let token = sessionToken else { throw AuthError.notSignedIn }
+        let epochAtRefresh = sessionEpoch
         let url = configuration.authBaseURL.appending(path: "token")
         var request = URLRequest(url: url, timeoutInterval: configuration.timeout)
         request.httpMethod = "GET"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await send(request)
         guard let http = response as? HTTPURLResponse else {
             throw AuthError.network(message: "Non-HTTP response")
         }
@@ -290,12 +385,72 @@ public final class AuthService {
             if http.statusCode == 401 { throw AuthError.notSignedIn }
             throw AuthError.serverFailure(status: http.statusCode, message: nil)
         }
+        // Bail before persisting anything if the session was cleared or replaced
+        // (signOut / re-sign-in) while we awaited (issue #66). Otherwise this 2xx
+        // resurrects a torn-down session: `captureRotatedSessionToken` writes the
+        // rolling-renewal bearer back to the Keychain and we cache+persist the
+        // JWT — leaving `state == .signedOut` but a live token that the next cold
+        // launch's `restoreSession()` silently signs back in (defeating signOut,
+        // violating #52's leave-no-trace). The success-path mirror of
+        // `currentJWT`'s 401-path guard. A *rotation* captured by a concurrent
+        // refresh keeps the same generation, so a benign overlapping
+        // double-refresh still persists for both callers.
+        guard sessionEpoch == epochAtRefresh else { throw AuthError.notSignedIn }
         captureRotatedSessionToken(from: http)
         let decoded = try JSONCoders.decoder.decode(JWTResponse.self, from: data)
         let payload = try JWTDecoder.decode(decoded.token)
         cachedJWT = (decoded.token, payload)
         try? storage.save(decoded.token, for: .jwt)
+        // Issue #57: a successful exchange is a confirmed server contact, so
+        // reset the offline grace window and refresh the durable payload. This
+        // is the single chokepoint for sign-in, cold-launch restore, and the
+        // lazy refresh — every path that proves the session is live flows here.
+        persistValidationAnchors(payload: payload)
         return payload
+    }
+
+    // MARK: - Offline grace anchors (issue #57)
+
+    /// Persist the offline grace anchors: the wall-clock of this confirmed
+    /// server contact and a durable copy of the payload. Best-effort — a
+    /// storage failure degrades to a shorter grace, never blocks the refresh.
+    private func persistValidationAnchors(payload: JWTPayload) {
+        try? storage.save(String(Date().timeIntervalSince1970), for: .lastValidatedAt)
+        if let json = Self.encodePayload(payload) {
+            try? storage.save(json, for: .payload)
+        }
+    }
+
+    /// Drop the offline grace anchors without touching the session/JWT slots.
+    /// Used at `signIn` entry so a new session can't inherit the previous DJ's
+    /// cached identity (the terminal paths clear these via `storage.clearAll()`).
+    private func clearGraceAnchors() {
+        try? storage.clear(.lastValidatedAt)
+        try? storage.clear(.payload)
+    }
+
+    private func loadLastValidatedAt() -> Date? {
+        guard let raw = (try? storage.load(.lastValidatedAt)) ?? nil,
+              let seconds = TimeInterval(raw),
+              // Reject a non-finite parse (`TimeInterval("inf")` succeeds): an
+              // infinite anchor would otherwise read as in-window forever. The
+              // policy guards this too, but stop it at the storage boundary.
+              seconds.isFinite
+        else { return nil }
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    private func loadPersistedPayload() -> JWTPayload? {
+        guard let json = (try? storage.load(.payload)) ?? nil,
+              let data = json.data(using: .utf8),
+              let payload = try? JSONCoders.decoder.decode(JWTPayload.self, from: data)
+        else { return nil }
+        return payload
+    }
+
+    private static func encodePayload(_ payload: JWTPayload) -> String? {
+        guard let data = try? JSONCoders.encoder.encode(payload) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     /// better-auth's bearer plugin emits `set-auth-token` on every response
@@ -317,6 +472,6 @@ public final class AuthService {
         var request = URLRequest(url: url, timeoutInterval: configuration.timeout)
         request.httpMethod = "POST"
         request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
-        _ = try await session.data(for: request)
+        _ = try await send(request)
     }
 }

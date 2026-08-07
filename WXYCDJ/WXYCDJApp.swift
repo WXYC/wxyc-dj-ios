@@ -29,6 +29,9 @@ struct WXYCDJApp: App {
             RootView()
                 .wxycAppEnvironment(dependencies)
                 .task {
+                    // Begin tracking the network path so the offline banner
+                    // (issue #56) reflects real reachability from launch.
+                    dependencies.startConnectivityMonitoring()
                     // Foreground-primary refresh: restore the session, then clone
                     // the catalog (a no-op skip until signed in).
                     await dependencies.authService.restoreSession()

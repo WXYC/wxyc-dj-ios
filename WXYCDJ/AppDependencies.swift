@@ -26,11 +26,35 @@ final class AppDependencies {
     let configuration: WXYCAPIConfiguration
     let authService: AuthService
     let api: APIClient
+    /// App-wide online/offline signal (issue #56), corrected by real transport
+    /// outcomes from both the ``APIClient`` hook and the ``AuthService`` hook
+    /// (issue #71 — so a JWT-refresh-leg failure that never reaches `APIClient`
+    /// still latches offline). Started against the live `NWPathMonitor` from
+    /// ``startConnectivityMonitoring()`` at launch; left unstarted (optimistically
+    /// online) in unit tests.
+    let connectivity: ConnectivityMonitor
+    /// Human-readable "last synced" timestamp for the offline banner (issue #56),
+    /// derived from the catalog watermark (``CatalogStore/lastModified()``) at the
+    /// end of ``refreshCatalog()``. `nil` until the first successful clone — the
+    /// banner shows a "Never synced" placeholder. Kept here (not in the banner
+    /// body) so the async watermark read stays off the view.
+    private(set) var lastCatalogSyncText: String?
     /// The id-keyed on-device catalog clone (issue #19). `nil` only if the
     /// SQLite store couldn't be opened (disk unwritable) — the app degrades to
     /// in-app-only search rather than crashing. The Spotlight deep-link (step 7)
     /// reads it for an O(1) id→row `fallback` lookup.
     let catalogStore: (any CatalogStore)?
+    /// The per-DJ bin snapshot store (issue #60). Its **own** SQLite DB + actor,
+    /// deliberately independent of ``catalogStore`` so a bin read never queues
+    /// behind a multi-second catalog replace. `nil` only if the SQLite store
+    /// couldn't be opened — the bin then degrades to online-only.
+    let binStore: (any BinStore)?
+    /// Online-first / offline-fallback library search router (issue #58). Reads
+    /// ``connectivity`` to decide server-vs-local per request and searches the
+    /// ``catalogStore`` FTS index when offline or when the request fails.
+    /// Constructed once over the shared API client, store, and monitor; handed to
+    /// each ``SearchViewModel``.
+    let librarySearch: LibrarySearch
     /// The single shared refresh service the foreground path and both background
     /// tasks drive. **Exactly one instance** app-wide: its actor serializes all
     /// index touches (refreshes + the issue-#44 lazy thumbnail upserts) through one
@@ -50,14 +74,21 @@ final class AppDependencies {
     private var presentationToken = 0
 
     convenience init() {
-        self.init(catalogStoreURL: Self.defaultCatalogStoreURL())
+        self.init(
+            catalogStoreURL: Self.defaultCatalogStoreURL(),
+            binStoreURL: Self.defaultBinStoreURL()
+        )
     }
 
-    /// Designated initializer. `catalogStoreURL` is the SQLite clone's path
-    /// (injected in tests; the default points under Application Support). A `nil`
-    /// URL, or a store that fails to open, leaves the catalog features inert.
-    init(catalogStoreURL: URL?) {
-        let (configuration, authService, api) = Self.makeCore()
+    /// Designated initializer. `catalogStoreURL` is the SQLite clone's path and
+    /// `binStoreURL` the bin snapshot's path (both injected in tests; the
+    /// defaults point under Application Support). A `nil` URL, or a store that
+    /// fails to open, leaves that feature inert. `binStoreURL` defaults to `nil`
+    /// so existing catalog-only test call sites don't open a real bin store.
+    init(catalogStoreURL: URL?, binStoreURL: URL? = nil) {
+        let connectivity = ConnectivityMonitor()
+        self.connectivity = connectivity
+        let (configuration, authService, api) = Self.makeCore(onOutcome: Self.outcomeHandler(for: connectivity))
         self.configuration = configuration
         self.authService = authService
         self.api = api
@@ -94,6 +125,24 @@ final class AppDependencies {
             self.catalogStore = nil
             self.catalogRefreshService = nil
         }
+
+        // The bin snapshot store (issue #60). Opened independently of the catalog
+        // store — its own DB + actor — so an offline bin read never waits behind a
+        // catalog replace. Degrades to online-only (nil) if the file can't open.
+        self.binStore = Self.openBinStore(at: binStoreURL)
+        self.librarySearch = LibrarySearch(api: api, catalogStore: catalogStore, connectivity: connectivity)
+    }
+
+    /// Open the bin snapshot store at `url`, logging and degrading to `nil` on
+    /// failure (disk unwritable) so the composition root never crashes.
+    private static func openBinStore(at url: URL?) -> (any BinStore)? {
+        guard let url else { return nil }
+        do {
+            return try SQLiteBinStore(url: url)
+        } catch {
+            catalogLog.error("Bin store unavailable at \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public). Falling back to online-only bin.")
+            return nil
+        }
     }
 
     /// Test seam: build the composition root around an injected catalog store and
@@ -103,24 +152,57 @@ final class AppDependencies {
     /// drive `present`'s most-recent-wins token latch across the `await` —
     /// the one branch the sequential-await tests can't reach.
     init(catalogStore: any CatalogStore) {
-        let (configuration, authService, api) = Self.makeCore()
+        let connectivity = ConnectivityMonitor()
+        self.connectivity = connectivity
+        let (configuration, authService, api) = Self.makeCore(onOutcome: Self.outcomeHandler(for: connectivity))
         self.configuration = configuration
         self.authService = authService
         self.api = api
         self.catalogStore = catalogStore
         self.catalogRefreshService = nil
+        self.binStore = nil
+        self.librarySearch = LibrarySearch(api: api, catalogStore: catalogStore, connectivity: connectivity)
     }
 
     /// Build the configuration + auth + API client shared by every initializer.
-    private static func makeCore() -> (WXYCAPIConfiguration, AuthService, APIClient) {
+    /// `onOutcome` is the connectivity correction hook: each transport result
+    /// feeds ``ConnectivityMonitor/ingest(isOnline:)``. The **same** closure is
+    /// handed to both ``APIClient`` (issue #56 — data-endpoint requests) and
+    /// ``AuthService`` (issue #71 — the `/auth/*` transport, incl. the JWT-refresh
+    /// leg that resolves *before* `APIClient` ever calls `fire()`). Sharing one
+    /// closure keeps every outcome in the monitor's single ordered `ingest` FIFO,
+    /// so an auth-transport failure and a data-request outcome can't apply
+    /// out-of-order and break last-write-wins.
+    private static func makeCore(
+        onOutcome: @escaping @Sendable (Bool) -> Void
+    ) -> (WXYCAPIConfiguration, AuthService, APIClient) {
         let bundle = Bundle.main
         let configuration = resolveConfiguration(
             authString: bundle.object(forInfoDictionaryKey: "WXYCAuthBaseURL") as? String,
             apiString: bundle.object(forInfoDictionaryKey: "WXYCAPIBaseURL") as? String
         )
-        let authService = AuthService(configuration: configuration)
-        let api = APIClient(configuration: configuration, authService: authService)
+        let authService = AuthService(configuration: configuration, onOutcome: onOutcome)
+        let api = APIClient(configuration: configuration, authService: authService, onOutcome: onOutcome)
         return (configuration, authService, api)
+    }
+
+    /// The `@Sendable` closure the WXYCAPI layer (``APIClient`` for data requests,
+    /// ``AuthService`` for the `/auth/*` transport) calls with each transport
+    /// result. Feeds the monitor's `nonisolated`, **ordered**
+    /// ``ConnectivityMonitor/ingest(isOnline:)`` directly — no `Task { @MainActor }`
+    /// wrapper, which would let two near-simultaneous outcomes (or an outcome
+    /// racing a path update) apply out of submission order on the main actor and
+    /// break last-write-wins. Captures the monitor (not `self`) so it can be built
+    /// before the rest of the root; keeps WXYCAPI free of any MainActor coupling.
+    private static func outcomeHandler(for connectivity: ConnectivityMonitor) -> @Sendable (Bool) -> Void {
+        { success in connectivity.ingest(isOnline: success) }
+    }
+
+    /// Begin tracking the live network path. Called once at launch (not from the
+    /// initializers) so unit tests don't spin up a real `NWPathMonitor`; until
+    /// then the monitor is optimistically online and outcome-corrected only.
+    func startConnectivityMonitoring() {
+        connectivity.start(pathProvider: RealPathProvider())
     }
 
     // MARK: Catalog refresh
@@ -138,18 +220,62 @@ final class AppDependencies {
     /// (network/decode) so iOS may reschedule sooner.
     @discardableResult
     func refreshCatalog() async -> Bool {
-        guard let catalogRefreshService else { return true }
+        guard let catalogRefreshService else {
+            await updateLastCatalogSyncText()
+            return true
+        }
+        let success: Bool
         do {
             let outcome = try await catalogRefreshService.refresh()
             catalogLog.info("Catalog refresh: \(String(describing: outcome), privacy: .public)")
-            return true
+            success = true
         } catch APIError.notSignedIn {
             catalogLog.debug("Catalog refresh skipped: not signed in")
-            return true
+            success = true
         } catch {
             catalogLog.error("Catalog refresh failed: \(Self.catalogErrorDetail(error), privacy: .public)")
-            return false
+            success = false
         }
+        // Re-derive the "last synced" line from the clone's watermark regardless
+        // of outcome (a 304 leaves it unchanged; a 200 advances it).
+        await updateLastCatalogSyncText()
+        return success
+    }
+
+    /// Refresh ``lastCatalogSyncText`` from the catalog watermark. A `nil` store
+    /// leaves it `nil`, so the banner shows "Never synced". Parsing/formatting is
+    /// the pure ``formatSyncDate(_:)``.
+    ///
+    /// A *successful* read of a never-populated clone returns `nil` (the store
+    /// reports no watermark), which correctly shows "Never synced". A read that
+    /// **throws** (a transient SQLite lock / I/O error) preserves the previous
+    /// value instead of wiping it — otherwise a single flaky read after a good
+    /// sync would regress a live banner to "Never synced".
+    private func updateLastCatalogSyncText() async {
+        guard let catalogStore else {
+            lastCatalogSyncText = nil
+            return
+        }
+        do {
+            let watermark = try await catalogStore.lastModified()
+            lastCatalogSyncText = watermark.map(Self.formatSyncDate)
+        } catch {
+            catalogLog.debug("Last-synced watermark read failed; keeping previous value: \(Self.catalogErrorDetail(error), privacy: .public)")
+        }
+    }
+
+    /// Format the catalog's verbatim RFC 1123 `Last-Modified` watermark
+    /// ("Wed, 24 Jun 2026 12:00:00 GMT") into a locale-aware display string for
+    /// the offline banner. Falls back to the raw string if it doesn't parse, so
+    /// the banner always shows something concrete. `nonisolated` + pure so it's
+    /// directly unit-testable.
+    nonisolated static func formatSyncDate(_ rfc1123: String) -> String {
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.timeZone = TimeZone(identifier: "GMT")
+        parser.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        guard let date = parser.date(from: rfc1123) else { return rfc1123 }
+        return date.formatted(date: .abbreviated, time: .shortened)
     }
 
     /// Lazily cache + attach `albumID`'s Spotlight cover thumbnail (issue #44).
@@ -355,6 +481,14 @@ final class AppDependencies {
     /// catalog features inert) if the directory can't be located or created.
     static func defaultCatalogStoreURL() -> URL? {
         appSupportSubdirectory("Catalog")?.appending(path: "catalog.sqlite", directoryHint: .notDirectory)
+    }
+
+    /// The on-device bin snapshot's SQLite file (issue #60):
+    /// `<Application Support>/Bin/bin.sqlite`. A **separate** directory + DB from
+    /// `Catalog/` — the bin store is its own independent actor. Returns `nil`
+    /// (leaving the bin online-only) if the directory can't be located or created.
+    static func defaultBinStoreURL() -> URL? {
+        appSupportSubdirectory("Bin")?.appending(path: "bin.sqlite", directoryHint: .notDirectory)
     }
 
     /// The on-device Spotlight thumbnail cache directory (issue #44):

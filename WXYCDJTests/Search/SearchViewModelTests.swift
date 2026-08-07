@@ -3,11 +3,12 @@
 //  WXYCDJTests
 //
 //  Pins SearchViewModel's outward state machine: short / empty queries stay
-//  idle, a hit transitions to .results, an empty response to .empty, an HTTP
-//  error to .error, and a follow-up keystroke that shortens the query below
-//  the minimum length cancels the in-flight task and clears results without
-//  hitting the network. The debounce *timing* is treated as an
-//  implementation detail — we poll the state until it settles rather than
+//  idle, a hit transitions to .results, an empty response to .empty, and a
+//  follow-up keystroke that shortens the query below the minimum length cancels
+//  the in-flight task and clears results without hitting the network. Offline
+//  (or on a failed request) the view model serves the on-device clone and
+//  exposes `.local` as the source (issue #58). The debounce *timing* is treated
+//  as an implementation detail — we poll the state until it settles rather than
 //  asserting against the wall clock.
 //
 //  Created by Jake on 5/20/26.
@@ -22,9 +23,25 @@ import Testing
 @Suite("SearchViewModel", .serialized)
 @MainActor
 struct SearchViewModelTests {
+    /// Build a view model whose LibrarySearch is online by default with no local
+    /// clone — the server-path behavior the legacy tests assert. Pass a `store`
+    /// and `online: false` to exercise the offline fallback.
+    private static func makeViewModel(
+        _ client: APIClient,
+        store: (any CatalogStore)? = nil,
+        online: Bool = true
+    ) -> SearchViewModel {
+        let search = LibrarySearch(
+            api: client,
+            catalogStore: store,
+            connectivity: ConnectivityMonitor(initiallyOnline: online)
+        )
+        return SearchViewModel(search: search, api: client)
+    }
+
     @Test func emptyQueryStaysIdleAndIssuesNoRequest() async throws {
         let (client, session) = try await SignedInClient.make()
-        let viewModel = SearchViewModel(api: client)
+        let viewModel = Self.makeViewModel(client)
         let baseline = session.recordedRequests.count
 
         viewModel.query = ""
@@ -37,7 +54,7 @@ struct SearchViewModelTests {
 
     @Test func singleCharQueryStaysIdleAndIssuesNoRequest() async throws {
         let (client, session) = try await SignedInClient.make()
-        let viewModel = SearchViewModel(api: client)
+        let viewModel = Self.makeViewModel(client)
         let baseline = session.recordedRequests.count
 
         viewModel.query = "j"
@@ -50,7 +67,7 @@ struct SearchViewModelTests {
 
     @Test func hitTransitionsToResultsState() async throws {
         let (client, session) = try await SignedInClient.make()
-        let viewModel = SearchViewModel(api: client)
+        let viewModel = Self.makeViewModel(client)
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200,
             body: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
@@ -60,13 +77,14 @@ struct SearchViewModelTests {
         try await Self.waitForSettle(viewModel)
 
         #expect(viewModel.state == .results)
+        #expect(viewModel.source == .server)
         #expect(viewModel.results.count == 1)
         #expect(viewModel.results.first?.artistName == "Juana Molina")
     }
 
     @Test func emptyResponseTransitionsToEmptyState() async throws {
         let (client, session) = try await SignedInClient.make()
-        let viewModel = SearchViewModel(api: client)
+        let viewModel = Self.makeViewModel(client)
         session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data("[]".utf8)))
 
         viewModel.query = "zzz"
@@ -76,24 +94,43 @@ struct SearchViewModelTests {
         #expect(viewModel.results.isEmpty)
     }
 
-    @Test func serverErrorTransitionsToErrorState() async throws {
+    @Test func serverErrorWithNoLocalCloneTransitionsToEmpty() async throws {
+        // A failed online request now falls back to local instead of erroring;
+        // with no clone the fallback is empty (no red banner, no manual retry).
         let (client, session) = try await SignedInClient.make()
-        let viewModel = SearchViewModel(api: client)
+        let viewModel = Self.makeViewModel(client)
         session.enqueue(StubRequestSession.Stub(statusCode: 500, body: Data(#"{"error":"boom"}"#.utf8)))
 
         viewModel.query = "ju"
         try await Self.waitForSettle(viewModel)
 
-        if case .error = viewModel.state {
-            // pass
-        } else {
-            Issue.record("expected .error state, got \(viewModel.state)")
+        #expect(viewModel.state == .empty)
+        #expect(viewModel.source == .local)
+        #expect(viewModel.results.isEmpty)
+    }
+
+    @Test func offlineServesLocalCloneAndExposesLocalSource() async throws {
+        let (client, _) = try await SignedInClient.make()
+        defer { Self.removeStore() }
+        // Confine the store + view model to an inner scope so the SQLite
+        // connection is released (and closed) before the `defer` unlinks the
+        // file — otherwise SQLite logs a "vnode unlinked while in use" warning.
+        do {
+            let store = try await Self.makeStore(rows: [Self.juanaCatalogRow])
+            let viewModel = Self.makeViewModel(client, store: store, online: false)
+
+            viewModel.query = "ju"
+            try await Self.waitForSettle(viewModel)
+
+            #expect(viewModel.state == .results)
+            #expect(viewModel.source == .local)
+            #expect(viewModel.results.map(\.id) == [100])
         }
     }
 
     @Test func addToBinForwardsFirstMatchedTrackTitle() async throws {
         let (client, session) = try await SignedInClient.make()
-        let viewModel = SearchViewModel(api: client)
+        let viewModel = Self.makeViewModel(client)
         let row = try AlbumSearchResult.fixture(matchedTrackTitles: ["In a Sentimental Mood"])
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200,
@@ -113,7 +150,7 @@ struct SearchViewModelTests {
 
     @Test func addToBinOmitsTrackTitleWhenNotTrackMatched() async throws {
         let (client, session) = try await SignedInClient.make()
-        let viewModel = SearchViewModel(api: client)
+        let viewModel = Self.makeViewModel(client)
         let row = try AlbumSearchResult.fixture(matchedTrackTitles: [])
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200,
@@ -131,7 +168,7 @@ struct SearchViewModelTests {
 
     @Test func shorteningQueryBelowMinimumCancelsInFlightSearch() async throws {
         let (client, session) = try await SignedInClient.make()
-        let viewModel = SearchViewModel(api: client)
+        let viewModel = Self.makeViewModel(client)
         let baseline = session.recordedRequests.count
 
         viewModel.query = "ju"
@@ -160,6 +197,43 @@ struct SearchViewModelTests {
         while viewModel.state == .searching && Date() < deadline {
             try await Task.sleep(for: .milliseconds(25))
         }
+    }
+
+    // MARK: Local-store helpers (offline fallback)
+
+    /// A WXYC-representative catalog row (Juana Molina, id 100) for the offline
+    /// fallback test.
+    static let juanaCatalogRow = CatalogRow(
+        id: 100, artistName: "Juana Molina", albumTitle: "DOGA",
+        codeLetters: "MOL", codeNumber: 12, codeArtistNumber: 1,
+        label: "Sonamos", genreName: "Rock", formatName: "CD",
+        onStreaming: true, plays: 34, artworkURL: nil,
+        rotationBin: nil, rotationKillDate: nil
+    )
+
+    nonisolated(unsafe) private static var storeURL: URL?
+
+    /// A real SQLiteCatalogStore at a fresh temp path, seeded with `rows` (which
+    /// builds the FTS index). The app-test bundle can't see WXYCAPITests' spy, so
+    /// the offline path is exercised against the production store.
+    private static func makeStore(rows: [CatalogRow]) async throws -> SQLiteCatalogStore {
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "search-vm-test-\(UUID().uuidString).sqlite")
+        storeURL = url
+        let store = try SQLiteCatalogStore(url: url)
+        try await store.replace(rows: rows, lastModified: nil)
+        return store
+    }
+
+    private static func removeStore() {
+        guard let url = storeURL else { return }
+        let fm = FileManager.default
+        try? fm.removeItem(at: url)
+        let base = url.path(percentEncoded: false)
+        for suffix in ["-journal", "-wal", "-shm"] {
+            try? fm.removeItem(at: URL(filePath: base + suffix))
+        }
+        storeURL = nil
     }
 }
 

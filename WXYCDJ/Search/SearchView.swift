@@ -44,7 +44,7 @@ struct SearchView: View {
         .toolbar { signOutMenu }
         .onAppear {
             if viewModel == nil {
-                viewModel = SearchViewModel(api: deps.api)
+                viewModel = SearchViewModel(search: deps.librarySearch, api: deps.api)
             }
         }
     }
@@ -76,17 +76,40 @@ struct SearchView: View {
                 }
             }
         case .empty:
-            ContentUnavailableView.search(text: viewModel.query)
-        case .error(let message):
-            ContentUnavailableView("Couldn't search", systemImage: "exclamationmark.triangle",
-                                   description: Text(message))
+            if viewModel.source == .local {
+                // The offline FTS clone (or a failed live request falling back to
+                // it) found nothing. Frame it as the saved library so a miss here
+                // doesn't read as a confirmed "not in the WXYC library" — the live
+                // catalog wasn't consulted (issue #58).
+                ContentUnavailableView {
+                    Label("No saved matches", systemImage: "wifi.slash")
+                } description: {
+                    Text("Nothing in the saved library matches \u{201C}\(viewModel.query)\u{201D}.")
+                }
+            } else {
+                ContentUnavailableView.search(text: viewModel.query)
+            }
         case .results:
-            List(viewModel.results) { row in
-                // Carry the live row as the route's fallback so the detail
-                // header renders instantly while /library/info + LML load.
-                NavigationLink(value: AlbumRoute(id: row.id, fallback: row)) {
-                    SearchResultRow(row: row) {
-                        Task { _ = await viewModel.addToBin(row) }
+            List {
+                // When the offline FTS clone served these results, lead with a
+                // quiet note so the DJ knows they're looking at the saved library
+                // (bm25 ranking, artist/album/call-number only — no track hints).
+                if viewModel.source == .local {
+                    Section {
+                        Label("Showing saved library", systemImage: "wifi.slash")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Section {
+                    ForEach(viewModel.results) { row in
+                        // Carry the live row as the route's fallback so the detail
+                        // header renders instantly while /library/info + LML load.
+                        NavigationLink(value: AlbumRoute(id: row.id, fallback: row)) {
+                            SearchResultRow(row: row) {
+                                Task { _ = await viewModel.addToBin(row) }
+                            }
+                        }
                     }
                 }
             }

@@ -62,16 +62,42 @@ struct CatalogIndexState: Equatable, Sendable {
 
     // MARK: Binary codec
 
-    /// Leading byte of every encoded blob, so a future format change (or a blob
-    /// written by the issue-#19 code, which stored a bare watermark string) is
+    /// Leading byte of every encoded blob, so a stale or foreign format (e.g. a
+    /// blob written by the issue-#19 code, which stored a bare watermark string) is
     /// detected and rejected by ``init(decoding:)`` rather than misparsed.
-    private static let formatVersion: UInt8 = 1
+    ///
+    /// Bumping this **invalidates every persisted blob** — the migration lever for a
+    /// change to the *mapping function* (`CatalogSpotlight.searchableItem(for:)`).
+    /// Such a change alters every item's indexed representation but cannot move any
+    /// row's `CatalogSpotlight.fingerprint(for:)` (the fingerprint covers row *data*,
+    /// not the mapping), so the delta reindex would otherwise classify every already-
+    /// indexed row as unchanged and skip it — the new representation would never land
+    /// on an upgrade. A bump makes ``decodeWatermark(from:)`` and the full
+    /// ``init(decoding:)`` read the old blob as `nil`/`empty`, so the next poll sends
+    /// no `If-Modified-Since`, the server returns a full `200`, and the reindex
+    /// re-upserts every row once against an empty map.
+    ///
+    /// Caveat: because that reindex diffs against an *empty* old map, it derives no
+    /// removes — so an album that left the catalog during the prior format era (e.g.
+    /// a record marked lost, dropped from the export) is re-indexed-as-absent but
+    /// never deleted from the physical index, lingering as an orphaned Spotlight hit
+    /// (a tap deep-links to a now-missing row, which `AlbumDetailView` surfaces as a
+    /// fetch error). Accepted as rare and low-impact; the issue-#36 "no
+    /// delete-by-domain" seam precludes a cheap reconciliation, and a reinstall
+    /// clears it.
+    ///
+    /// Version history:
+    /// - `1` — issue #36 initial codec (supersedes the issue-#19 bare-watermark blob).
+    /// - `2` — issue #32 added `textContent` to `searchableItem(for:)`; bumped to
+    ///   force a one-time full reindex so artist/label/call-number recall lands on
+    ///   existing installs, not just fresh ones.
+    private static let formatVersion: UInt8 = 2
 
     /// Encode to the compact, **stable** binary form committed as client state.
     /// Layout (all integers little-endian):
     ///
     /// ```
-    /// [version: UInt8 = 1]
+    /// [version: UInt8]   (the current ``formatVersion``)
     /// [watermark present: UInt8 (0 | 1)]
     /// if present: [UInt32 utf8 byte count][utf8 bytes]
     /// [UInt32 entry count]

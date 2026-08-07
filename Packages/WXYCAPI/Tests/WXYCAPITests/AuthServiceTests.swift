@@ -10,11 +10,19 @@
 //  transiently enters the pending window (.signedIn(payload: nil)) and
 //  re-mints the JWT lazily, while a 401 stays terminal and rolls back.
 //
+//  Issue #57 (offline auth grace): a successful exchange persists the grace
+//  anchors (lastValidatedAt + a durable payload); a cold-launch restore whose
+//  JWT exchange fails transiently consults OfflineSessionPolicy — within the
+//  window it restores the cached identity (tokens retained), past the window it
+//  signs out (tokens retained), and a 401 stays terminal (tokens cleared,
+//  including the new anchors).
+//
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
 //
 
 import Foundation
+import os
 import Testing
 @testable import WXYCAPI
 
@@ -22,6 +30,16 @@ import Testing
 @MainActor
 struct AuthServiceTests {
     private static let config = WXYCAPIConfiguration.localDevelopment
+
+    /// Thread-safe sink for the `AuthService` connectivity outcome hook (#71):
+    /// records each `true`/`false` transport result in order. `Sendable`
+    /// (lock-backed) so it can be captured in the `@Sendable` outcome closure —
+    /// the same shape `APIClientTests` uses for `APIClient.onOutcome`.
+    private final class OutcomeRecorder: Sendable {
+        private let storage = OSAllocatedUnfairLock<[Bool]>(initialState: [])
+        var values: [Bool] { storage.withLock { $0 } }
+        func record(_ success: Bool) { storage.withLock { $0.append(success) } }
+    }
 
     @Test func signInSuccessReachesSignedIn() async throws {
         let session = StubRequestSession()
@@ -399,6 +417,112 @@ struct AuthServiceTests {
         #expect(try storage.load(.jwt) != nil)
     }
 
+    @Test func signOutDuringInFlightRefreshIsNotResurrectedByRotationHeader() async throws {
+        // Issue #66 — the success-path mirror of the lazy-401 guard above. The
+        // refresh binds its bearer and suspends at /auth/token; if a signOut runs
+        // during that suspension (clearing the token, the Keychain, and state),
+        // the refresh must NOT resume on a 2xx and re-persist the session. The
+        // dangerous variant carries a rolling-renewal `set-auth-token` rotation
+        // header: captureRotatedSessionToken would see it differ from the now-nil
+        // sessionToken and write it back to the Keychain — leaving state ==
+        // .signedOut but a live bearer persisted, which the next cold launch's
+        // restoreSession() silently signs back in. That defeats signOut and
+        // violates #52's leave-no-trace contract (security-relevant on a shared
+        // device). The GatedAuthSession parks the refresh mid-flight so the
+        // signOut interleaves deterministically.
+        let session = GatedAuthSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-1", for: .sessionToken)
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        // Cold-launch restore brings session-1 to .signedIn (one instant token call).
+        session.enqueueInstant(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await service.restoreSession()
+        service.invalidateJWT()  // force the next currentJWT() to hit the network
+
+        // Arm the gate so the refresh's /auth/token parks, then returns a 2xx
+        // that BOTH rotates the session (set-auth-token) and carries a valid JWT.
+        session.armGate(returning: StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-2"],
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+
+        // Start the refresh (bound to session-1); it parks at the gate.
+        let refresh = Task { try? await service.currentJWT() }
+        await session.waitForGatedArrival()
+
+        // While the refresh is suspended, the DJ signs out: token + Keychain
+        // cleared, state .signedOut.
+        await service.signOut()
+        #expect(service.state == .signedOut)
+
+        // Let the refresh resume on its 2xx + rotation header.
+        session.releaseGate()
+        _ = await refresh.value
+
+        // The load-bearing assertions: the signed-out session stays signed out
+        // with an EMPTY Keychain — the rotation header did not resurrect it.
+        #expect(service.state == .signedOut)
+        #expect(try storage.load(.sessionToken) == nil)
+        #expect(try storage.load(.jwt) == nil)
+    }
+
+    @Test func benignConcurrentDoubleRefreshDoesNotSpuriouslyFail() async throws {
+        // Issue #66 regression guard. The fix must reject a signOut/replace that
+        // races a refresh WITHOUT regressing the benign overlapping double-refresh
+        // — two authed callers (interactive search/bin AND the background catalog
+        // refresh share one AuthService) racing a refresh, where the first merely
+        // *rotates* the session while the second is awaiting. A naive
+        // `guard sessionToken == boundToken` would make the second spuriously
+        // throw .notSignedIn even though the session is alive. The epoch guard
+        // doesn't bump on rotation, so both callers still resolve a JWT.
+        let session = GatedAuthSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-1", for: .sessionToken)
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        // Cold-launch restore brings session-1 to .signedIn.
+        session.enqueueInstant(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await service.restoreSession()
+        service.invalidateJWT()
+
+        // Refresh A parks at the gate (bound to session-1); it resumes LAST, after
+        // refresh B has already rotated the live session to session-2.
+        session.armGate(returning: StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        // Refresh B (served instantly) rotates session-1 → session-2.
+        session.enqueueInstant(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-2"],
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+
+        let refreshA = Task { try await service.currentJWT() }
+        await session.waitForGatedArrival()
+
+        // While A is parked, B runs to completion and rotates the session.
+        let bToken = try await service.currentJWT()
+        #expect(!bToken.isEmpty)
+        #expect(try storage.load(.sessionToken) == "session-2")
+
+        // A resumes: the live session was rotated to session-2 (same generation),
+        // not cleared. A must still resolve a JWT — no spurious .notSignedIn.
+        session.releaseGate()
+        let aToken = try await refreshA.value  // rethrows if A spuriously failed
+        #expect(!aToken.isEmpty)
+        #expect(service.isSignedIn)
+        #expect(try storage.load(.sessionToken) == "session-2")
+    }
+
     @Test func restoreSessionPullsTokenFromStorage() async throws {
         let session = StubRequestSession()
         let storage = InMemoryTokenStorage()
@@ -545,13 +669,14 @@ struct AuthServiceTests {
         #expect(try storage.load(.sessionToken) == "session-stable")
     }
 
-    @Test func restoreSessionWithTransientServerErrorEntersPending() async throws {
-        // Cold launch with a stored token, /auth/token returns 5xx (server down,
-        // not "session expired"). Issue #53: the returning DJ enters the pending
-        // window (.signedIn(payload: nil)) rather than being dumped to a login
-        // screen — strictly better, especially offline, since MainView still
-        // browses the on-device catalog clone. The persisted session token stays
-        // so the JWT can be re-minted lazily, which the follow-on proves.
+    @Test func restoreSessionTransientWithoutGraceAnchorSignsOutButKeepsToken() async throws {
+        // Cold launch with a *bare* stored token (no grace anchor — e.g. a
+        // legacy install upgrading to issue #57, or a payload/anchor that never
+        // got persisted), /auth/token fails transiently (503). Without an
+        // anchor the OfflineSessionPolicy can't grant grace, so it fails closed
+        // to .signedOut. But a transient failure must NEVER clear tokens: the
+        // session token is retained so the *next* online launch can recover the
+        // session (success) or terminally clear it (401).
         let session = StubRequestSession()
         let storage = InMemoryTokenStorage()
         try storage.save("session-stored", for: .sessionToken)
@@ -561,29 +686,106 @@ struct AuthServiceTests {
 
         await service.restoreSession()
 
-        #expect(service.state == .signedIn(payload: nil))
-        // Keychain must still hold the token for the lazy retry.
+        #expect(service.state == .signedOut)
+        // The transient branch keeps the token (no clearLocalSession).
         #expect(try storage.load(.sessionToken) == "session-stored")
+    }
 
-        // Follow-on: the lazy currentJWT() re-mints the JWT once the server
-        // recovers, and the DJ stays signed in.
+    @Test func restoreSessionOfflineWithinWindowKeepsCachedIdentity() async throws {
+        // Issue #57, the headline case: a returning DJ cold-launches offline.
+        // A prior online sign-in persisted the durable payload + a recent
+        // lastValidatedAt anchor. Now /auth/token fails with a transport error
+        // (the stub queue is left empty so data(for:) throws). Within the 30-day
+        // window the DJ stays signed in on the cached identity — NOT the pending
+        // nil, the real payload — and lands in the app, not the login screen.
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+
+        // A real online sign-in seeds the anchors through the production path.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-abc"],
+            body: Data("{}".utf8)
+        ))
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200,
             body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
         ))
-        let token = try await service.currentJWT()
-        #expect(!token.isEmpty)
-        #expect(service.isSignedIn)
+        let first = AuthService(configuration: Self.config, storage: storage, session: session)
+        await first.signIn(username: "dj", password: "pw")
+        #expect(first.isSignedIn)
+        #expect((try storage.load(.payload)) != nil)
+        #expect((try storage.load(.lastValidatedAt)) != nil)
+
+        // Cold launch (fresh AuthService, state .unknown). No stub enqueued →
+        // the /auth/token exchange throws a transport error (offline blip).
+        let second = AuthService(configuration: Self.config, storage: storage, session: session)
+        await second.restoreSession()
+
+        guard case let .signedIn(payload) = second.state else {
+            Issue.record("expected signedIn, got \(second.state)")
+            return
+        }
+        // The full cached identity round-trips through storage (sub/email/role +
+        // a finite exp), not just email and not the issue-#53 pending nil. Pins
+        // the JWTPayload encode/decode fidelity on the offline-restore path.
+        #expect(payload != nil)
+        #expect(payload?.sub == "42")
+        #expect(payload?.email == "juana@wxyc.org")
+        #expect(payload?.role == "dj")
+        #expect(payload?.exp.timeIntervalSince1970.isFinite == true)
+        // Tokens retained for a later online self-heal.
+        #expect(try storage.load(.sessionToken) == "session-abc")
+        #expect((try storage.load(.payload)) != nil)
     }
 
-    @Test func restoreSessionWith401ClearsStoredToken() async throws {
+    @Test func restoreSessionOfflineBeyondWindowSignsOut() async throws {
+        // Issue #57: same setup, but the last confirmed server contact is older
+        // than the 30-day window. The grace has elapsed, so a cold launch whose
+        // JWT exchange fails transiently drops to the login screen. Tokens are
+        // still retained (a transient failure never clears them).
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-abc"],
+            body: Data("{}".utf8)
+        ))
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        let first = AuthService(configuration: Self.config, storage: storage, session: session)
+        await first.signIn(username: "dj", password: "pw")
+
+        // Backdate the anchor just past the window.
+        let stale = Date().addingTimeInterval(-(OfflineSessionPolicy.defaultWindow + 60))
+        try storage.save(String(stale.timeIntervalSince1970), for: .lastValidatedAt)
+
+        // Cold launch offline: no stub → transport error.
+        let second = AuthService(configuration: Self.config, storage: storage, session: session)
+        await second.restoreSession()
+
+        #expect(second.state == .signedOut)
+        // Beyond-window sign-out is not a 401: tokens are not cleared.
+        #expect(try storage.load(.sessionToken) == "session-abc")
+    }
+
+    @Test func restoreSessionWith401ClearsStoredTokenAndGraceAnchors() async throws {
         // Cold launch with a stored token that the server rejects (401): the
         // session is dead. Issue #53 makes this terminal arm clear the token —
         // previously restoreSession's catch-all kept it, so a revoked session
-        // lingered in the Keychain and 401'd on every launch forever.
+        // lingered in the Keychain and 401'd on every launch forever. Issue #57
+        // adds: the grace anchors (lastValidatedAt + durable payload) are wiped
+        // too, so a dead session can't be revived offline by the policy.
         let session = StubRequestSession()
         let storage = InMemoryTokenStorage()
         try storage.save("session-revoked", for: .sessionToken)
+        // Pre-seed the grace anchors as if a prior contact had succeeded.
+        let payload = JWTPayload(sub: "42", email: "juana@wxyc.org", role: "dj", exp: Date().addingTimeInterval(600))
+        try storage.save(String(data: try JSONCoders.encoder.encode(payload), encoding: .utf8)!, for: .payload)
+        try storage.save(String(Date().timeIntervalSince1970), for: .lastValidatedAt)
         let service = AuthService(configuration: Self.config, storage: storage, session: session)
 
         session.enqueue(StubRequestSession.Stub(statusCode: 401, body: Data()))
@@ -593,6 +795,161 @@ struct AuthServiceTests {
         #expect(service.state == .signedOut)
         #expect(try storage.load(.sessionToken) == nil)
         #expect(try storage.load(.jwt) == nil)
+        #expect((try storage.load(.lastValidatedAt)) == nil)
+        #expect((try storage.load(.payload)) == nil)
+    }
+
+    @Test func restoreSessionOfflineWithCorruptedAnchorSignsOut() async throws {
+        // Issue #57 fail-closed: a non-numeric / non-finite .lastValidatedAt
+        // (storage corruption or tampering) must read as "no usable anchor" and
+        // sign out, never crash or grant grace. Covers loadLastValidatedAt's
+        // TimeInterval(raw)==nil and !isFinite branches end-to-end through
+        // restoreSession. Tokens are retained (transient, not a 401).
+        for corrupt in ["not-a-number", "inf", "infinity", ""] {
+            let session = StubRequestSession()
+            let storage = InMemoryTokenStorage()
+            try storage.save("session-abc", for: .sessionToken)
+            let payload = JWTPayload(sub: "42", email: "juana@wxyc.org", role: "dj", exp: Date().addingTimeInterval(600))
+            try storage.save(String(data: try JSONCoders.encoder.encode(payload), encoding: .utf8)!, for: .payload)
+            try storage.save(corrupt, for: .lastValidatedAt)
+            let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+            // No stub → /auth/token throws a transport error (transient).
+            await service.restoreSession()
+
+            #expect(service.state == .signedOut, "corrupt anchor \"\(corrupt)\" should fail closed")
+            #expect(try storage.load(.sessionToken) == "session-abc")
+        }
+    }
+
+    @Test func restoreSessionOfflineWithCorruptedPayloadSignsOut() async throws {
+        // Issue #57 fail-closed: a garbage .payload blob (truncated JSON or a
+        // schema-drifted shape) makes loadPersistedPayload return nil, so the
+        // policy can't grant grace — sign out rather than revive a partial
+        // identity. Tokens retained (transient).
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        try storage.save("{ this is not valid json", for: .payload)
+        try storage.save(String(Date().timeIntervalSince1970), for: .lastValidatedAt)
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        await service.restoreSession()
+
+        #expect(service.state == .signedOut)
+        #expect(try storage.load(.sessionToken) == "session-abc")
+    }
+
+    @Test func signInPersistsGraceAnchorsAndRefreshUpdatesThem() async throws {
+        // Issue #57: a successful sign-in persists lastValidatedAt + the durable
+        // payload, and a later successful refresh advances lastValidatedAt — so
+        // every confirmed server contact resets the grace window.
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-abc"],
+            body: Data("{}".utf8)
+        ))
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        let before = Date().timeIntervalSince1970
+        await service.signIn(username: "dj", password: "pw")
+
+        let t1raw = try #require((try storage.load(.lastValidatedAt)))
+        let t1 = try #require(TimeInterval(t1raw))
+        #expect(t1 >= before)
+        let payloadJSON = try #require((try storage.load(.payload)))
+        let restored = try JSONCoders.decoder.decode(JWTPayload.self, from: Data(payloadJSON.utf8))
+        #expect(restored.email == "juana@wxyc.org")
+        #expect(restored.role == "dj")
+
+        // Force a later refresh; the anchor must advance past t1.
+        try await Task.sleep(for: .milliseconds(20))
+        service.invalidateJWT()
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        _ = try await service.currentJWT()
+
+        let t2raw = try #require((try storage.load(.lastValidatedAt)))
+        let t2 = try #require(TimeInterval(t2raw))
+        #expect(t2 > t1)  // the grace window reset on the refresh
+    }
+
+    @Test func signInClearsAStaleIdentitysGraceAnchorsOnEntry() async throws {
+        // Issue #57 hardening: signIn must not let a *prior* DJ's grace anchors
+        // (.payload + .lastValidatedAt) survive into a new DJ's session. If DJ A
+        // is signed in (anchors = A) and signIn is then called for DJ B whose
+        // session establishes (leg 1) but whose JWT exchange fails transiently
+        // (leg 2) — so B never persists its own anchors — A's durable payload
+        // would otherwise linger alongside B's session token. A later offline
+        // restore would then pair B's bearer with A's cached identity. signIn
+        // clears the anchors at entry, so the stale identity can't be revived.
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+
+        // DJ A: full sign-in seeds anchors through the production path.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-A"],
+            body: Data("{}".utf8)
+        ))
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+        await service.signIn(username: "dj-a", password: "pw")
+        #expect((try storage.load(.payload)) != nil)
+        #expect((try storage.load(.lastValidatedAt)) != nil)
+
+        // DJ B: leg 1 establishes a new session, leg 2 (the JWT exchange) fails
+        // transiently — only one stub, so the /auth/token call throws.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-B"],
+            body: Data("{}".utf8)
+        ))
+        await service.signIn(username: "dj-b", password: "pw")
+
+        // B's session token is live, but A's anchors must be gone — not lingering.
+        #expect(try storage.load(.sessionToken) == "session-B")
+        #expect(service.state == .signedIn(payload: nil))  // pending window for B
+        #expect((try storage.load(.payload)) == nil)
+        #expect((try storage.load(.lastValidatedAt)) == nil)
+    }
+
+    @Test func invalidateJWTLeavesDurablePayloadIntact() async throws {
+        // Issue #57: invalidateJWT() (the transient eviction APIClient fires on
+        // a 401, and the cache-stale path) clears the cached JWT + the .jwt slot
+        // but must NOT touch the durable .payload slot the grace path relies on.
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-abc"],
+            body: Data("{}".utf8)
+        ))
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await service.signIn(username: "dj", password: "pw")
+        #expect((try storage.load(.jwt)) != nil)
+        #expect((try storage.load(.payload)) != nil)
+
+        service.invalidateJWT()
+
+        #expect((try storage.load(.jwt)) == nil)       // transient slot evicted
+        #expect((try storage.load(.payload)) != nil)   // durable payload survives
     }
 
     @Test func currentJWTReusesCachedTokenWhenFresh() async throws {
@@ -612,5 +969,162 @@ struct AuthServiceTests {
         _ = try await service.currentJWT()
         // restoreSession used 1 request; the cache must have suppressed any further.
         #expect(session.recordedRequests.count == 1)
+    }
+
+    // MARK: - Connectivity outcome hook (issue #71)
+
+    @Test func refreshTransportThrowReportsOfflineOutcome() async throws {
+        // A `/auth/token` exchange that fails on the transport (no network /
+        // captive portal) must feed the connectivity hook a `false` — the gap
+        // #71 closes, since this throw happens inside currentJWT()/refreshJWT(),
+        // before any APIClient.fire() could report it. Driven via restoreSession
+        // so the refresh leg is the *only* transport call (no sign-in handshake
+        // ahead of it to pollute the recorder).
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let recorder = OutcomeRecorder()
+        let service = AuthService(
+            configuration: Self.config,
+            storage: storage,
+            session: session,
+            onOutcome: { recorder.record($0) }
+        )
+
+        session.enqueue(failure: URLError(.notConnectedToInternet))
+        await service.restoreSession()
+
+        #expect(recorder.values == [false])
+    }
+
+    @Test func refreshUnauthorizedReportsOnlineOutcome() async throws {
+        // A `401` on `/auth/token` is terminal for the *session* (the bearer was
+        // rejected), but the server still answered — so for *connectivity* it's a
+        // positive outcome: we reached the backend. The hook must report `true`,
+        // mirroring APIClient.fire()'s "any HTTP status = reachable" rule, even as
+        // restoreSession() clears the dead session and lands on .signedOut.
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let recorder = OutcomeRecorder()
+        let service = AuthService(
+            configuration: Self.config,
+            storage: storage,
+            session: session,
+            onOutcome: { recorder.record($0) }
+        )
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 401))
+        await service.restoreSession()
+
+        #expect(recorder.values == [true])
+        #expect(service.state == .signedOut)   // terminal arm still fired
+    }
+
+    @Test func refreshSuccessReportsOnlineOutcome() async throws {
+        // The happy path: a `200` JWT exchange is a confirmed server contact, so
+        // the hook reports `true` (and the DJ is signed in).
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let recorder = OutcomeRecorder()
+        let service = AuthService(
+            configuration: Self.config,
+            storage: storage,
+            session: session,
+            onOutcome: { recorder.record($0) }
+        )
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await service.restoreSession()
+
+        #expect(recorder.values == [true])
+        #expect(service.isSignedIn)
+    }
+
+    @Test func signInTransportThrowReportsOfflineOutcome() async throws {
+        // Issue #71 wraps the transport generally, so the sign-in leg
+        // (`/auth/sign-in/username`) feeds connectivity too: a foreground sign-in
+        // that can't reach the server is just as much an offline signal as a
+        // refresh failure. The thrown URLError reports `false`; the auth state
+        // machine is unchanged (terminal leg-1 failure -> .signedOut, no trace).
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let recorder = OutcomeRecorder()
+        let service = AuthService(
+            configuration: Self.config,
+            storage: storage,
+            session: session,
+            onOutcome: { recorder.record($0) }
+        )
+
+        session.enqueue(failure: URLError(.notConnectedToInternet))
+        await service.signIn(username: "dj", password: "pw")
+
+        #expect(recorder.values == [false])
+        #expect(service.state == .signedOut)
+    }
+
+    @Test func signOutTransportReportsOnlineOutcome() async throws {
+        // The best-effort `/auth/sign-out` POST is also routed through the hook:
+        // a server that answered the sign-out is reachable, so it reports `true`.
+        // (The sign-out outcome is the *second* value — the first is the
+        // restoreSession success that put us in a signed-in state to sign out of.)
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let recorder = OutcomeRecorder()
+        let service = AuthService(
+            configuration: Self.config,
+            storage: storage,
+            session: session,
+            onOutcome: { recorder.record($0) }
+        )
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await service.restoreSession()
+        #expect(recorder.values == [true])   // restore leg
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200))
+        await service.signOut()
+
+        #expect(recorder.values == [true, true])   // + sign-out leg
+        #expect(service.state == .signedOut)
+    }
+
+    @Test(arguments: [URLError(.cancelled) as any Error & Sendable, CancellationError()])
+    func refreshCancellationDoesNotReportAnOutcome(cancellation: any Error & Sendable) async throws {
+        // A cancelled Task is a deliberate abandonment, not "offline": the auth
+        // transport is reachable from cancellable call sites — the search debounce
+        // (`searchTask.cancel()`) and the background-refresh expiration handler
+        // (`work.cancel()`) both cancel a JWT-refresh leg in flight — so it must
+        // NOT be mistaken for evidence the server is unreachable. Covers both
+        // forms `send()` treats as a cancellation: URLSession's
+        // `URLError.cancelled` and a raw `CancellationError`.
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let recorder = OutcomeRecorder()
+        let service = AuthService(
+            configuration: Self.config,
+            storage: storage,
+            session: session,
+            onOutcome: { recorder.record($0) }
+        )
+
+        session.enqueue(failure: cancellation)
+        await service.restoreSession()
+
+        #expect(recorder.values == [])   // no connectivity signal
+        // The error still propagated to restoreSession's transient arm (it was
+        // rethrown, not swallowed): with no grace anchors persisted, that arm
+        // lands `.signedOut`.
+        #expect(service.state == .signedOut)
     }
 }

@@ -89,7 +89,13 @@ public struct KeychainTokenStorage: TokenStorage {
     }
 
     public func clearAll() throws {
-        try clear(.sessionToken)
-        try clear(.jwt)
+        // Iterate every slot (TokenSlot is CaseIterable) so a newly-added slot is
+        // cleared automatically — a hand-maintained list silently leaked the
+        // issue-#57 grace anchors on every revision until each was added. This
+        // keeps the leave-no-trace contract drift-proof and matches
+        // InMemoryTokenStorage.clearAll's removeAll() coverage.
+        for slot in TokenSlot.allCases {
+            try clear(slot)
+        }
     }
 }

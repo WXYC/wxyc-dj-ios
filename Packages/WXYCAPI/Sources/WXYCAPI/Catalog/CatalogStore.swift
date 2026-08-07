@@ -41,5 +41,17 @@ public protocol CatalogStore: Sendable {
     /// `lastModified` becomes the new watermark (`nil` clears it). On any failure
     /// the transaction rolls back, leaving the previous clone intact. A `304`
     /// performs **no** call here — the caller keeps the existing clone untouched.
+    ///
+    /// The full-text index (issue #58) is rebuilt **inside the same
+    /// transaction**, so it can never drift from the rows it indexes.
     func replace(rows: [CatalogRow], lastModified: String?) async throws
+
+    /// Artist / album / call-number full-text search over the clone (issue #58),
+    /// for the offline search fallback. Returns matching cloned ``CatalogRow``s
+    /// (the caller maps each to an `AlbumSearchResult` via
+    /// ``CatalogRow/detailFallback``). An empty or whitespace-only `query`
+    /// returns `[]`. Results are in best-effort relevance order (FTS5 `bm25`
+    /// rank), capped at `limit`. Track titles are **not** indexed — the clone
+    /// carries none — so offline track-title search is out of scope.
+    func search(query: String, limit: Int) async throws -> [CatalogRow]
 }

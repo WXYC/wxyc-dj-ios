@@ -109,9 +109,25 @@ struct CatalogIndexStateTests {
         // dictionary (which would trap on a memory-constrained device) — but the
         // host overcommits, so guard-present and guard-absent both end at nil here.
         // The guard's intent is documented at its source for future editors.
-        // version=1, watermark presence=0 (nil), count=0xFFFFFFFF, no entry bytes.
-        let blob = Data([0x01, 0x00, 0xFF, 0xFF, 0xFF, 0xFF])
+        // version=2, watermark presence=0 (nil), count=0xFFFFFFFF, no entry bytes.
+        // (Leading byte must match the current formatVersion or parsePrefix rejects
+        // it first, short-circuiting the oversized-count guard this test exercises.)
+        let blob = Data([0x02, 0x00, 0xFF, 0xFF, 0xFF, 0xFF])
         #expect(CatalogIndexState(decoding: blob) == nil)
+    }
+
+    @Test func decodingPriorFormatVersionReturnsNil() async throws {
+        // Issue #32 bumped formatVersion 1 -> 2 to force a one-time full reindex (so
+        // the new textContent mapping lands on existing installs). A blob written by
+        // the version-1 codec must therefore decode to nil — both on the watermark
+        // fast path (so the next poll re-fetches a full 200) and the full decode (so
+        // the reindex diffs against an empty map and re-upserts every row). This pins
+        // the migration: reverting/skipping the bump would resurrect v1 blobs and
+        // silently strand the feature on upgrades.
+        var v1Blob = CatalogIndexState(watermark: "Mon, 01 Jun 2026 12:00:00 GMT", fingerprints: [1: 1]).encode()
+        v1Blob[v1Blob.startIndex] = 0x01   // re-stamp with the prior format version
+        #expect(CatalogIndexState(decoding: v1Blob) == nil)
+        #expect(CatalogIndexState.decodeWatermark(from: v1Blob) == nil)
     }
 
     // MARK: Watermark-only fast path

@@ -34,8 +34,14 @@ struct BinView: View {
         .navigationTitle("My Bin")
         .onAppear {
             if viewModel == nil {
-                viewModel = BinViewModel(api: deps.api)
-                Task { await viewModel?.refresh() }
+                let vm = BinViewModel(api: deps.api, binStore: deps.binStore)
+                viewModel = vm
+                // Load the persisted snapshot first (instant offline render),
+                // then top up from the network. (issue #60)
+                Task {
+                    await vm.loadSnapshot()
+                    await vm.refresh()
+                }
             }
         }
     }

@@ -46,6 +46,13 @@ public actor SQLiteCatalogStore: CatalogStore {
     private let connection: Connection
     private var db: OpaquePointer { connection.db }
 
+    /// Set once ``ensureSearchIndex()`` has confirmed the FTS index covers the
+    /// catalog rows for this connection (issue #58). A latch, not a gate: once
+    /// true, the cheap per-search reconciliation check is skipped, because every
+    /// ``replace(rows:lastModified:)`` rebuilds the index alongside the rows and
+    /// so preserves the invariant.
+    private var searchIndexEnsured = false
+
     /// Open (creating if needed) the catalog database at `url` and ensure the
     /// schema exists. Throws ``CatalogStoreError/open(_:)`` if the file can't be
     /// opened.
@@ -64,6 +71,20 @@ public actor SQLiteCatalogStore: CatalogStore {
             // setWatermark inserts a present non-null string or DELETEs the row.
             // (lastModified() still tolerates a NULL column defensively.)
             try Self.exec(handle, "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+            // Offline search index (issue #58). A contentless (`content=''`)
+            // external-content FTS5 table: it stores only the searchable terms
+            // keyed by `rowid = catalog.id`, never the original text (that lives
+            // in the `catalog` BLOB). `remove_diacritics 2` folds accents so
+            // "nilufer" matches "Nilüfer Yanya". Apple's system libsqlite3 ships
+            // FTS5 on iOS/macOS, so this CREATE succeeds on every supported
+            // platform; a "no such module: fts5" failure here would surface as a
+            // store-open error rather than silent corruption.
+            try Self.exec(handle, """
+                CREATE VIRTUAL TABLE IF NOT EXISTS catalog_fts USING fts5(
+                    artist, album, call_number,
+                    content='', tokenize='unicode61 remove_diacritics 2'
+                );
+                """)
         } catch {
             sqlite3_close(handle)
             throw error
@@ -136,6 +157,7 @@ public actor SQLiteCatalogStore: CatalogStore {
                     throw Self.error(db, "insert id \(row.id)")
                 }
             }
+            try Self.rebuildSearchIndex(db, rows: rows)
             try Self.setWatermark(db, lastModified)
             try Self.exec(db, "COMMIT;")
         } catch {
@@ -144,7 +166,132 @@ public actor SQLiteCatalogStore: CatalogStore {
         }
     }
 
+    public func search(query: String, limit: Int) throws -> [CatalogRow] {
+        guard let match = FTSQuery.match(for: query) else { return [] }
+        try ensureSearchIndex()
+        var ids: [Int] = []
+        let stmt = try Self.prepare(
+            db, "SELECT rowid FROM catalog_fts WHERE catalog_fts MATCH ? ORDER BY rank LIMIT ?;"
+        )
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_bind_text(stmt, 1, match, -1, Self.transientDestructor) == SQLITE_OK else {
+            throw Self.error(db, "bind match")
+        }
+        guard sqlite3_bind_int64(stmt, 2, Int64(limit)) == SQLITE_OK else {
+            throw Self.error(db, "bind limit")
+        }
+        rowLoop: while true {
+            switch sqlite3_step(stmt) {
+            case SQLITE_ROW: ids.append(Int(sqlite3_column_int64(stmt, 0)))
+            case SQLITE_DONE: break rowLoop
+            default: throw Self.error(db, "step search")
+            }
+        }
+        // Load the full row BLOB for each match, preserving the rank order. The
+        // FTS table is contentless, so the searchable text alone isn't enough —
+        // the authoritative row lives in `catalog`.
+        var results: [CatalogRow] = []
+        results.reserveCapacity(ids.count)
+        for id in ids {
+            if let row = try row(id: id) { results.append(row) }
+        }
+        return results
+    }
+
     // MARK: Private SQLite helpers
+
+    /// Backfill the FTS index from the existing catalog rows when it doesn't yet
+    /// cover them — the one-time migration for installs that cloned the catalog
+    /// before issue #58 added the index. Such a store has a populated `catalog`
+    /// table but an empty `catalog_fts` (the `CREATE … IF NOT EXISTS` in `init`
+    /// makes the table, but only ``replace(rows:lastModified:)`` — which runs on a
+    /// `200` — fills it, so a `304` refresh would otherwise leave offline search
+    /// returning nothing indefinitely). It rebuilds the index from the rows
+    /// without touching the watermark, so the conditional-GET path is undisturbed.
+    ///
+    /// Steady state pays only two `COUNT`s (the index and rows are rebuilt
+    /// together by `replace`, so they always match), then latches; a fresh/empty
+    /// store is a no-op. Runs inside the actor (off the main thread) and only when
+    /// offline search is actually exercised, so it never delays launch.
+    private func ensureSearchIndex() throws {
+        guard !searchIndexEnsured else { return }
+        let db = connection.db
+        let catalogCount = try Self.scalarInt(db, "SELECT COUNT(*) FROM catalog;")
+        let indexCount = try Self.scalarInt(db, "SELECT COUNT(*) FROM catalog_fts;")
+        if catalogCount != indexCount {
+            let rows = try Self.allRows(db)
+            try Self.exec(db, "BEGIN IMMEDIATE;")
+            do {
+                try Self.rebuildSearchIndex(db, rows: rows)
+                try Self.exec(db, "COMMIT;")
+            } catch {
+                try? Self.exec(db, "ROLLBACK;")
+                throw error
+            }
+        }
+        searchIndexEnsured = true
+    }
+
+    /// Run a single-column, single-row integer query (e.g. a `COUNT(*)`).
+    private static func scalarInt(_ db: OpaquePointer, _ sql: String) throws -> Int {
+        let stmt = try prepare(db, sql)
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { throw error(db, "step scalar \(sql.prefix(40))") }
+        return Int(sqlite3_column_int64(stmt, 0))
+    }
+
+    /// Decode every stored `CatalogRow` BLOB. Used by the FTS backfill — the
+    /// `catalog` table is the source of truth, and the searchable text (artist /
+    /// album / call number) is only recoverable by decoding the rows.
+    private static func allRows(_ db: OpaquePointer) throws -> [CatalogRow] {
+        let stmt = try prepare(db, "SELECT row FROM catalog;")
+        defer { sqlite3_finalize(stmt) }
+        var rows: [CatalogRow] = []
+        loop: while true {
+            switch sqlite3_step(stmt) {
+            case SQLITE_ROW:
+                if let row = try decodeRow(stmt) { rows.append(row) }
+            case SQLITE_DONE:
+                break loop
+            default:
+                throw error(db, "step all rows")
+            }
+        }
+        return rows
+    }
+
+    /// Rebuild the contentless FTS index from `rows`, inside the caller's open
+    /// transaction. A `content=''` fts5 table rejects `DELETE FROM`, so the whole
+    /// index is cleared with the documented `'delete-all'` command, then each
+    /// row's searchable text (artist / album / call number) is re-inserted keyed
+    /// by `rowid = catalog.id`. Any failure throws and the caller rolls back, so
+    /// the index and the rows commit (or revert) together — they can't drift.
+    private static func rebuildSearchIndex(_ db: OpaquePointer, rows: [CatalogRow]) throws {
+        try exec(db, "INSERT INTO catalog_fts (catalog_fts) VALUES ('delete-all');")
+        let stmt = try prepare(
+            db, "INSERT INTO catalog_fts (rowid, artist, album, call_number) VALUES (?, ?, ?, ?);"
+        )
+        defer { sqlite3_finalize(stmt) }
+        for row in rows {
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+            guard sqlite3_bind_int64(stmt, 1, Int64(row.id)) == SQLITE_OK else {
+                throw error(db, "bind fts id")
+            }
+            guard sqlite3_bind_text(stmt, 2, row.artistName, -1, transientDestructor) == SQLITE_OK else {
+                throw error(db, "bind fts artist")
+            }
+            guard sqlite3_bind_text(stmt, 3, row.albumTitle, -1, transientDestructor) == SQLITE_OK else {
+                throw error(db, "bind fts album")
+            }
+            guard sqlite3_bind_text(stmt, 4, row.callNumber, -1, transientDestructor) == SQLITE_OK else {
+                throw error(db, "bind fts call number")
+            }
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw error(db, "insert fts id \(row.id)")
+            }
+        }
+    }
 
     /// `SQLITE_TRANSIENT` — tells SQLite to copy the bound bytes, so the Swift
     /// `Data`/`String` can be freed when the bind call returns. Not exported by

@@ -3,8 +3,10 @@
 //  WXYCDJ
 //
 //  Owns the debounced library-search loop. Each keystroke (after ≥ 2 chars)
-//  schedules a Task that sleeps 300 ms then issues GET /library/. Earlier
-//  tasks are cancelled, matching dj-site's "newest query wins" behavior.
+//  schedules a Task that sleeps 300 ms then runs a LibrarySearch — online-first,
+//  with an automatic on-device fallback when offline or when the request fails
+//  (issue #58). Earlier tasks are cancelled, matching dj-site's "newest query
+//  wins" behavior.
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -22,7 +24,6 @@ final class SearchViewModel {
         case searching
         case results
         case empty
-        case error(String)
     }
 
     var query: String = "" {
@@ -31,13 +32,20 @@ final class SearchViewModel {
 
     private(set) var results: [AlbumSearchResult] = []
     private(set) var state: State = .idle
+    /// Which tier served the current `results` — `.server` for live search,
+    /// `.local` for the offline FTS fallback (issue #58). The view reads this in
+    /// the `.results` state to show a quiet "Showing saved library" note when
+    /// results came from the on-device clone.
+    private(set) var source: LibrarySearchOutcome.Source = .server
 
+    private let search: LibrarySearch
     private let api: APIClient
     private var searchTask: Task<Void, Never>?
     private static let minQueryLength = 2
     private static let debounce: Duration = .milliseconds(300)
 
-    init(api: APIClient) {
+    init(search: LibrarySearch, api: APIClient) {
+        self.search = search
         self.api = api
     }
 
@@ -58,21 +66,14 @@ final class SearchViewModel {
     }
 
     private func performSearch(_ q: String) async {
-        do {
-            // Pass the same query string to both artist_name and album_title.
-            // GET /library/ ORs the two columns server-side (fuzzy match
-            // either field), which matches dj-site's single-input search UX.
-            let rows = try await api.searchLibrary(artist: q, title: q)
-            if Task.isCancelled { return }
-            results = rows
-            state = rows.isEmpty ? .empty : .results
-        } catch let error as APIError {
-            if Task.isCancelled { return }
-            state = .error(error.localizedMessage)
-        } catch {
-            if Task.isCancelled { return }
-            state = .error(error.localizedDescription)
-        }
+        // LibrarySearch never throws: a failed online request or an offline
+        // monitor degrades to the on-device clone automatically. The outcome
+        // carries which tier served it so the UI can frame local results.
+        let outcome = await search.search(query: q)
+        if Task.isCancelled { return }
+        results = outcome.results
+        source = outcome.source
+        state = outcome.results.isEmpty ? .empty : .results
     }
 
     func addToBin(_ row: AlbumSearchResult) async -> Bool {
