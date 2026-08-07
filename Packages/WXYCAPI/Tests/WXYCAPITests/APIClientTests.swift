@@ -370,4 +370,99 @@ struct APIClientTests {
         #expect(rows.count == 2)
         #expect(lastModified == nil)
     }
+    
+    //tests for qrLogin
+    @Test func approveSuccess() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient() //creates fake client and session
+        
+        //enqueues fake response
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success": true}"#.utf8)))
+        let userCode = "ABCD-1234"
+        
+        let result = try await client.approveDevice(userCode: userCode)
+
+        let request = session.recordedRequests.last!
+        
+        let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+        #expect(body.contains("\"userCode\":\"\(userCode)\""))
+        #expect(request.value(forHTTPHeaderField: "Authorization")?.hasPrefix("Bearer ") == true)
+
+    }
+    
+    @Test func approveDeviceLacksDJRoleError() async throws {
+        //error thrown returns JSON body like this: { "error": "access_denied", "error_description": "Caller lacks the dj role." }
+        let (client, _, session) = try await Self.makeSignedInClient()
+        session.enqueue(StubRequestSession.Stub(statusCode: 403, body: Data(#"{"error": "access_denied", "error_description": "Caller lacks the dj role."}"#.utf8)))
+
+        let userCode = "ABCD-1234"
+
+        do {
+                _ = try await client.approveDevice(userCode: userCode)
+                Issue.record("Expected approveDevice to throw an error, but it succeeded.")
+            } catch let error as DeviceAuthActionError {
+                // 3. Assert on the properties of the caught error
+                #expect(error.status == 403)
+                #expect(error.code == .accessDenied)
+            }
+    }
+    
+    @Test func approveDeviceNotSignedInError() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        let errorBody = Data(#"{"error": "unauthorized", "error_description": "Caller not signed in."}"#.utf8)
+        //initial request error response
+        session.enqueue(StubRequestSession.Stub(statusCode: 401, body: errorBody))
+        
+        //API Client tries to refresh token
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"token":"dummy-token"}"#.utf8)))
+        
+        //fails again
+        session.enqueue(StubRequestSession.Stub(statusCode: 401, body: errorBody))
+
+        let userCode = "ABCD-1234"
+
+        do {
+                _ = try await client.approveDevice(userCode: userCode)
+                Issue.record("Expected approveDevice to throw an error, but it succeeded.")
+            } catch let error as DeviceAuthActionError {
+                // 3. Assert on the properties of the caught error
+                #expect(error.status == 401 && error.status != 403)
+                #expect(error.code == .unauthorized)
+            }
+    }
+    
+    @Test func approveDeviceReturnsUnknownErrorCode() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        session.enqueue(StubRequestSession.Stub(statusCode: 400, body: Data(#"{"error": "weather", "error_description": "Some reason."}"#.utf8)))
+
+        let userCode = "ABCD-1234"
+
+        do {
+                _ = try await client.approveDevice(userCode: userCode)
+                Issue.record("Expected approveDevice to throw an error, but it succeeded.")
+            } catch let error as DeviceAuthActionError {
+                // 3. Assert on the properties of the caught error
+                #expect(error.status == 400)
+                #expect(error.code == nil)
+            }
+    }
+    
+    @Test func verifySuccess() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        //request body: ?user_code=ABCD-1234
+        //if success, expect { "user_code": "…", "status": "pending" }
+        
+        let userCode = "ABCD-1234"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{ "user_code": "\#(userCode)", "status": "pending" }"#.utf8)))
+        
+        let result = try await client.verifyDevice(userCode: userCode)
+
+        #expect(result.status == .pending)
+
+        let request = session.recordedRequests.last!
+        
+        #expect(request.httpMethod == "GET")
+        #expect(request.url!.query?.contains("user_code=\(userCode)") == true)
+
+    }
 }

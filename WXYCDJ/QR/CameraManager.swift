@@ -8,7 +8,8 @@ import AVFoundation
 import SwiftUI
 import Combine
 
-class CameraManager: NSObject, ObservableObject, AVCaptureMetadataOutputObjectsDelegate{
+@MainActor
+class CameraManager: NSObject, ObservableObject, @MainActor AVCaptureMetadataOutputObjectsDelegate{
     @Published var capturedCode: String?
     @Published var isSessionRunning = false
     @Published var authorizationStatus: AVAuthorizationStatus = .notDetermined
@@ -49,7 +50,7 @@ class CameraManager: NSObject, ObservableObject, AVCaptureMetadataOutputObjectsD
     }
     //Config AVSetup
     private func setupSession() {
-        sessionQueue.async {
+        Task { @MainActor
             [weak self] in
             guard let self = self else {return}
             
@@ -82,23 +83,23 @@ class CameraManager: NSObject, ObservableObject, AVCaptureMetadataOutputObjectsD
             //start the session
             
             self.session.startRunning()
-                       
+            
             DispatchQueue.main.async {
                 self.isSessionRunning = self.session.isRunning
             }
         }
     }
     
-       nonisolated func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection){
-        
+       func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection){
+           if metadataObjects.count == 0 {
+               self.capturedCode = "No QR code is detected"
+               return
+           }
+
         Task { @MainActor in
             // Checks metadataObjects array is not empty
             
-            if metadataObjects.count == 0 {
-                self.capturedCode = "No QR code is detected"
-                return
-            }
-            // Safely unwrap the metadata object
+                        // Safely unwrap the metadata object
             guard let metadataObj = metadataObjects[0] as? AVMetadataMachineReadableCodeObject else { return }
            
                 if metadataObj.type == .qr {

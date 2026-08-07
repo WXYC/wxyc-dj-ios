@@ -61,7 +61,7 @@
 /* Begin PBXFileReference section */
 		0062FB8AD63F74D7FE9C64A7 /* LoginViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginViewModel.swift; sourceTree = "<group>"; };
 		08B568981D92EC8060CDFD01 /* AppDependenciesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDependenciesTests.swift; sourceTree = "<group>"; };
-		0D7C2891032C948BCCAB8104 /* WXYCDJ.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = WXYCDJ.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0D7C2891032C948BCCAB8104 /* WXYCDJ.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WXYCDJ.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		1FD0E661440B5825AA5F5B40 /* RouterDeepLinkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouterDeepLinkTests.swift; sourceTree = "<group>"; };
 		21E636FEAF9C268D4455F6BF /* AlbumRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumRoute.swift; sourceTree = "<group>"; };
 		30DE4EC11A66379C3F9D35AE /* TrackMatchBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackMatchBadge.swift; sourceTree = "<group>"; };
@@ -340,7 +340,6 @@
 						ProvisioningStyle = Automatic;
 					};
 					DF7BCFBB0EE59A8D9B25E099 = {
-						DevelopmentTeam = 92V374HC38;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -447,6 +446,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = WXYCDJ/WXYCDJ.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = NRR6X36QF2;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WXYCDJ/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -556,6 +556,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = WXYCDJ/WXYCDJ.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = NRR6X36QF2;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WXYCDJ/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
