@@ -9,10 +9,11 @@ import AVFoundation
 import SwiftUI
 import Combine
 
+@Observable
 class CameraManager: NSObject, ObservableObject, AVCaptureMetadataOutputObjectsDelegate{
-    @Published var capturedCode: String?
-    @Published var isSessionRunning = false
-    @Published var authorizationStatus: AVAuthorizationStatus = .notDetermined
+    var capturedCode: String?
+    var isSessionRunning = false
+    var authorizationStatus: AVAuthorizationStatus = .notDetermined
     //AVFoundation Components
     let session = AVCaptureSession()
     private let metadataObjectsQueue = DispatchQueue(label: "metadata objects queue", attributes: [], target: nil)
@@ -112,3 +113,4 @@ class CameraManager: NSObject, ObservableObject, AVCaptureMetadataOutputObjectsD
         }
     }
 }
+

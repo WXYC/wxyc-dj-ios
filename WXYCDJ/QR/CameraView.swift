@@ -13,7 +13,7 @@ struct CameraView: View {
 
     @Binding var showScanner: Bool
     @Binding var qrCode: String
-    @StateObject private var cameraManager = CameraManager()
+    @State private var cameraManager = CameraManager()
     let onDismiss: () -> Void
     
     var body: some View {

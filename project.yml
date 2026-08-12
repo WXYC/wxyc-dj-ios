@@ -59,6 +59,7 @@ targets:
         BGTaskSchedulerPermittedIdentifiers:
           - org.wxyc.dj.catalog.refresh
           - org.wxyc.dj.catalog.reindex
+         NSCameraUsageDescription: WXYC DJ uses the camera to scan the QR code shown on the dj.wxyc.org sign-in screen.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.wxyc.dj
