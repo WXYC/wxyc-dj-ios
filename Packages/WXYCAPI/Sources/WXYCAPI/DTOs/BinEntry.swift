@@ -9,18 +9,24 @@
 //  declare `alphabetical_name`. Interim: WXYC/wxyc-shared#344 points the 200 at
 //  an array of BinLibraryDetails and adds that field; #359 covers POST/DELETE.
 //
-//  Deliberately kept hand-authored, not generated (issue #75): api.yaml
-//  marks `code_letters` / `code_number` `required` but not `nullable: true`,
-//  so WXYCAPIModels.BinEntry (generated) declares them as non-optional
-//  `String`/`Int`. Real catalog data disagrees — V/A compilations and
-//  unfiled adds legitimately carry NULL for both (see the comment below and
-//  `decodesBinEntryWithNullCallNumberLegs` in DTODecodingTests.swift, a
-//  pinned regression test for exactly this). Swapping to the generated type
-//  would make `GET /djs/bin` throw a DecodingError — failing a DJ's entire
-//  bin fetch — the first time their bin contained one such release. This is
-//  the same api.yaml required-vs-nullable modeling gap that blocks
-//  AlbumSearchResult and CatalogRow from generating too; see CLAUDE.md's
-//  "Code Generation" section.
+//  Deliberately kept hand-authored, not generated (issue #75). NOT for the
+//  same required-vs-nullable gap cited for AlbumSearchResult in an earlier
+//  version of this comment — that framing doesn't hold here either (see
+//  AlbumSearchResult.swift's doc comment for why the "V/A rows carry NULL"
+//  premise is false in general). `code_letters` / `code_number` are kept
+//  optional below defensively, and `decodesBinEntryWithNullCallNumberLegs`
+//  stays as a regression test, but that's not the load-bearing reason.
+//
+//  The real, more decisive reason: `GET /djs/bin` doesn't emit `id`,
+//  `dj_id`, or `added_at` AT ALL. `DJService.getBinFromDB` (djs.service.ts)
+//  selects `album_id, album_title, artist_name, alphabetical_name, label,
+//  code_letters, code_artist_number, code_number, format_name, genre_name,
+//  legacy_release_id` — none of those three keys. api.yaml's `BinEntry`
+//  schema marks `id` / `dj_id` / `added_at` `required`, so the generated
+//  WXYCAPIModels.BinEntry declares them non-optional — decoding the real
+//  `GET /djs/bin` response would throw `keyNotFound` on every single entry,
+//  not just ones with an edge-case null. See CLAUDE.md's "Code Generation"
+//  section.
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.

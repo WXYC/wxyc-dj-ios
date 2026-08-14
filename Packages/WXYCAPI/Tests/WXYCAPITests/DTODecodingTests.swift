@@ -335,6 +335,53 @@ struct DTODecodingTests {
         #expect(row.matchedVia.allSatisfy { $0.source == .discogsMaster })
     }
 
+    @Test func matchedViaDropsHintWithMissingSource() throws {
+        // Regression (issue #75 review, finding F1): TrackMatchHint is now
+        // the generated WXYCAPIModels type, whose `source` is non-optional
+        // and whose init(from:) is synthesized (no hand-rolled tolerance).
+        // LML is a separately deployed service and Backend-Service passes
+        // `matched_via` through unvalidated (library-search.service.ts), so
+        // a single hint missing `source` must not fail the whole row -- and
+        // the row's decode must not fail the whole `[AlbumSearchResult]`
+        // array `APIClient.searchLibrary` decodes all-or-nothing. Only the
+        // malformed hint is dropped; its well-formed siblings survive.
+        let raw = """
+            {
+              "id": 60359,
+              "album_title": "Confield",
+              "artist_name": "Autechre",
+              "matched_via": [
+                { "title": "VI Scose Poise", "source": "discogs_master" },
+                { "title": "no source key at all" }
+              ]
+            }
+            """
+        let row = try JSONCoders.decoder.decode(AlbumSearchResult.self, from: Data(raw.utf8))
+        #expect(row.matchedVia.count == 1)
+        #expect(row.matchedVia.first?.title == "VI Scose Poise")
+    }
+
+    @Test func matchedViaDropsHintWithNullSource() throws {
+        // Sibling of the above: an explicit `"source": null` must also be
+        // dropped rather than thrown, since the generated TrackMatchSource's
+        // CaseIterableDefaultsLast fallback only tolerates an *unrecognized
+        // string*, not a null value in that field's slot.
+        let raw = """
+            {
+              "id": 60360,
+              "album_title": "Amber",
+              "artist_name": "Autechre",
+              "matched_via": [
+                { "title": "null source hint", "source": null },
+                { "title": "Slip", "source": "cta" }
+              ]
+            }
+            """
+        let row = try JSONCoders.decoder.decode(AlbumSearchResult.self, from: Data(raw.utf8))
+        #expect(row.matchedVia.count == 1)
+        #expect(row.matchedVia.first?.title == "Slip")
+    }
+
     @Test func decodesAlbumMetadata() throws {
         let raw = """
             {

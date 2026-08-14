@@ -5,27 +5,52 @@
 //  Decoded shape of a row returned by Backend-Service GET /library/.
 //  Mirrors the AlbumSearchResult schema in wxyc-shared/api.yaml.
 //
-//  Deliberately kept hand-authored, not generated (issue #75). api.yaml
-//  marks `code_letters`, `code_number`, `code_artist_number`, `format_name`,
-//  `genre_name`, and `label` all `required` but none `nullable: true`, so
-//  the generated WXYCAPIModels.AlbumSearchResult declares every one of them
-//  as a non-optional String/Int. Real catalog rows disagree: V/A
-//  compilations and unfiled adds legitimately carry NULL for these (the
-//  librarian V/A invariant), and `decodesAlbumSearchResultWithNullLabel` /
-//  `tolerantUnknownRotationBin` / `callNumberSkipsMissingLegs` below pin
-//  that tolerance as load-bearing, not incidental. This is the core
-//  `GET /library/` search-results type, so a generated-type swap here would
-//  risk breaking search for any query that touches a V/A release — exactly
-//  the decoder-drift class of incident this migration otherwise guards
-//  against. `matchedVia`'s element type, `TrackMatchHint`, IS generated
-//  (see TrackMatchHint.swift) — that schema has no such gap. See CLAUDE.md's
-//  "Code Generation" section.
+//  Deliberately kept hand-authored, not generated (issue #75). NOT because
+//  `code_letters`/`code_number`/`code_artist_number`/`format_name`/
+//  `genre_name`/`label` carry NULL for V/A compilations or unfiled adds, as
+//  an earlier version of this comment claimed — that's false. Those five
+//  code/format/genre columns are `.notNull()` in Backend-Service's schema
+//  (shared/database/src/schema.ts) and `library_artist_view` (the source
+//  `GET /library/` reads) reaches every one of them through an INNER JOIN,
+//  so a row missing one is simply absent from the result set, never present
+//  with a null in that field. `label` (~schema.ts:566) is the one column in
+//  that family that's actually nullable — and it's the one field the
+//  generated type ALSO declares non-optional-but-required, matching
+//  api.yaml's schema exactly (no gap there either, since
+//  library-search.service.ts coalesces a null `library.label` to `""`
+//  before it ever reaches the wire).
+//
+//  The real reasons: (1) the generated `matchedVia` is `[TrackMatchHint]?`
+//  (optional — api.yaml doesn't mark it required), where this app's
+//  contract is a non-optional `[TrackMatchHint]` that callers rely on
+//  reading via `.isEmpty` without unwrapping (see the property doc below);
+//  (2) the generated `RotationBin`'s cases are spelled `.h`/`.m`/`.l`/`.s`
+//  (+ `.unknownDefaultOpenApi`), not this app's `.heavy`/`.medium`/`.light`/
+//  `.single` below — `SearchResultRow.swift` already switches exhaustively
+//  over the latter, so adopting the generated enum would ripple a rename
+//  through the UI, not just this file. `matchedVia`'s element type,
+//  `TrackMatchHint`, IS generated (see TrackMatchHint.swift) — that schema
+//  has neither gap. See CLAUDE.md's "Code Generation" section.
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
 //
 
 import Foundation
+
+/// Wraps a `Decodable` element so a failed per-element decode inside an
+/// array (unparseable JSON shape, a required field the wire omitted, etc.)
+/// drops just that element instead of failing the whole array decode. Used
+/// by `AlbumSearchResult.matchedVia` (see the doc comment on its
+/// `init(from:)`) to isolate one malformed `TrackMatchHint` from the rest of
+/// a search-result row.
+struct FailableDecodable<Base: Decodable>: Decodable {
+    let value: Base?
+
+    init(from decoder: any Decoder) throws {
+        value = try? Base(from: decoder)
+    }
+}
 
 // Codable, not decode-only: besides decoding from Backend-Service
 // (`GET /library/` and, per issue #19, the bulk `GET /library/catalog`),
@@ -141,7 +166,22 @@ public struct AlbumSearchResult: Codable, Sendable, Hashable, Identifiable {
         onStreaming = try c.decodeIfPresent(Bool.self, forKey: .onStreaming)
         albumArtist = try c.decodeIfPresent(String.self, forKey: .albumArtist)
         artworkURL = try c.decodeIfPresent(URL.self, forKey: .artworkURL)
-        matchedVia = (try c.decodeIfPresent([TrackMatchHint].self, forKey: .matchedVia)) ?? []
+        // Per-element, not `decodeIfPresent([TrackMatchHint].self, ...)`: LML
+        // is a separately deployed service, and Backend-Service passes
+        // `matched_via` through unvalidated (library-search.service.ts), so
+        // one malformed hint on the wire must not fail this whole row (and,
+        // by extension, the whole `[AlbumSearchResult]` array
+        // `APIClient.searchLibrary` decodes all-or-nothing). TrackMatchHint
+        // is the generated WXYCAPIModels type: `source` is non-optional and
+        // its `init(from:)` is synthesized, so a hint with `source` absent
+        // or `source: null` throws instead of tolerating it the way the old
+        // hand-rolled `try?` decode did. `FailableDecodable` isolates each
+        // element's decode failure instead of letting it propagate through
+        // the array decode -- strictly more tolerant than main's old
+        // `try? c.decode(...)`-per-field behavior, which only tolerated an
+        // unrecognized `source` value, not an absent/null one.
+        matchedVia = (try c.decodeIfPresent([FailableDecodable<TrackMatchHint>].self, forKey: .matchedVia))?
+            .compactMap(\.value) ?? []
     }
 
     /// Shelf call number in the form "<codeLetters> <codeArtistNumber>/<codeNumber>"

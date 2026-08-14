@@ -25,14 +25,21 @@ settings:
 packages:
   WXYCAPI:
     path: Packages/WXYCAPI
-  # WXYCAPI depends on this transitively (issue #75), but Xcode's implicit
-  # linking doesn't always pick up a nested local package's product for
-  # every link product of a consuming app target (observed: the app's own
-  # debug dylib -- used for test injection -- fails to link with an
-  # undefined-symbol error for WXYCAPIModels types re-exported through
-  # WXYCAPI's public typealiases, even though the app's main executable
-  # links fine in the same build). Declaring it as a direct package
-  # dependency of the app targets below is the fix.
+  # WXYCAPI depends on this transitively (issue #75) -- and the app
+  # genuinely depends on it too, not merely as a build-graph technicality:
+  # WXYCAPI's public typealiases (TrackMatchHint, APIErrorResponse, ...)
+  # transparently re-export WXYCAPIModels types, so any app code touching
+  # those DTOs already depends on this module whether or not Xcode's
+  # implicit linking would have found it. That implicit linking is also
+  # unreliable in practice: it doesn't always pick up a nested local
+  # package's product for every link product of a consuming app target
+  # (observed: the app's own debug dylib -- used for test injection --
+  # fails to link with an undefined-symbol error for WXYCAPIModels types,
+  # even though the app's main executable links fine in the same build).
+  # Declaring it as a direct package dependency of the app targets below
+  # fixes the linking gap and makes the real dependency explicit. This is
+  # NOT license to `import WXYCAPIModels` directly from WXYCDJ/ -- see
+  # CLAUDE.md's "Code Generation" section.
   WXYCAPIModels:
     path: Packages/WXYCAPIModels
 

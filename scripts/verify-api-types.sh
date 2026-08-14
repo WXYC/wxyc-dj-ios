@@ -9,8 +9,18 @@
 # Regenerates into a scratch temp directory -- the committed tree is never
 # touched -- and diffs it against the committed tree with `git diff --no-index
 # --exit-code`, so it fails loudly on drift: a hand-edit to a generated file,
-# a contract-version.json bump that wasn't followed by a regen, or an
-# api.yaml change upstream that never made it into this repo.
+# or a contract-version.json bump that wasn't followed by a regen (pin says
+# one commit, vendored tree reflects another).
+#
+# This does NOT catch an api.yaml change upstream that never made it into
+# this repo -- the pin is a fixed SHA, this script only ever regenerates
+# from that SHA, and .github/workflows/verify-api-types.yml has no
+# `schedule:` trigger (path-filtered to pull_request/push on the vendored
+# tree + these two scripts + itself). A newer api.yaml on wxyc-shared's main
+# sits silently unnoticed until someone deliberately bumps the pin -- which
+# is by design (see CLAUDE.md's "Code Generation" section: bumping the pin
+# is the trigger for a human to re-run the hand-authored-vs-generated
+# evaluation, not something that should happen unreviewed on a cron).
 #
 # Mirrors wxyc-ios-64's scripts/verify-api-types.sh -- ported here for
 # wxyc-dj-ios#75.

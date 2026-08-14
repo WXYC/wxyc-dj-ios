@@ -1,0 +1,7 @@
+# Packages/WXYCAPIModels/Sources/WXYCAPIModels is vendored, machine-generated
+# output from wxyc-shared's openapi-generator pipeline (issue #75) --
+# regenerated verbatim by scripts/regenerate-api-types.sh, never hand-edited.
+# Mark it generated so diffs, blame, and language-statistics tooling (GitHub's
+# linguist among them) present it honestly instead of attributing a wall of
+# generator output to whoever ran the regen script.
+Packages/WXYCAPIModels/Sources/WXYCAPIModels/** linguist-generated=true

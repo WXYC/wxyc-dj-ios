@@ -21,7 +21,13 @@ let package = Package(
         ),
         .testTarget(
             name: "WXYCAPITests",
-            dependencies: ["WXYCAPI"],
+            // WXYCAPI, plus WXYCAPIModels directly: GeneratedModelsContractTests.swift
+            // imports it to test the vendored types themselves, not through a
+            // WXYCAPI re-export. Worked before only via SwiftPM's transitive
+            // include path (a target can see a dependency-of-a-dependency's
+            // module on some toolchains); declaring it explicitly stops that
+            // from being incidental.
+            dependencies: ["WXYCAPI", "WXYCAPIModels"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]
