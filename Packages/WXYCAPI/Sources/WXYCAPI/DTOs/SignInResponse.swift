@@ -10,19 +10,26 @@
 //  only `/auth/device/*` (5 of api.yaml's 62 paths) is modeled there. There
 //  is no schema to generate from.
 //
-//  AddToBinRequest is also kept hand-authored: api.yaml's `AddToBinRequest`
-//  schema declares only `album_id` (no `track_title` property), but this
-//  app's `trackTitle` is real, wired traffic — SearchViewModel.swift sends
-//  `trackTitle: row.matchedVia.first?.title` when a track-match hit drives
-//  an add-to-bin. Aliasing to the generated type would silently drop that
-//  field from every such POST body.
+//  AddToBinRequest is also kept hand-authored, but not for the reason an
+//  earlier version of this comment gave (that api.yaml's `AddToBinRequest`
+//  schema lacks `track_title`). That schema is dead: nothing in api.yaml
+//  `$ref`s it. The real `POST /djs/bin` body is declared inline on the path
+//  and generates as `DjsBinPostRequest`, which DOES have `track_title`
+//  (optional, matching `SearchViewModel.swift`'s
+//  `trackTitle: row.matchedVia.first?.title`). The actual blocker is
+//  `djId: Int`, non-optional on `DjsBinPostRequest` because api.yaml marks
+//  `dj_id` required in that inline body — but this app deliberately never
+//  sends it: `djs.controller.ts`'s `addToBin` handler derives `dj_id` from
+//  `req.auth!.id!` server-side and never reads `req.body.dj_id` at all.
+//  Aliasing to `DjsBinPostRequest` would require synthesizing a `djId` this
+//  app has no business sending (and the server ignores).
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
 //
 
 import Foundation
-import WXYCAPIModels
+import struct WXYCAPIModels.ApiErrorResponse
 
 public struct SignInRequest: Codable, Sendable {
     public let username: String

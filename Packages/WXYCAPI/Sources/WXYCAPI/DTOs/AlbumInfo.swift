@@ -6,17 +6,21 @@
 //  Mirrors the AlbumInfoResponse schema in wxyc-shared/api.yaml — an Album
 //  plus denormalized artist/code/format/genre and an optional rotation block.
 //
-//  Deliberately kept hand-authored, not generated (issue #75). Two reasons:
-//  (1) the same required-vs-nullable gap as BinEntry/AlbumSearchResult —
-//  `AlbumInfoResponse` marks `code_letters` / `format_name` / `artist_name`
-//  `required` without `nullable: true`, while real V/A / unfiled catalog
-//  rows carry nulls for the code fields; (2) it needs to try both `label`
-//  and `record_label` wire keys (`/library/info` uses the latter, the
-//  catalog list endpoint the former), a dual-key fallback a generated
-//  `Codable` can't express. `AlbumInfoResponse` is also an OpenAPI `allOf`
-//  composite over `Album`, which the generator would need to flatten or
-//  wrap — added complexity on top of the two problems above. See
-//  CLAUDE.md's "Code Generation" section.
+//  Deliberately kept hand-authored, not generated (issue #75). Two reasons,
+//  neither of them the required-vs-nullable gap an earlier version of this
+//  comment cited (see AlbumSearchResult.swift's doc comment for why that
+//  premise doesn't hold in general): (1) the generated `AlbumInfoResponse`
+//  is missing `code_artist_number`, `plays`, `on_streaming`, and
+//  `artwork_url` outright — they're absent from api.yaml's `Album` /
+//  `AlbumInfoResponse` schemas, not merely optional — and `AlbumDetailView.swift`
+//  reads all four (`info.artworkURL`, `info.plays`, `info.onStreaming`
+//  directly; `codeArtistNumber` feeds `callNumber` below); (2) it needs to
+//  try both `label` and `record_label` wire keys (`/library/info` uses the
+//  latter, the catalog list endpoint the former), a dual-key fallback a
+//  generated `Codable` can't express. (`AlbumInfoResponse` is an OpenAPI
+//  `allOf` composite over `Album`, but the generator flattens that into one
+//  clean struct without help — not itself a reason to stay hand-authored.)
+//  See CLAUDE.md's "Code Generation" section.
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.

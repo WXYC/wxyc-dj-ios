@@ -12,18 +12,27 @@
 //  docs/library-row-type-contract.md was written when `/library/catalog`'s
 //  wire shape lived only as Backend-Service's private `CatalogExportRow`
 //  TypeScript type, absent from api.yaml; that gap has since closed —
-//  api.yaml now has a `CatalogExportRow` schema (BS#1468/#1965). But that
-//  schema's own doc comment warns explicitly that its `required` fields
-//  (`code_letters`, `code_number`, `code_artist_number`, `genre_name`,
-//  `format_name`) are not reliably non-null in the underlying data, and
-//  that a strict/non-optional decode "would fail EVERY NDJSON line and take
-//  the whole on-device clone with it" — the schema author's own words,
-//  because `oasdiff` does not flag adding a required response property, so
-//  a green `check:breaking` on wxyc-shared's side would not have caught it.
-//  This decoder deliberately treats those fields as optional for exactly
-//  that reason (see the tolerant `init(from:)` below). Same root cause as
-//  BinEntry.swift and AlbumSearchResult.swift's exclusions. See CLAUDE.md's
-//  "Code Generation" section.
+//  api.yaml now has a `CatalogExportRow` schema (BS#1468/#1965).
+//
+//  An earlier version of this comment cited that schema's own doc comment
+//  as a warning that its `required` fields "would fail EVERY NDJSON line
+//  and take the whole on-device clone with it" if decoded strictly — that
+//  misquotes it. The warning is about a schema author accidentally adding a
+//  NEW required response property in the future (`oasdiff` doesn't flag
+//  that as breaking, so a green `check:breaking` wouldn't catch it before
+//  it ships) — it isn't a claim that today's required fields are actually
+//  null in practice. And `label` is `nullable: true` in `CatalogExportRow`
+//  (unlike the AlbumSearchResult schema), so the two schemas aren't even
+//  making the same claim about that field.
+//
+//  The real, verified blocker: `rotation_kill_date` is `format: date` in
+//  api.yaml, so the generated type declares it `Date?`. This type
+//  deliberately keeps it `String?` (see ``rotationKillDate`` below) so
+//  expiry is a timezone-free lexicographic compare against a client-local
+//  `"YYYY-MM-DD"` string (``isInRotation(localDay:)``) — converting to
+//  `Date` would mean re-deriving that comparison through `Calendar`/
+//  `TimeZone` machinery this type was written specifically to avoid. See
+//  CLAUDE.md's "Code Generation" section.
 //
 //  Created by Jake on 06/22/26.
 //  Copyright © 2026 WXYC. All rights reserved.
