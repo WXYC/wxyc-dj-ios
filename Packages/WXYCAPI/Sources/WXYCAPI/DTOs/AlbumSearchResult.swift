@@ -177,9 +177,20 @@ public struct AlbumSearchResult: Codable, Sendable, Hashable, Identifiable {
         // or `source: null` throws instead of tolerating it the way the old
         // hand-rolled `try?` decode did. `FailableDecodable` isolates each
         // element's decode failure instead of letting it propagate through
-        // the array decode -- strictly more tolerant than main's old
-        // `try? c.decode(...)`-per-field behavior, which only tolerated an
-        // unrecognized `source` value, not an absent/null one.
+        // the array decode.
+        //
+        // Note this is a deliberate NARROWING relative to the pre-codegen
+        // DTO, not a strict improvement. That decode was
+        // `source = try? c.decode(...)` into a `TrackMatchSource?`, and
+        // `try?` swallows `keyNotFound`, `valueNotFound`, and
+        // `dataCorrupted` alike -- so a hint missing `source` was KEPT with
+        // `source == nil`, and TrackMatchBadge still rendered its title
+        // (and SearchViewModel still sent `track_title` on add-to-bin).
+        // Here such a hint is dropped entirely, so the badge disappears.
+        // That is contract-legal -- api.yaml marks `source` required -- and
+        // it is strictly safer than failing the entire search response, but
+        // if the badge matters more than the strictness, decode a fallback
+        // hint with `source = .unknownDefaultOpenApi` instead of dropping.
         matchedVia = (try c.decodeIfPresent([FailableDecodable<TrackMatchHint>].self, forKey: .matchedVia))?
             .compactMap(\.value) ?? []
     }

@@ -17,15 +17,22 @@
 //  optional below defensively, and `decodesBinEntryWithNullCallNumberLegs`
 //  stays as a regression test, but that's not the load-bearing reason.
 //
-//  The real, more decisive reason: `GET /djs/bin` doesn't emit `id`,
-//  `dj_id`, or `added_at` AT ALL. `DJService.getBinFromDB` (djs.service.ts)
-//  selects `album_id, album_title, artist_name, alphabetical_name, label,
+//  The actual reason: generating this type would change nothing, because
+//  BOTH forms are wrong about the wire. `GET /djs/bin` returns a BARE ARRAY
+//  of a different projection — `DJService.getBinFromDB` (djs.service.ts) is
+//  a Drizzle `.select({...})` handed straight to `res.json()`, selecting
+//  `album_id, album_title, artist_name, alphabetical_name, label,
 //  code_letters, code_artist_number, code_number, format_name, genre_name,
-//  legacy_release_id` — none of those three keys. api.yaml's `BinEntry`
-//  schema marks `id` / `dj_id` / `added_at` `required`, so the generated
-//  WXYCAPIModels.BinEntry declares them non-optional — decoding the real
-//  `GET /djs/bin` response would throw `keyNotFound` on every single entry,
-//  not just ones with an edge-case null. See CLAUDE.md's "Code Generation"
+//  legacy_release_id`. No `id`, no `dj_id`, no `added_at`, and no wrapper
+//  object; the `bins` table has no `added_at` column at all and types
+//  `dj_id` as a varchar. api.yaml describes the wrapper shape and marks
+//  those three `required`, so WXYCAPIModels.BinEntry declares them
+//  non-optional — but so does the hand-authored type below, and both throw
+//  identically. Switching to the generated form would buy nothing and cost
+//  the ability to edit this type while the divergence is resolved.
+//
+//  Tracked in WXYC/wxyc-dj-ios#77 — reconcile the contract there, then
+//  revisit whether this can be generated. See CLAUDE.md's "Code Generation"
 //  section.
 //
 //  Created by Jake on 5/14/26.
