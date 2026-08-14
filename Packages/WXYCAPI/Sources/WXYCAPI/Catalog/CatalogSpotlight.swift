@@ -188,6 +188,12 @@ public enum CatalogSpotlight {
         // hashes like an empty string. Over-sensitivity (nil vs "") is harmless
         // — a redundant re-upsert is idempotent — whereas under-sensitivity
         // would miss a real change.
+        //
+        // `as [String?]` (issue #75): once WXYCAPIModels is linked into this
+        // target, this heterogeneous literal (String, String?, String??)
+        // stops inferring [String?] on its own and degrades to [Any],
+        // breaking `if let field` below. Explicit annotation only — no
+        // change in the values iterated.
         for field in [
             row.albumTitle,
             row.artistName,
@@ -196,7 +202,7 @@ public enum CatalogSpotlight {
             row.codeNumber.map(String.init),
             row.codeArtistNumber.map(String.init),
             row.artworkURL?.absoluteString,
-        ] {
+        ] as [String?] {
             if let field {
                 let utf8 = Data(field.utf8)
                 var length = UInt64(utf8.count).littleEndian

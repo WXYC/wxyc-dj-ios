@@ -7,6 +7,24 @@
 //  Distinct from AlbumSearchResult: raw rotation + a kill date, no search
 //  decoration. See docs/library-row-type-contract.md.
 //
+//  Deliberately kept hand-authored, not generated (issue #75) — and not
+//  actually schema-less, despite the name mismatch suggesting otherwise.
+//  docs/library-row-type-contract.md was written when `/library/catalog`'s
+//  wire shape lived only as Backend-Service's private `CatalogExportRow`
+//  TypeScript type, absent from api.yaml; that gap has since closed —
+//  api.yaml now has a `CatalogExportRow` schema (BS#1468/#1965). But that
+//  schema's own doc comment warns explicitly that its `required` fields
+//  (`code_letters`, `code_number`, `code_artist_number`, `genre_name`,
+//  `format_name`) are not reliably non-null in the underlying data, and
+//  that a strict/non-optional decode "would fail EVERY NDJSON line and take
+//  the whole on-device clone with it" — the schema author's own words,
+//  because `oasdiff` does not flag adding a required response property, so
+//  a green `check:breaking` on wxyc-shared's side would not have caught it.
+//  This decoder deliberately treats those fields as optional for exactly
+//  that reason (see the tolerant `init(from:)` below). Same root cause as
+//  BinEntry.swift and AlbumSearchResult.swift's exclusions. See CLAUDE.md's
+//  "Code Generation" section.
+//
 //  Created by Jake on 06/22/26.
 //  Copyright © 2026 WXYC. All rights reserved.
 //

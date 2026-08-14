@@ -16,7 +16,9 @@
 		28F187742AAC9A2BCA5E895D /* OfflineBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CDF9B4F952EF3F5844740EC /* OfflineBanner.swift */; };
 		2EF5AB0FEC0B3F5FBD1E07ED /* SpyBinStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A596BDE6117797EFB6A4D665 /* SpyBinStore.swift */; };
 		33D06D6A22AA7D12BE080CA8 /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2EA536C610B62875284DBC /* MainView.swift */; };
+		3598518CDC204DBB5BB14F15 /* WXYCAPIModels in Frameworks */ = {isa = PBXBuildFile; productRef = E36547ECFBCE3DA8505F75C2 /* WXYCAPIModels */; };
 		3701CA6BAB4578B4A26EAF5D /* BinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AC54CD81B8E16E4B0754D16 /* BinView.swift */; };
+		3D8F02DCD60A6D7A700DDE72 /* WXYCAPIModels in Frameworks */ = {isa = PBXBuildFile; productRef = DF5D146A8EEE9CBA58AFDA6C /* WXYCAPIModels */; };
 		3EF4159CBD4FEB6E808B311D /* WXYCAPI in Frameworks */ = {isa = PBXBuildFile; productRef = D9511138D2A3FB7A0F39D282 /* WXYCAPI */; };
 		4971C44699E28C3483D4F264 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7745B51EB2BF815A8B960F3F /* AppDelegate.swift */; };
 		5890F98AB60C5BF3043C386F /* AppDependenciesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08B568981D92EC8060CDFD01 /* AppDependenciesTests.swift */; };
@@ -62,6 +64,7 @@
 
 /* Begin PBXFileReference section */
 		0062FB8AD63F74D7FE9C64A7 /* LoginViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginViewModel.swift; sourceTree = "<group>"; };
+		01796789400F09B47AE5C41C /* WXYCAPIModels */ = {isa = PBXFileReference; lastKnownFileType = folder; name = WXYCAPIModels; path = Packages/WXYCAPIModels; sourceTree = SOURCE_ROOT; };
 		08B568981D92EC8060CDFD01 /* AppDependenciesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDependenciesTests.swift; sourceTree = "<group>"; };
 		0D7C2891032C948BCCAB8104 /* WXYCDJ.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = WXYCDJ.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		1CDF9B4F952EF3F5844740EC /* OfflineBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineBanner.swift; sourceTree = "<group>"; };
@@ -113,6 +116,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3EF4159CBD4FEB6E808B311D /* WXYCAPI in Frameworks */,
+				3598518CDC204DBB5BB14F15 /* WXYCAPIModels in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -121,6 +125,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A8D1D090E2B450A27FFD508F /* WXYCAPI in Frameworks */,
+				3D8F02DCD60A6D7A700DDE72 /* WXYCAPIModels in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -249,6 +254,7 @@
 			isa = PBXGroup;
 			children = (
 				CE7E76CFC35C37D73EAA0A89 /* WXYCAPI */,
+				01796789400F09B47AE5C41C /* WXYCAPIModels */,
 			);
 			path = Packages;
 			sourceTree = "<group>";
@@ -299,6 +305,7 @@
 			name = WXYCDJTests;
 			packageProductDependencies = (
 				89D30A6942DD94B4BDD547A2 /* WXYCAPI */,
+				DF5D146A8EEE9CBA58AFDA6C /* WXYCAPIModels */,
 			);
 			productName = WXYCDJTests;
 			productReference = A89CC0792607B9863ABAEC7E /* WXYCDJTests.xctest */;
@@ -319,6 +326,7 @@
 			name = WXYCDJ;
 			packageProductDependencies = (
 				D9511138D2A3FB7A0F39D282 /* WXYCAPI */,
+				E36547ECFBCE3DA8505F75C2 /* WXYCAPIModels */,
 			);
 			productName = WXYCDJ;
 			productReference = 0D7C2891032C948BCCAB8104 /* WXYCDJ.app */;
@@ -354,6 +362,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				5503822269D010855CC6E2B3 /* XCLocalSwiftPackageReference "Packages/WXYCAPI" */,
+				B72CCFD1E77E5979D96CF235 /* XCLocalSwiftPackageReference "Packages/WXYCAPIModels" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 800AFBC3D730AF3A7D181A52 /* Products */;
@@ -689,6 +698,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/WXYCAPI;
 		};
+		B72CCFD1E77E5979D96CF235 /* XCLocalSwiftPackageReference "Packages/WXYCAPIModels" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/WXYCAPIModels;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -699,6 +712,14 @@
 		D9511138D2A3FB7A0F39D282 /* WXYCAPI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = WXYCAPI;
+		};
+		DF5D146A8EEE9CBA58AFDA6C /* WXYCAPIModels */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = WXYCAPIModels;
+		};
+		E36547ECFBCE3DA8505F75C2 /* WXYCAPIModels */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = WXYCAPIModels;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

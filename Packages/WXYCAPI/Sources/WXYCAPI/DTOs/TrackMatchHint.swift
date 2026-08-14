@@ -2,54 +2,28 @@
 //  TrackMatchHint.swift
 //  WXYCAPI
 //
-//  Optional provenance attached to library search rows when the row was
-//  surfaced by a track-title match rather than a hit on artist or album.
-//  Empty / absent on a normal artist+album hit. Mirrors the TrackMatchHint
-//  + TrackMatchSource schemas in wxyc-shared/api.yaml.
+//  TrackMatchHint / TrackMatchSource are re-exported from the generated
+//  WXYCAPIModels package (issue #75) rather than hand-authored. They were
+//  verified safe to generate: every field's required/nullable declaration in
+//  api.yaml's TrackMatchHint schema matches the real wire data (no
+//  librarian-V/A-style gap here — see BinEntry.swift and
+//  AlbumSearchResult.swift for schemas where that gap blocks generation),
+//  and the swift6 generator's `enumUnknownDefaultCase` support gives the
+//  generated `TrackMatchSource` the same unknown-value tolerance
+//  (`.unknownDefaultOpenApi`) the old hand-written decoder used to provide by
+//  hand via `try?`. `source` becoming non-optional (generated) instead of
+//  optional (the old hand-rolled shape) is therefore not a behavior change:
+//  an unrecognized source value now decodes to `.unknownDefaultOpenApi`
+//  instead of `nil`. No file in this app switches exhaustively over
+//  TrackMatchSource, so that case addition can't break a call site. See
+//  CLAUDE.md's "Code Generation" section for the full migration rationale.
 //
 //  Created by Jake on 5/20/26.
 //  Copyright © 2026 WXYC. All rights reserved.
 //
 
-import Foundation
+import struct WXYCAPIModels.TrackMatchHint
+import enum WXYCAPIModels.TrackMatchSource
 
-public struct TrackMatchHint: Codable, Sendable, Hashable {
-    public let title: String
-    public let artistCredit: String?
-    public let position: String?
-    public let confidence: Double?
-    /// `nil` when the server emitted a `source` value the client doesn't
-    /// recognize yet (forward-compat for new variants like
-    /// `musicbrainz_recording` post-cross-cache-identity). Mirrors the
-    /// `RotationBin` precedent in `AlbumSearchResult` — unrecognized
-    /// enum values surface as `nil` rather than refusing the row.
-    public let source: TrackMatchSource?
-
-    enum CodingKeys: String, CodingKey {
-        case title
-        case artistCredit = "artist_credit"
-        case position
-        case confidence
-        case source
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        title = try c.decode(String.self, forKey: .title)
-        artistCredit = try c.decodeIfPresent(String.self, forKey: .artistCredit)
-        position = try c.decodeIfPresent(String.self, forKey: .position)
-        confidence = try c.decodeIfPresent(Double.self, forKey: .confidence)
-        // Unrecognized TrackMatchSource values (and an absent key) are
-        // decoded as nil rather than failing the row. Server adds new
-        // sources as cross-cache-identity work lands; the client must
-        // not start refusing rows.
-        source = try? c.decode(TrackMatchSource.self, forKey: .source)
-    }
-}
-
-public enum TrackMatchSource: String, Codable, Sendable, Hashable, CaseIterable {
-    case cta
-    case discogsRelease = "discogs_release"
-    case discogsMaster = "discogs_master"
-    case libraryIdentity = "library_identity"
-}
+public typealias TrackMatchHint = WXYCAPIModels.TrackMatchHint
+public typealias TrackMatchSource = WXYCAPIModels.TrackMatchSource
