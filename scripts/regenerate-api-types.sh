@@ -169,13 +169,25 @@ GENERATED_ROOT="$WORK_DIR/generated/swift/Sources/WXYCAPI"
 [[ -d "$GENERATED_ROOT/Infrastructure" ]] || fail "generated Infrastructure/ not found at $GENERATED_ROOT"
 
 # ---------------------------------------------------------------------------
-# Sync Models/ into the vendored package (APIs/ intentionally excluded --
-# this package is models-only)
+# Assemble the new tree in a staging dir, then swap it in atomically at the
+# end (APIs/ intentionally excluded -- this package is models-only)
 # ---------------------------------------------------------------------------
+#
+# Everything below builds into $STAGE_DIR, and $DEST_DIR isn't touched until
+# the final swap. That ordering is the point: the swap is an
+# `rsync -a --delete`, and every guard in this script (non-empty Models/,
+# the Infrastructure/ keep-list, the RequestTask strip, the
+# `keyedBy: String.self` check) has to run BEFORE it, not after. An earlier
+# version deleted first and counted afterwards, so a generator run that
+# emitted an empty Models/ would have wiped the 256 committed files and then
+# exited 0 -- the count it checked included the six Infrastructure files it
+# had just copied in.
+STAGE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/wxycapimodels-stage.XXXXXX") || fail "could not create staging dir"
+trap 'rm -rf "$STAGE_DIR"' EXIT INT TERM
 
-log "Syncing Models/ into $DEST_DIR"
-mkdir -p "$DEST_DIR/Models"
-rsync -a --delete "$GENERATED_ROOT/Models/" "$DEST_DIR/Models/" || fail "rsync of Models/ failed"
+log "Staging Models/ in $STAGE_DIR"
+mkdir -p "$STAGE_DIR/Models"
+rsync -a --delete "$GENERATED_ROOT/Models/" "$STAGE_DIR/Models/" || fail "rsync of Models/ failed"
 
 # HealthCheckResponse is vendored like every other api.yaml schema (this
 # package doesn't hand-pick a subset of Models/ -- see the CLAUDE.md "Code
@@ -189,7 +201,14 @@ rsync -a --delete "$GENERATED_ROOT/Models/" "$DEST_DIR/Models/" || fail "rsync o
 # `/health`-shaped endpoint, so rather than reintroducing the unsafe
 # conformance to satisfy one irrelevant schema, HealthCheckResponse is
 # dropped here. Re-evaluate if this app ever needs it.
-rm -f "$DEST_DIR/Models/HealthCheckResponse.swift"
+#
+# Deliberately an unguarded `rm -f` and not `[[ -f ... ]] || fail`: if
+# upstream renames or drops the schema this silently no-ops, which is fine,
+# because the real guard is the `keyedBy: String.self` sweep below. That
+# sweep catches the failure this exclusion exists to prevent -- ANY vendored
+# model needing the unsafe conformance -- rather than just the one filename
+# that needs it today.
+rm -f "$STAGE_DIR/Models/HealthCheckResponse.swift"
 
 # ---------------------------------------------------------------------------
 # Sync a curated Infrastructure/ subset (wxyc-dj-ios#75 review finding F3)
@@ -213,8 +232,8 @@ rm -f "$DEST_DIR/Models/HealthCheckResponse.swift"
 # clean and produces silently wrong data, and the conformance leaks to every
 # file in the app the moment WXYCAPIModels is linked in (no import required
 # at the use site, since Swift conformances are visible process-wide once the
-# defining module is anywhere in the build graph). Zero of the 257 Models/
-# files reference anything else Extensions.swift provides
+# defining module is anywhere in the build graph). Zero of the 256 vendored
+# Models/ files reference anything else Extensions.swift provides
 # (`ParameterConvertible` and friends), so it is excluded outright.
 #
 # Infrastructure/Models.swift (confusingly the same name as the Models/
@@ -231,19 +250,43 @@ rm -f "$DEST_DIR/Models/HealthCheckResponse.swift"
 # scripted, reproducible transform -- never a hand-edit of the committed
 # tree).
 INFRA_KEEP=(Models.swift Validation.swift JSONValue.swift CodableHelper.swift OpenAPIMutex.swift OpenISO8601DateFormatter.swift)
-log "Syncing curated Infrastructure/ subset into $DEST_DIR: ${INFRA_KEEP[*]}"
-rm -rf "$DEST_DIR/Infrastructure"
-mkdir -p "$DEST_DIR/Infrastructure"
+log "Staging curated Infrastructure/ subset: ${INFRA_KEEP[*]}"
+mkdir -p "$STAGE_DIR/Infrastructure"
 for f in "${INFRA_KEEP[@]}"; do
     [[ -f "$GENERATED_ROOT/Infrastructure/$f" ]] || fail "expected generated Infrastructure/$f not found -- did the generator's output change?"
-    cp "$GENERATED_ROOT/Infrastructure/$f" "$DEST_DIR/Infrastructure/$f"
+    cp "$GENERATED_ROOT/Infrastructure/$f" "$STAGE_DIR/Infrastructure/$f"
 done
 
-MODELS_INFRA="$DEST_DIR/Infrastructure/Models.swift"
+MODELS_INFRA="$STAGE_DIR/Infrastructure/Models.swift"
 REQUEST_TASK_MARKER='public final class RequestTask: @unchecked Sendable {'
 if ! grep -qF "$REQUEST_TASK_MARKER" "$MODELS_INFRA"; then
     fail "RequestTask class not found at its expected declaration in $MODELS_INFRA -- generator output changed; update the strip logic in $0"
 fi
+
+# The strip below is a truncation, so it silently eats anything the
+# generator might one day emit AFTER RequestTask, and it unconditionally
+# drops the line immediately before the marker. Both are safe only under
+# assumptions that hold today and could stop holding on any generator bump,
+# without any other check in this script noticing. Assert them explicitly.
+#
+# (1) Nothing top-level follows RequestTask. Its own members are indented,
+#     so any line in the tail starting at column 0 with a declaration
+#     keyword or attribute means the generator appended a declaration this
+#     truncation would silently delete -- e.g. the
+#     `extension Response : Sendable where T : Sendable {}` that sits just
+#     above RequestTask today would be lost if it ever moved below it.
+TAIL_AFTER_MARKER=$(awk -v marker="$REQUEST_TASK_MARKER" 'found { print } $0 == marker { found = 1 }' "$MODELS_INFRA")
+if print -r -- "$TAIL_AFTER_MARKER" | grep -qE '^(@|public|internal|open|private|fileprivate|final|extension|struct|class|enum|protocol|func|var|let|typealias|actor)\b'; then
+    fail "found a top-level declaration after RequestTask in $MODELS_INFRA, which the strip would silently truncate -- generator output changed; update the strip logic in $0"
+fi
+
+# (2) The line immediately before the marker is blank. The strip drops it to
+#     avoid leaving a trailing blank line; if the generator ever puts a
+#     declaration, a doc comment, or an attribute there instead, dropping it
+#     would corrupt the file rather than tidy it.
+LINE_BEFORE_MARKER=$(awk -v marker="$REQUEST_TASK_MARKER" '$0 == marker { print prev; exit } { prev = $0 }' "$MODELS_INFRA")
+[[ -z "${LINE_BEFORE_MARKER//[[:space:]]/}" ]] || fail "expected a blank line before RequestTask in $MODELS_INFRA but found '$LINE_BEFORE_MARKER' -- the strip would delete it; update the strip logic in $0"
+
 # RequestTask is the last top-level declaration the generator emits in this
 # file; truncate at its declaration line, dropping the blank line
 # immediately before it too. (A one-line-delayed buffer, tracked with an
@@ -259,6 +302,34 @@ if grep -qE 'RequestTask|URLSessionDataTaskProtocol' "$MODELS_INFRA"; then
     fail "RequestTask strip left a dangling reference in $MODELS_INFRA -- generator output changed; update the strip logic in $0"
 fi
 
+# ---------------------------------------------------------------------------
+# Verify the staged tree, then swap it in
+# ---------------------------------------------------------------------------
+
+# The generalized form of the HealthCheckResponse exclusion above. Any model
+# reaching for a String-keyed container needs `String: CodingKey`, which this
+# package deliberately does not vendor (Extensions.swift is excluded), so
+# such a model would not compile. Catching it here names the cause; letting
+# it through would surface as an opaque build failure in whatever target
+# links the package next.
+if grep -rqF 'keyedBy: String.self' "$STAGE_DIR"; then
+    OFFENDERS=$(grep -rlF 'keyedBy: String.self' "$STAGE_DIR" | sed "s|^$STAGE_DIR/||" | tr '\n' ' ')
+    fail "staged model(s) need a String-keyed container (String: CodingKey), which this package deliberately doesn't vendor: $OFFENDERS -- either exclude them the way HealthCheckResponse is excluded above, or reconsider the Extensions.swift exclusion"
+fi
+
+STAGED_MODELS=$(find "$STAGE_DIR/Models" -name '*.swift' | wc -l | tr -d ' ')
+(( STAGED_MODELS > 0 )) || fail "0 Swift files generated into Models/ -- refusing to sync, which would have deleted the committed tree"
+STAGED_INFRA=$(find "$STAGE_DIR/Infrastructure" -name '*.swift' | wc -l | tr -d ' ')
+(( STAGED_INFRA == ${#INFRA_KEEP[@]} )) || fail "staged Infrastructure/ has $STAGED_INFRA files, expected ${#INFRA_KEEP[@]}"
+
+# `--delete` at the $DEST_DIR root, not per-subdirectory: the whole vendored
+# tree is machine-owned (CLAUDE.md: never hand-edit anything under it), so
+# anything not in the staged tree is stale output and should go -- including
+# a top-level file or a whole directory the generator stopped emitting.
+log "Syncing $STAGED_MODELS Models/ + $STAGED_INFRA Infrastructure/ files into $DEST_DIR"
+mkdir -p "$DEST_DIR"
+rsync -a --delete "$STAGE_DIR/" "$DEST_DIR/" || fail "rsync into $DEST_DIR failed"
+
 if (( KEEP_WORK_DIR == 0 )); then
     log "Cleaning up $WORK_DIR"
     rm -rf "$WORK_DIR"
@@ -267,5 +338,4 @@ else
 fi
 
 FILE_COUNT=$(find "$DEST_DIR" -name '*.swift' | wc -l | tr -d ' ')
-(( FILE_COUNT > 0 )) || fail "0 Swift files vendored into $DEST_DIR -- an empty generate would otherwise have just rsync --delete'd the committed tree away"
 log "Done. $FILE_COUNT Swift files vendored into $DEST_DIR"

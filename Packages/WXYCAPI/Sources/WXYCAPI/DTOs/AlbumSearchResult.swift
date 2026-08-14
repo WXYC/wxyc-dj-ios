@@ -22,8 +22,11 @@
 //
 //  The real reasons: (1) the generated `matchedVia` is `[TrackMatchHint]?`
 //  (optional — api.yaml doesn't mark it required), where this app's
-//  contract is a non-optional `[TrackMatchHint]` that callers rely on
-//  reading via `.isEmpty` without unwrapping (see the property doc below);
+//  contract is a non-optional `[TrackMatchHint]` that callers index into
+//  without unwrapping — `row.matchedVia.first?.title`
+//  (SearchViewModel.swift), `TrackMatchBadge(hints: row.matchedVia)`
+//  (SearchResultRow.swift) — so the generated form would push an extra
+//  optional layer into the UI (see the property doc below);
 //  (2) the generated `RotationBin`'s cases are spelled `.h`/`.m`/`.l`/`.s`
 //  (+ `.unknownDefaultOpenApi`), not this app's `.heavy`/`.medium`/`.light`/
 //  `.single` below — `SearchResultRow.swift` already switches exhaustively
