@@ -266,11 +266,16 @@ struct DTODecodingTests {
         #expect(row.matchedVia.first?.source == .libraryIdentity)
     }
 
-    @Test func decodesUnknownMatchedViaSourceAsNil() throws {
+    @Test func decodesUnknownMatchedViaSourceAsUnknownDefaultCase() throws {
         // Forward compatibility: server may introduce new TrackMatchSource
         // enum cases (e.g. `musicbrainz_recording`) ahead of the client. The
-        // row must still decode; the hint's `source` is nil for the
-        // unrecognized variant. Mirrors `RotationBin`'s tolerant fallback.
+        // row must still decode. TrackMatchHint is now the generated
+        // WXYCAPIModels type (issue #75), whose swift6-generator
+        // `enumUnknownDefaultCase` support maps an unrecognized value to
+        // `.unknownDefaultOpenApi` rather than nil — `source` is
+        // non-optional on the generated type, so this replaces the old
+        // hand-rolled `nil`-fallback behavior with an explicit case that
+        // carries the same "unrecognized" meaning.
         let raw = """
             {
               "id": 1,
@@ -291,7 +296,7 @@ struct DTODecodingTests {
         let row = try JSONCoders.decoder.decode(AlbumSearchResult.self, from: Data(raw.utf8))
         let hint = try #require(row.matchedVia.first)
         #expect(hint.title == "song")
-        #expect(hint.source == nil)
+        #expect(hint.source == .unknownDefaultOpenApi)
     }
 
     @Test func decodesExplicitEmptyMatchedViaArray() throws {

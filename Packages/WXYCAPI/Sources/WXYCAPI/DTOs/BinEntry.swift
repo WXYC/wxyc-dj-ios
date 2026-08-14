@@ -9,6 +9,19 @@
 //  declare `alphabetical_name`. Interim: WXYC/wxyc-shared#344 points the 200 at
 //  an array of BinLibraryDetails and adds that field; #359 covers POST/DELETE.
 //
+//  Deliberately kept hand-authored, not generated (issue #75): api.yaml
+//  marks `code_letters` / `code_number` `required` but not `nullable: true`,
+//  so WXYCAPIModels.BinEntry (generated) declares them as non-optional
+//  `String`/`Int`. Real catalog data disagrees — V/A compilations and
+//  unfiled adds legitimately carry NULL for both (see the comment below and
+//  `decodesBinEntryWithNullCallNumberLegs` in DTODecodingTests.swift, a
+//  pinned regression test for exactly this). Swapping to the generated type
+//  would make `GET /djs/bin` throw a DecodingError — failing a DJ's entire
+//  bin fetch — the first time their bin contained one such release. This is
+//  the same api.yaml required-vs-nullable modeling gap that blocks
+//  AlbumSearchResult and CatalogRow from generating too; see CLAUDE.md's
+//  "Code Generation" section.
+//
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
 //

@@ -5,6 +5,22 @@
 //  Decoded shape of a row returned by Backend-Service GET /library/.
 //  Mirrors the AlbumSearchResult schema in wxyc-shared/api.yaml.
 //
+//  Deliberately kept hand-authored, not generated (issue #75). api.yaml
+//  marks `code_letters`, `code_number`, `code_artist_number`, `format_name`,
+//  `genre_name`, and `label` all `required` but none `nullable: true`, so
+//  the generated WXYCAPIModels.AlbumSearchResult declares every one of them
+//  as a non-optional String/Int. Real catalog rows disagree: V/A
+//  compilations and unfiled adds legitimately carry NULL for these (the
+//  librarian V/A invariant), and `decodesAlbumSearchResultWithNullLabel` /
+//  `tolerantUnknownRotationBin` / `callNumberSkipsMissingLegs` below pin
+//  that tolerance as load-bearing, not incidental. This is the core
+//  `GET /library/` search-results type, so a generated-type swap here would
+//  risk breaking search for any query that touches a V/A release — exactly
+//  the decoder-drift class of incident this migration otherwise guards
+//  against. `matchedVia`'s element type, `TrackMatchHint`, IS generated
+//  (see TrackMatchHint.swift) — that schema has no such gap. See CLAUDE.md's
+//  "Code Generation" section.
+//
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
 //

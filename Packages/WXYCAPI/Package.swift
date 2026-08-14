@@ -7,9 +7,16 @@ let package = Package(
     products: [
         .library(name: "WXYCAPI", targets: ["WXYCAPI"])
     ],
+    dependencies: [
+        // Vendored types generated from wxyc-shared/api.yaml (issue #75). A
+        // dedicated sibling package, not a dependency that overwrites this
+        // one -- see Packages/WXYCAPIModels and its contract-version.json.
+        .package(path: "../WXYCAPIModels")
+    ],
     targets: [
         .target(
             name: "WXYCAPI",
+            dependencies: ["WXYCAPIModels"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(

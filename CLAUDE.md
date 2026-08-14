@@ -70,8 +70,55 @@ The Xcode project is regenerated from `project.yml`. Run `xcodegen generate` aft
 
 When adding a new endpoint, prefer to:
 1. Add a typed method on `APIClient` (don't expose raw `sendRaw`).
-2. Add a DTO in `Sources/WXYCAPI/DTOs/`. Keep `snake_case` mapping in an explicit `CodingKeys` enum — `convertFromSnakeCase` is intentionally not used because the wire format mixes camelCase paths (e.g. `albumId` in nested types coming from Drizzle) with snake_case top-level.
+2. Check whether the response/request has an api.yaml schema first (see "Code Generation" below) — if it's generation-safe, reference the generated `WXYCAPIModels` type (directly, or via a `public typealias` in `Sources/WXYCAPI/DTOs/` if the app wants its own name for it) instead of hand-rolling a new struct. Only hand-roll a DTO in `Sources/WXYCAPI/DTOs/` when the schema doesn't exist, or is unsafe to generate (same section). Keep `snake_case` mapping in an explicit `CodingKeys` enum for anything hand-rolled — `convertFromSnakeCase` is intentionally not used because the wire format mixes camelCase paths (e.g. `albumId` in nested types coming from Drizzle) with snake_case top-level.
 3. Write tests against `StubRequestSession`. See `APIClientTests.swift` for the pattern.
+
+## Code Generation (`WXYCAPIModels`)
+
+`Packages/WXYCAPIModels` is a vendored SwiftPM package of Swift types generated from `wxyc-shared`'s `api.yaml` (issue #75; the org's OpenAPI 3.0 contract — see the org-level `CLAUDE.md`'s "API Contract" section). It is a **separate package from `WXYCAPI`**, not a replacement for it: the generator's `swift6.yaml` config emits `projectName: WXYCAPI`, which would collide with (and, with `useSPMFileStructure: true`, overwrite) this repo's hand-curated package if vendored in place. `WXYCAPI`'s `Package.swift` depends on `WXYCAPIModels` as a local sibling package; the hand-written `APIClient` / `AuthService` / `Bin/` / `Catalog/` / `Connectivity/` code is untouched by this — it still calls the same DTO names it always has, most of which now resolve to a `public typealias` pointing at a generated type.
+
+This mirrors `wxyc-ios-64`'s `Shared/WXYCAPIModels` (see its `docs/code-generation.md`) — same pattern, ported here rather than reinvented.
+
+**What's vendored.** Only `Models/` and `Infrastructure/` from the generator's output — the `Codable` model structs plus the support types they depend on (`JSONValue`, `CaseIterableDefaultsLast`, `NumericRule`, `CodableHelper`, ISO-8601 date formatting). `APIs/` — the generated endpoint clients — is intentionally dropped on every regen; this package is models-only (`generateApis: false` in `swift6.yaml` does **not** actually suppress `APIs/` under the swift6 generator, so the scripts below drop it by only rsyncing `Models/`+`Infrastructure/`, never the whole output tree).
+
+**The pin.** `Packages/WXYCAPIModels/contract-version.json` pins the vendored tree to an exact `wxyc-shared` commit (`wxycSharedSha`, the field the scripts actually read) and the `api.yaml` version it shipped (`apiYamlVersion`, for humans). Never hand-edit a file under `Packages/WXYCAPIModels/Sources/WXYCAPIModels` — the next regen silently discards it, and `verify-api-types.sh` exists to catch anyone who tries.
+
+**Regenerating and verifying.**
+
+```bash
+# Update the contract: bump contract-version.json's wxycSharedSha (and, for
+# legibility, wxycSharedTag / apiYamlVersion) to the new wxyc-shared commit first, then:
+scripts/regenerate-api-types.sh
+
+# Drift check -- regenerates into a scratch dir (never touches the committed
+# tree) and diffs it against Packages/WXYCAPIModels/Sources/WXYCAPIModels:
+scripts/verify-api-types.sh
+```
+
+Requires `git`, `npm`/`node`, `java` (the OpenAPI generator runs on the JVM via `openapi-generator-cli`), and `rsync` on `PATH`. After regenerating, review the diff, then run `swift test --package-path Packages/WXYCAPI` and the affected app tests before committing. `.github/workflows/verify-api-types.yml` runs `verify-api-types.sh` on every PR touching `Packages/WXYCAPIModels/**` or either script, plus on every push to `main` (a `pull_request` run doesn't re-fire on a base-branch advance, so the `push` trigger catches two individually-green PRs merging into a drifted tree).
+
+**Which DTOs are generated, and which stay hand-authored.** Of the DTOs in `Sources/WXYCAPI/DTOs/` with an api.yaml counterpart, only two were safe to convert to a `public typealias` onto the generated type:
+
+| DTO | Status | Why |
+|---|---|---|
+| `TrackMatchHint` / `TrackMatchSource` | **Generated** | Field-for-field matches api.yaml's `TrackMatchHint` schema; no required-vs-nullable gap. The generated enum's `enumUnknownDefaultCase` support (`.unknownDefaultOpenApi`) replaces the old hand-rolled `try?`-to-`nil` tolerance pattern with an explicit case — same forward-compat guarantee, no behavior loss. |
+| `APIErrorResponse` | **Generated** (aliased to `WXYCAPIModels.ApiErrorResponse`) | api.yaml spells the schema `ApiErrorResponse`; this app keeps its existing Swift-idiomatic `APIErrorResponse` name via the alias. `message` moving from optional to required-non-optional doesn't matter — every call site decodes it through `try?` and reads `.message` via optional chaining already. |
+
+Everything else with an api.yaml-shaped name stays hand-authored, each for a **specific, verified** reason (not merely "it was already hand-written") — see the doc comment at the top of each file for the full argument:
+
+| DTO | Why it stays hand-authored |
+|---|---|
+| `AlbumSearchResult` | api.yaml marks `code_letters`/`code_number`/`code_artist_number`/`format_name`/`genre_name`/`label` `required` but not `nullable: true`; real V/A-compilation and unfiled catalog rows carry NULL for these. The generated type declares them non-optional — decoding a real V/A row would throw. Pinned by `decodesAlbumSearchResultWithNullLabel`/`tolerantUnknownRotationBin`/`callNumberSkipsMissingLegs` in `DTODecodingTests.swift`. |
+| `BinEntry` / `DJBinResponse` | Same required-vs-nullable gap, on `code_letters`/`code_number`. Pinned by `decodesBinEntryWithNullCallNumberLegs`. |
+| `CatalogRow` | Corresponds to api.yaml's `CatalogExportRow` (not literally schema-less, despite the name mismatch) — but that schema's own doc comment warns a strict decode "would fail EVERY NDJSON line and take the whole on-device clone with it," for the same required-vs-nullable reason above. |
+| `AlbumInfo` | Corresponds to `AlbumInfoResponse` — same gap on `code_letters`/`format_name`/`artist_name`, plus a `label`/`record_label` dual-key fallback a generated `Codable` can't express, plus it's an `allOf` composite over `Album`. |
+| `AlbumMetadata` | The name is a false cognate: api.yaml's schema for `GET /proxy/metadata/album` is `AlbumMetadataResponse`, not `AlbumMetadata` (that name is a different, unrelated schema). Even against the correctly-named one, the generated type has no `artistBio`/`artistWikipediaUrl` — and `artistWikipediaURL` is live in `AlbumDetailView.swift`. |
+| `SignInRequest`, `JWTResponse` | The better-auth sign-in surface (`/auth/sign-in/username`, `GET /auth/token`) isn't in api.yaml at all — only `/auth/device/*` (5 of 62 paths) is modeled there. No schema exists. |
+| `AddToBinRequest` | api.yaml declares only `album_id`; this app's `trackTitle` (sent when a track-match hit drives an add — see `SearchViewModel.swift`) has no api.yaml counterpart yet. |
+
+None of the six `DeviceAuth*` request/response schemas (issue #64's approve/deny/verify surface) have a hand-rolled counterpart on `main` today — that work lives only on the not-yet-merged `qr-signin` branch. Their generated forms are already vendored in `WXYCAPIModels` regardless (the generator vendors every api.yaml schema, not a hand-picked subset), verified safe to consume as-is (no required-vs-nullable gap on any of them) — ready for `qr-signin` to reference directly once it rebases, rather than hand-rolling and then migrating later. `GeneratedModelsContractTests.swift` pins the issue-#64 mixed-casing contract (`DeviceAuthApproveRequest`/`DeviceAuthDenyRequest` camelCase `userCode` vs `DeviceAuthVerifyResponse` snake_case `user_code`) directly against the vendored types, independent of that merge.
+
+When `api.yaml` changes upstream: bump the pin, regenerate, and re-run this same evaluation for anything that moved — a field losing its required-vs-nullable gap (or an endpoint's schema arriving for the first time) is grounds to promote a hand-authored DTO to generated in a follow-up PR; a newly-added field, wrong optionality, or a new gap is grounds to keep something hand-authored a while longer.
 
 ## UI layer (`WXYCDJ`)
 
@@ -124,12 +171,12 @@ Don't add these without asking:
 
 - Rotation editing — requires MD/SM role; separate concept from the personal bin.
 - Flowsheet, playback, schedule, request line — different apps own those.
-- swift-openapi-generator — currently hand-rolled DTOs; the codegen pipeline is a worthwhile follow-up if scope grows.
+- `swift-openapi-generator` specifically — this app's codegen (issue #75, see "Code Generation" above) uses `wxyc-shared`'s `openapi-generator-cli`-based `generate:swift` pipeline instead, matching `wxyc-ios-64`'s and WXYC-Android's approach. Don't add `swift-openapi-generator` as a second, competing codegen tool.
 - PostHog, Sentry, AppleScript hooks — keep the app minimal.
 
 ## LML enrichment
 
-The detail view fan-outs two calls: `GET /library/info` (catalog row, source of truth for shelf data) and `GET /proxy/metadata/album` (LML — release year, label, genres, styles, tracklist, streaming URLs, Discogs URL, Wikipedia URL). The `AlbumMetadata` DTO matches the camelCase response shape `proxy.controller.ts` emits. The metadata call is **best-effort**: a 404, decoding failure, or rate-limit is captured via `os_log` under subsystem `org.wxyc.dj`, category `metadata`, and surfaced inline as a faint footer note instead of a red error banner — the catalog row still renders.
+The detail view fan-outs two calls: `GET /library/info` (catalog row, source of truth for shelf data) and `GET /proxy/metadata/album` (LML — release year, label, genres, styles, tracklist, streaming URLs, Discogs URL, Wikipedia URL). The `AlbumMetadata` DTO matches the camelCase response shape `proxy.controller.ts` emits (hand-authored, not generated — see "Code Generation" above for why). The metadata call is **best-effort**: a 404, decoding failure, or rate-limit is captured via `os_log` under subsystem `org.wxyc.dj`, category `metadata`, and surfaced inline as a faint footer note instead of a red error banner — the catalog row still renders.
 
 `loadAll` branches the fan-out on **whether a `fallback` exists**, because the LML call needs an artist name to key on. With one, metadata is fetched **concurrently** with `/library/info` off the fallback's artist/title — the case for every tab push, Search → Detail and (since issue #87) Bin → Detail. That's safe for the bin row specifically because `djs.service.getBinFromDB` and `library.service.getAlbumFromDB` both select `artists.artist_name` / `library.album_title` off the same joins, so the two sources can't disagree on the lookup keys; the bin row just knows them a round-trip earlier. Without a fallback — a Spotlight deep link that missed the on-device clone — `/library/info` is the only source of an artist name, so it's awaited first and metadata goes second. `infoLoaded` (which gates the Release-section label dedup) is set after `/library/info` settles on both branches.
 
