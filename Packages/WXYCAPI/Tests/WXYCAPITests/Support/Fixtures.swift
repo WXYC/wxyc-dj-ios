@@ -132,6 +132,14 @@ enum Fixtures {
         ]
         """
 
+    /// The two `binResponseJSON` rows, decoded. Shared by every suite that
+    /// needs `[BinEntry]` so the bin projection is spelled once — the same
+    /// arrangement as ``catalogRows()``. Preserves wire order (Pratt, then
+    /// Molina), which is what makes it useful for testing the shelf sort.
+    static func binEntries() throws -> [BinEntry] {
+        try JSONCoders.decoder.decode([BinEntry].self, from: Data(binResponseJSON.utf8))
+    }
+
     /// Wire body for POST /djs/bin (201). The server returns the raw inserted
     /// `bins` row — NOT a bin entry — so the client deliberately doesn't decode
     /// it. Kept so the addToBin test proves that body can't fail the call.

@@ -141,19 +141,28 @@ public final class APIClient: Sendable {
     /// envelope object — the DJ is identified by the bearer token, so nothing
     /// wraps it.
     ///
-    /// A literal `null` body is a **decoding error, not an empty bin** —
-    /// deliberately unlike dj-site, which coerces it (`BinLibraryDetails[] |
-    /// null`). dj-site has no offline snapshot to protect; we do, and
-    /// `BinViewModel` persists whatever this returns. Coercing `null` to `[]`
-    /// would overwrite the DJ's last-good offline bin with *authoritative*
-    /// emptiness (the store's snapshot-present marker), so the Bin tab would
-    /// read "Bin is empty" across cold launches until a real refresh landed.
-    /// Throwing instead keeps the snapshot on screen — the same fail-closed
-    /// posture as `catalog()`'s `.skippedEmptyExport` guard, and for the same
-    /// reason: an empty body is likelier a backend hiccup than a real empty
-    /// bin. A genuinely empty bin arrives as `[]` and still persists as
-    /// authoritative emptiness, which is issue #60's whole written-empty vs.
-    /// never-written distinction.
+    /// `[]` and `null` are **not** the same answer here, and the asymmetry is
+    /// deliberate:
+    ///
+    /// - `[]` is a real, authoritative empty bin — a normal state a DJ reaches
+    ///   by removing their last release. It decodes, and `BinViewModel`
+    ///   persists it as written-empty (issue #60's written-empty vs.
+    ///   never-written distinction).
+    /// - `null` is not a bin at all, so it fails to decode and throws. dj-site
+    ///   coerces it (`BinLibraryDetails[] | null`); we must not, because
+    ///   `BinViewModel` persists whatever this returns and `[]` sets the
+    ///   store's snapshot-present marker — a coerced `null` would overwrite the
+    ///   DJ's last-good offline bin with authoritative emptiness, reading "Bin
+    ///   is empty" across cold launches until a real refresh landed. dj-site
+    ///   has no offline snapshot to lose; we do.
+    ///
+    /// Throwing hands the decision to `BinViewModel.handleRefreshFailure`,
+    /// which keeps the last good snapshot on screen — that, not anything here,
+    /// is the structural analog of `CatalogRefreshService`'s
+    /// `.skippedEmptyExport`. Note the catalog's *policy* is the *opposite* of
+    /// the bin's: an empty catalog export is treated as a backend hiccup and
+    /// refused, because an empty catalog is never legitimate — whereas an empty
+    /// bin is. Don't unify them.
     public func getBin() async throws -> [BinEntry] {
         try await getJSON("/djs/bin", query: [])
     }
