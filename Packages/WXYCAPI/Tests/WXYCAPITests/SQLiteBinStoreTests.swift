@@ -18,20 +18,21 @@ import Testing
 struct SQLiteBinStoreTests {
     // MARK: Fixtures / helpers
 
-    /// Two WXYC-representative bin entries (Juana Molina id 1, Jessica Pratt
-    /// id 2). Whole-second `addedAt` values so the `.iso8601` encode / lenient
-    /// decode round-trip is exact.
+    /// Two WXYC-representative bin entries, keyed (like the bin itself) by
+    /// album id: Juana Molina 100, Jessica Pratt 200.
     static let juana = BinEntry(
-        id: 1, djId: 42, albumId: 100,
-        addedAt: Date(timeIntervalSince1970: 1_730_500_000),
+        albumId: 100,
         albumTitle: "DOGA", artistName: "Juana Molina",
-        codeLetters: "MOL", codeNumber: 12
+        alphabeticalName: "Molina, Juana", label: "Sonamos",
+        codeLetters: "MOL", codeArtistNumber: 1, codeNumber: 12,
+        formatName: "CD", genreName: "Rock"
     )
     static let pratt = BinEntry(
-        id: 2, djId: 42, albumId: 200,
-        addedAt: Date(timeIntervalSince1970: 1_730_600_000),
+        albumId: 200,
         albumTitle: "On Your Own Love Again", artistName: "Jessica Pratt",
-        codeLetters: "PRA", codeNumber: 5
+        alphabeticalName: "Pratt, Jessica", label: "Drag City",
+        codeLetters: "PRA", codeArtistNumber: 1, codeNumber: 5,
+        formatName: "LP", genreName: "Rock"
     )
 
     /// Run `body` against a store at a fresh, unique temp path, then close it

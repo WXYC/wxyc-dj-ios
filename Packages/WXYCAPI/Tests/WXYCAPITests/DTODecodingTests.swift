@@ -385,12 +385,23 @@ struct DTODecodingTests {
         #expect(m.youtubeMusicURL != nil)
     }
 
-    @Test func decodesDJBinResponse() throws {
-        let data = Data(Fixtures.djBinResponseJSON.utf8)
-        let bin = try JSONCoders.decoder.decode(DJBinResponse.self, from: data)
-        #expect(bin.djId == 42)
-        #expect(bin.entries.count == 1)
-        #expect(bin.entries.first?.artistName == "Juana Molina")
+    /// `GET /djs/bin` returns a bare array of denormalized library rows — no
+    /// envelope object, no per-row bin id, no added-at timestamp. Decoding it as
+    /// an object was the "Expected to decode Dictionary<String, Any> but found
+    /// an array instead" failure the Bin tab showed on every load.
+    @Test func decodesBinAsABareArray() throws {
+        let data = Data(Fixtures.binResponseJSON.utf8)
+        let entries = try JSONCoders.decoder.decode([BinEntry].self, from: data)
+        #expect(entries.count == 2)
+        let juana = try #require(entries.first { $0.albumId == 100 })
+        #expect(juana.artistName == "Juana Molina")
+        #expect(juana.alphabeticalName == "Molina, Juana")
+        #expect(juana.label == "Sonamos")
+        #expect(juana.formatName == "CD")
+        #expect(juana.genreName == "Rock")
+        // The album is the bin's key: the wire carries no bins.id.
+        #expect(juana.id == 100)
+        #expect(juana.callNumber == "MOL 1/12")
     }
 
     @Test func decodesBinEntryWithNullCallNumberLegs() throws {
@@ -399,14 +410,16 @@ struct DTODecodingTests {
         // refusing to render the bin row.
         let raw = """
             {
-              "id": 3,
-              "dj_id": 42,
               "album_id": 300,
-              "added_at": "2025-11-03T08:00:00.000Z",
               "album_title": "Edits",
               "artist_name": "Chuquimamani-Condori",
+              "alphabetical_name": "Chuquimamani-Condori",
+              "label": null,
               "code_letters": null,
-              "code_number": null
+              "code_artist_number": null,
+              "code_number": null,
+              "format_name": "CD",
+              "genre_name": "Electronic"
             }
             """
         let entry = try JSONCoders.decoder.decode(BinEntry.self, from: Data(raw.utf8))

@@ -136,13 +136,23 @@ public final class APIClient: Sendable {
         }
     }
 
-    public func getBin() async throws -> DJBinResponse {
-        try await getJSON("/djs/bin", query: [])
+    /// The DJ's bin, newest server truth. The response is a **bare array** of
+    /// denormalized library rows (api.yaml `BinLibraryDetails`), not an
+    /// envelope object — the DJ is identified by the bearer token, so nothing
+    /// wraps it. A literal `null` body decodes to an empty bin, matching
+    /// dj-site's `BinLibraryDetails[] | null` handling.
+    public func getBin() async throws -> [BinEntry] {
+        let entries: [BinEntry]? = try await getJSON("/djs/bin", query: [])
+        return entries ?? []
     }
 
-    @discardableResult
-    public func addToBin(albumId: Int, trackTitle: String? = nil) async throws -> BinEntry {
-        try await postJSON("/djs/bin", body: AddToBinRequest(albumId: albumId, trackTitle: trackTitle))
+    /// Add a release to the signed-in DJ's bin. The `201` body is the raw
+    /// inserted `bins` row (`id` / `dj_id` / `album_id` / `track_title`) — not
+    /// a bin entry, and not something any caller needs — so it's deliberately
+    /// left undecoded; the 2xx is the acknowledgement.
+    public func addToBin(albumId: Int, trackTitle: String? = nil) async throws {
+        let body = try JSONCoders.encoder.encode(AddToBinRequest(albumId: albumId, trackTitle: trackTitle))
+        _ = try await sendRaw(path: "/djs/bin", method: "POST", query: [], body: body)
     }
 
     public func removeFromBin(albumId: Int, trackTitle: String? = nil) async throws {
@@ -153,12 +163,6 @@ public final class APIClient: Sendable {
 
     private func getJSON<T: Decodable>(_ path: String, query: [URLQueryItem]) async throws -> T {
         let data = try await sendRaw(path: path, method: "GET", query: query, body: nil)
-        return try decode(T.self, from: data)
-    }
-
-    private func postJSON<B: Encodable, T: Decodable>(_ path: String, body: B) async throws -> T {
-        let encoded = try JSONCoders.encoder.encode(body)
-        let data = try await sendRaw(path: path, method: "POST", query: [], body: encoded)
         return try decode(T.self, from: data)
     }
 
