@@ -163,6 +163,29 @@ struct AlbumDetailArtworkTests {
         #expect(url == Self.lmlArt)
     }
 
+    // MARK: Reading the clone for artwork
+
+    // The precedence chain only helps if `cloneRow` is actually populated when
+    // it's the sole remaining catalog source. It used to be read *only* in
+    // `loadInfo()`'s catch, so on every path where `/library/info` succeeded
+    // (i.e. all of them, online) the clone leg was unreachable and Bin → Detail
+    // — which has no search row at all — still fell through to LML's logo.
+
+    @Test("Bin → Detail (no search row) reads the clone for artwork")
+    func noFallbackReadsClone() {
+        #expect(AlbumDetailView.shouldReadCloneForArtwork(fallback: nil))
+    }
+
+    @Test("a search row without a cover reads the clone for artwork")
+    func artlessFallbackReadsClone() {
+        #expect(AlbumDetailView.shouldReadCloneForArtwork(fallback: Self.dogaSearchRow(artworkURL: nil)))
+    }
+
+    @Test("a search row carrying a cover doesn't need the clone")
+    func coveredFallbackSkipsClone() {
+        #expect(!AlbumDetailView.shouldReadCloneForArtwork(fallback: Self.dogaSearchRow()))
+    }
+
     @Test("no artwork anywhere yields nil")
     func noneYieldsNil() throws {
         let url = AlbumDetailView.preferredArtworkURL(
