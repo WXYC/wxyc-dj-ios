@@ -36,11 +36,14 @@ Every Swift file (except `Package.swift`) starts with:
 
 ```
 WXYCDJ/                          App target sources
+WXYCDJ/AppIcon.icon/             Icon Composer app-icon document (see below)
 WXYCDJTests/                     App-target unit-test bundle (Swift Testing)
 Packages/WXYCAPI/                Local SPM package: DTOs, AuthService, APIClient
 project.yml                      xcodegen spec (regen via `xcodegen generate`)
 WXYCDJ.xcodeproj/                Generated; tracked in git for IDE convenience
 ```
+
+**App icon — do not resync `icon.json` verbatim from the design source.** `WXYCDJ/AppIcon.icon` is an Icon Composer (Liquid Glass) document compiled by `actool` via `ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon`; the design source lives outside the repo at `~/Pictures/Graphic Design/WXYC Assets/dj app/app icon/iOS/AppIcon.icon`. Icon Composer 27 emits two constructs that make **Xcode 26.x `actool` crash** rather than degrade (`error: Exception while running actool: *** -[__NSPlaceholderArray initWithObjects:count:]: attempt to insert nil object from objects[0]`, thrown from `selectCatalogIconComposerItemsFromCollection`), so the checked-in copy strips them: the top-level **`"features"` array** (any non-empty value — `refractivity`, `specular-location`) is **omitted**, and a **`"specular"` / `"specular-specializations"` value of `"outside"`** is rewritten to **`true`**. Every other IC-27 key (`refractivity-specializations`, `lighting-specializations`, `blur-material-specializations`, `shadow-specializations`, `translucency-specializations`) compiles clean on 26.x, and the compiled raster is visually indistinguishable — these two are opt-in rendering nuances. CI pins **Xcode 26.2** (`.github/workflows/ci.yml`), so keep the downgrade until the toolchain floor moves to 27. Re-exporting from Icon Composer re-adds both on save; re-apply the downgrade and verify with a standalone `actool` compile (recipe in README) rather than a full build.
 
 The Xcode project is regenerated from `project.yml`. Run `xcodegen generate` after editing `project.yml` **and** after adding any new source files to `WXYCDJ/` or `WXYCDJTests/` — xcodegen bakes explicit file references into the pbxproj at generation time, so new files aren't picked up until you regen.
 
