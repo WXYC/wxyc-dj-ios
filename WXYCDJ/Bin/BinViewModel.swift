@@ -2,7 +2,8 @@
 //  BinViewModel.swift
 //  WXYCDJ
 //
-//  Owns the local cache of GET /djs/bin and exposes refresh + remove. Backed by
+//  Owns the local cache of GET /djs/bin (a bare array of denormalized library
+//  rows) and exposes refresh + remove, sorted into shelf order. Backed by
 //  an optional offline snapshot store (issue #60): a cold launch loads the
 //  persisted snapshot first so the bin renders without connectivity, and every
 //  successful online refresh writes the snapshot back.
@@ -64,7 +65,7 @@ final class BinViewModel {
         guard let binStore else { return }
         do {
             guard let snapshot = try await binStore.snapshot() else { return }
-            entries = snapshot.sorted { $0.addedAt > $1.addedAt }
+            entries = Self.normalized(snapshot)
             hasLoadedBin = true
             state = .loaded
         } catch {
@@ -80,15 +81,17 @@ final class BinViewModel {
             state = .loading
         }
         do {
-            let response = try await api.getBin()
-            entries = response.entries.sorted { $0.addedAt > $1.addedAt }
+            let normalized = Self.normalized(try await api.getBin())
+            entries = normalized
             hasLoadedBin = true
             state = .loaded
             // Persist the fresh server truth for the next offline launch. A write
             // failure must not turn a successful refresh into an error — but log it,
             // since a silently stale offline bin is otherwise invisible to debug.
+            // The *normalized* list is what's persisted: the store is keyed by
+            // album id, so a duplicate would fail the whole save.
             do {
-                try await binStore?.saveSnapshot(response.entries)
+                try await binStore?.saveSnapshot(normalized)
             } catch {
                 binLog.error("Bin snapshot save failed: \(error.localizedDescription, privacy: .public). Offline bin may be stale.")
             }
@@ -105,6 +108,26 @@ final class BinViewModel {
     /// snapshot away.
     private func handleRefreshFailure(_ message: String) {
         state = hasLoadedBin ? .loaded : .error(message)
+    }
+
+    /// Shelf order for the bin: the artist's filing name, then album title.
+    /// `GET /djs/bin` has no ORDER BY and carries no added-at column, so server
+    /// order is arbitrary and unstable across refreshes — sorting here is what
+    /// keeps rows from reshuffling under the DJ. The dedupe collapses the
+    /// repeated projection of an album binned under two track titles: the wire
+    /// rows are identical (no `track_title` in the projection) and
+    /// `DELETE /djs/bin` clears the album wholesale, so they're one row here.
+    private static func normalized(_ entries: [BinEntry]) -> [BinEntry] {
+        var seen: Set<Int> = []
+        return entries
+            .filter { seen.insert($0.albumId).inserted }
+            .sorted { lhs, rhs in
+                switch lhs.sortName.localizedStandardCompare(rhs.sortName) {
+                case .orderedAscending: true
+                case .orderedDescending: false
+                case .orderedSame: lhs.albumTitle.localizedStandardCompare(rhs.albumTitle) == .orderedAscending
+                }
+            }
     }
 
     func remove(_ entry: BinEntry) async {

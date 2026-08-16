@@ -97,34 +97,50 @@ enum Fixtures {
         }
         """
 
-    static let djBinResponseJSON = """
-        {
-          "dj_id": 42,
-          "entries": [
-            {
-              "id": 1,
-              "dj_id": 42,
-              "album_id": 100,
-              "added_at": "2025-11-01T22:15:00.000Z",
-              "album_title": "DOGA",
-              "artist_name": "Juana Molina",
-              "code_letters": "MOL",
-              "code_number": 12
-            }
-          ]
-        }
+    /// Wire body for GET /djs/bin — a bare array of the denormalized library
+    /// join `djs.service.getBinFromDB` projects (api.yaml `BinLibraryDetails`).
+    /// No envelope, no `bins.id` / `dj_id` / added-at: this is the shape the
+    /// server actually emits, and the shape dj-site decodes.
+    static let binResponseJSON = """
+        [
+          {
+            "album_id": 200,
+            "album_title": "On Your Own Love Again",
+            "artist_name": "Jessica Pratt",
+            "alphabetical_name": "Pratt, Jessica",
+            "label": "Drag City",
+            "code_letters": "PRA",
+            "code_artist_number": 1,
+            "code_number": 5,
+            "format_name": "LP",
+            "genre_name": "Rock",
+            "legacy_release_id": 88221
+          },
+          {
+            "album_id": 100,
+            "album_title": "DOGA",
+            "artist_name": "Juana Molina",
+            "alphabetical_name": "Molina, Juana",
+            "label": "Sonamos",
+            "code_letters": "MOL",
+            "code_artist_number": 1,
+            "code_number": 12,
+            "format_name": "CD",
+            "genre_name": "Rock",
+            "legacy_release_id": 55123
+          }
+        ]
         """
 
-    static let binEntryJSON = """
+    /// Wire body for POST /djs/bin (201). The server returns the raw inserted
+    /// `bins` row — NOT a bin entry — so the client deliberately doesn't decode
+    /// it. Kept so the addToBin test proves that body can't fail the call.
+    static let addToBinResponseJSON = """
         {
-          "id": 2,
-          "dj_id": 42,
+          "id": 7,
+          "dj_id": "yzT4kQ2mNc8fVb1L",
           "album_id": 200,
-          "added_at": "2025-11-02T12:30:00.000Z",
-          "album_title": "On Your Own Love Again",
-          "artist_name": "Jessica Pratt",
-          "code_letters": "PRA",
-          "code_number": 5
+          "track_title": null
         }
         """
 

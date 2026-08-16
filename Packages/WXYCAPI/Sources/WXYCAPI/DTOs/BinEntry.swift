@@ -2,8 +2,9 @@
 //  BinEntry.swift
 //  WXYCAPI
 //
-//  Decoded shape of a row in the DJ's personal bin
-//  (GET /djs/bin → DJBinResponse.entries). Mirrors BinEntry in api.yaml.
+//  Decoded shape of a row in the DJ's personal bin (GET /djs/bin, which
+//  returns a bare array). Mirrors BinLibraryDetails in api.yaml — the
+//  denormalized library join Backend-Service actually emits.
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -11,43 +12,83 @@
 
 import Foundation
 
+/// One release in the DJ's bin, as projected by `djs.service.getBinFromDB` —
+/// the `bins` row joined out to `library` / `artists` / `format` / `genres`.
+///
+/// The wire carries **no** `bins.id`, `dj_id`, or added-at timestamp: the
+/// projection is library data only (`bins` has no timestamp column at all), and
+/// `DELETE /djs/bin` removes every row for a `(dj, album)` pair. `albumId` is
+/// therefore the bin's effective key, and is what ``id`` reports.
 public struct BinEntry: Codable, Sendable, Hashable, Identifiable {
-    public let id: Int
-    public let djId: Int
+    /// The library row's id. See the type's note on why this is the bin's key
+    /// rather than a per-row bin identifier.
+    public var id: Int { albumId }
+
     public let albumId: Int
-    public let addedAt: Date
     public let albumTitle: String
     public let artistName: String
-    // `code_letters` / `code_number` are nullable in the catalog (V/A
-    // compilations, unfiled adds), so the bin denormalization can carry
-    // nulls through. Keep these optional to match AlbumSearchResult.
+    /// Filing form of `artistName` ("Molina, Juana"). `NOT NULL` upstream, but
+    /// optional here so a projection change can't fail the whole row; it only
+    /// drives sort order, which falls back to `artistName`.
+    public let alphabeticalName: String?
+    public let label: String?
+    // The call-number legs are nullable in the catalog (V/A compilations,
+    // unfiled adds), so keep them optional to match AlbumSearchResult.
     public let codeLetters: String?
+    public let codeArtistNumber: Int?
     public let codeNumber: Int?
+    public let formatName: String?
+    public let genreName: String?
 
-    /// `<letters> <number>` — BinEntry doesn't carry the artist code today,
-    /// so this is shorter than AlbumSearchResult.callNumber.
-    public var callNumber: String {
-        AlbumSearchResult.formatCallNumber(letters: codeLetters, artistNumber: nil, releaseNumber: codeNumber)
+    public init(
+        albumId: Int,
+        albumTitle: String,
+        artistName: String,
+        alphabeticalName: String? = nil,
+        label: String? = nil,
+        codeLetters: String? = nil,
+        codeArtistNumber: Int? = nil,
+        codeNumber: Int? = nil,
+        formatName: String? = nil,
+        genreName: String? = nil
+    ) {
+        self.albumId = albumId
+        self.albumTitle = albumTitle
+        self.artistName = artistName
+        self.alphabeticalName = alphabeticalName
+        self.label = label
+        self.codeLetters = codeLetters
+        self.codeArtistNumber = codeArtistNumber
+        self.codeNumber = codeNumber
+        self.formatName = formatName
+        self.genreName = genreName
     }
 
+    /// Shelf call number in the form `<letters> <artistNumber>/<releaseNumber>`
+    /// (e.g. "MOL 1/12") — the same rendering as ``AlbumSearchResult/callNumber``,
+    /// since the bin projection carries all three legs.
+    public var callNumber: String {
+        AlbumSearchResult.formatCallNumber(
+            letters: codeLetters,
+            artistNumber: codeArtistNumber,
+            releaseNumber: codeNumber
+        )
+    }
+
+    /// Key the bin sorts on: the librarian's filing name, falling back to the
+    /// display name when the projection omits it.
+    public var sortName: String { alphabeticalName ?? artistName }
+
     enum CodingKeys: String, CodingKey {
-        case id
-        case djId = "dj_id"
         case albumId = "album_id"
-        case addedAt = "added_at"
         case albumTitle = "album_title"
         case artistName = "artist_name"
+        case alphabeticalName = "alphabetical_name"
+        case label
         case codeLetters = "code_letters"
+        case codeArtistNumber = "code_artist_number"
         case codeNumber = "code_number"
-    }
-}
-
-public struct DJBinResponse: Codable, Sendable, Hashable {
-    public let djId: Int
-    public let entries: [BinEntry]
-
-    enum CodingKeys: String, CodingKey {
-        case djId = "dj_id"
-        case entries
+        case formatName = "format_name"
+        case genreName = "genre_name"
     }
 }

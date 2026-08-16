@@ -32,47 +32,50 @@ enum Fixtures {
         ]
         """
 
-    /// Wire body for POST /djs/bin — single BinEntry. Used by tests that
-    /// only need to satisfy the response side after exercising addToBin.
-    static let singleBinEntryJSON = """
+    /// Wire body for POST /djs/bin (201) — the raw inserted `bins` row the
+    /// server returns. The client doesn't decode it; tests enqueue it only to
+    /// satisfy the response side after exercising addToBin.
+    static let addToBinResponseJSON = """
         {
-          "id": 1,
-          "dj_id": 42,
+          "id": 7,
+          "dj_id": "yzT4kQ2mNc8fVb1L",
           "album_id": 100,
-          "added_at": "2025-11-01T22:15:00.000Z",
-          "album_title": "DOGA",
-          "artist_name": "Juana Molina",
-          "code_letters": "MOL",
-          "code_number": 12
+          "track_title": null
         }
         """
 
-    static let djBinResponseJSON = """
-        {
-          "dj_id": 42,
-          "entries": [
-            {
-              "id": 1,
-              "dj_id": 42,
-              "album_id": 100,
-              "added_at": "2025-11-01T22:15:00.000Z",
-              "album_title": "DOGA",
-              "artist_name": "Juana Molina",
-              "code_letters": "MOL",
-              "code_number": 12
-            },
-            {
-              "id": 2,
-              "dj_id": 42,
-              "album_id": 200,
-              "added_at": "2025-11-02T12:30:00.000Z",
-              "album_title": "On Your Own Love Again",
-              "artist_name": "Jessica Pratt",
-              "code_letters": "PRA",
-              "code_number": 5
-            }
-          ]
-        }
+    /// Wire body for GET /djs/bin — a bare array of denormalized library rows
+    /// (api.yaml `BinLibraryDetails`), in the arbitrary order an un-ORDER-BY'd
+    /// server projection can hand back.
+    static let binResponseJSON = """
+        [
+          {
+            "album_id": 200,
+            "album_title": "On Your Own Love Again",
+            "artist_name": "Jessica Pratt",
+            "alphabetical_name": "Pratt, Jessica",
+            "label": "Drag City",
+            "code_letters": "PRA",
+            "code_artist_number": 1,
+            "code_number": 5,
+            "format_name": "LP",
+            "genre_name": "Rock",
+            "legacy_release_id": 88221
+          },
+          {
+            "album_id": 100,
+            "album_title": "DOGA",
+            "artist_name": "Juana Molina",
+            "alphabetical_name": "Molina, Juana",
+            "label": "Sonamos",
+            "code_letters": "MOL",
+            "code_artist_number": 1,
+            "code_number": 12,
+            "format_name": "CD",
+            "genre_name": "Rock",
+            "legacy_release_id": 55123
+          }
+        ]
         """
 
     /// JWT with payload {"sub":"42","email":"juana@wxyc.org","role":"dj","exp": <Date>}.

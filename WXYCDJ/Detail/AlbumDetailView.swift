@@ -527,7 +527,7 @@ struct AlbumDetailView: View {
         addError = nil
         defer { addInFlight = false }
         do {
-            _ = try await deps.api.addToBin(albumId: albumId)
+            try await deps.api.addToBin(albumId: albumId)
             addedToBin = true
         } catch {
             // Surface to a dedicated addError state so the add-to-bin

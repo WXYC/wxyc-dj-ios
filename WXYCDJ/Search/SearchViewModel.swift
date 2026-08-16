@@ -82,7 +82,7 @@ final class SearchViewModel {
         // the bin entry remembers what the DJ was actually looking for.
         // Empty matchedVia (normal artist/album hit) passes nil through.
         do {
-            _ = try await api.addToBin(albumId: row.id, trackTitle: row.matchedVia.first?.title)
+            try await api.addToBin(albumId: row.id, trackTitle: row.matchedVia.first?.title)
             return true
         } catch {
             return false

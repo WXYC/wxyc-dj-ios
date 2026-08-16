@@ -2,8 +2,8 @@
 //  BinViewModelTests.swift
 //  WXYCDJTests
 //
-//  Pins BinViewModel's full lifecycle: refresh success (entries sorted
-//  newest-first), refresh failure transitions to .error, remove success
+//  Pins BinViewModel's full lifecycle: refresh success (entries sorted into
+//  shelf order), refresh failure transitions to .error, remove success
 //  drops the row, and remove failure populates `removeError` without
 //  blowing the loaded list away (the surface added in PR #4). Plus the issue-#60
 //  offline-snapshot surface: a successful refresh writes the snapshot, a cold
@@ -22,23 +22,50 @@ import Testing
 @Suite("BinViewModel", .serialized)
 @MainActor
 struct BinViewModelTests {
-    @Test func refreshLoadsEntriesSortedNewestFirst() async throws {
+    @Test func refreshLoadsEntriesInShelfOrder() async throws {
         let (client, session) = try await SignedInClient.make()
         let viewModel = BinViewModel(api: client)
 
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200,
-            body: Data(Fixtures.djBinResponseJSON.utf8)
+            body: Data(Fixtures.binResponseJSON.utf8)
         ))
         await viewModel.refresh()
 
         #expect(viewModel.state == .loaded)
         #expect(viewModel.entries.count == 2)
-        // Fixture has Juana (added 2025-11-01) then Pratt (added 2025-11-02);
-        // refresh() sorts by addedAt descending, so Pratt comes first.
-        #expect(viewModel.entries[0].albumTitle == "On Your Own Love Again")
-        #expect(viewModel.entries[1].albumTitle == "DOGA")
+        // The wire hands back Pratt then Molina; refresh() re-sorts by filing
+        // name, so "Molina, Juana" precedes "Pratt, Jessica".
+        #expect(viewModel.entries[0].albumTitle == "DOGA")
+        #expect(viewModel.entries[1].albumTitle == "On Your Own Love Again")
         #expect(viewModel.removeError == nil)
+    }
+
+    /// The bin is keyed by album: `GET /djs/bin` projects no `track_title`, so
+    /// an album binned twice under different tracks comes back as two identical
+    /// rows — and `DELETE /djs/bin` clears both at once. One row on screen.
+    @Test func refreshCollapsesDuplicateAlbumRows() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let store = SpyBinStore()
+        let viewModel = BinViewModel(api: client, binStore: store)
+
+        let duplicated = """
+            [
+              {"album_id": 100, "album_title": "DOGA", "artist_name": "Juana Molina",
+               "alphabetical_name": "Molina, Juana", "code_letters": "MOL",
+               "code_artist_number": 1, "code_number": 12},
+              {"album_id": 100, "album_title": "DOGA", "artist_name": "Juana Molina",
+               "alphabetical_name": "Molina, Juana", "code_letters": "MOL",
+               "code_artist_number": 1, "code_number": 12}
+            ]
+            """
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(duplicated.utf8)))
+        await viewModel.refresh()
+
+        #expect(viewModel.entries.count == 1)
+        // The album-id-keyed store would reject a duplicate outright, so the
+        // deduped list is what gets persisted.
+        #expect(store.saveCalls == [viewModel.entries])
     }
 
     @Test func refreshFailureTransitionsToError() async throws {
@@ -62,7 +89,7 @@ struct BinViewModelTests {
 
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200,
-            body: Data(Fixtures.djBinResponseJSON.utf8)
+            body: Data(Fixtures.binResponseJSON.utf8)
         ))
         await viewModel.refresh()
         let target = try #require(viewModel.entries.first)
@@ -82,7 +109,7 @@ struct BinViewModelTests {
 
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200,
-            body: Data(Fixtures.djBinResponseJSON.utf8)
+            body: Data(Fixtures.binResponseJSON.utf8)
         ))
         await viewModel.refresh()
         #expect(viewModel.state == .loaded)
@@ -108,14 +135,14 @@ struct BinViewModelTests {
 
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200,
-            body: Data(Fixtures.djBinResponseJSON.utf8)
+            body: Data(Fixtures.binResponseJSON.utf8)
         ))
         await viewModel.refresh()
 
         #expect(viewModel.state == .loaded)
         #expect(store.saveCalls.count == 1)
-        // The persisted snapshot carries both fixture rows.
-        #expect(Set(store.saveCalls[0].map(\.id)) == [1, 2])
+        // The persisted snapshot carries both fixture rows, keyed by album id.
+        #expect(Set(store.saveCalls[0].map(\.id)) == [100, 200])
     }
 
     @Test func coldLaunchOfflineShowsSnapshotAndRefreshFailureKeepsIt() async throws {
@@ -128,8 +155,8 @@ struct BinViewModelTests {
         await viewModel.loadSnapshot()
         #expect(viewModel.state == .loaded)
         #expect(viewModel.entries.count == 2)
-        // Sorted newest-first: Pratt (2025-11-02) before Juana (2025-11-01).
-        #expect(viewModel.entries[0].albumTitle == "On Your Own Love Again")
+        // Shelf order applies to the persisted snapshot too: Molina before Pratt.
+        #expect(viewModel.entries[0].albumTitle == "DOGA")
 
         session.enqueue(StubRequestSession.Stub(statusCode: 500, body: Data(#"{"error":"boom"}"#.utf8)))
         await viewModel.refresh()
@@ -194,22 +221,23 @@ struct BinViewModelTests {
     }
 
     /// Two WXYC-representative bin entries modelling a previously-persisted
-    /// snapshot. Juana added 2025-11-01, Pratt 2025-11-02, so a newest-first sort
-    /// puts Pratt first — mirroring the `djBinResponseJSON` fixture's ordering.
-    /// Built via the (testable) memberwise init so the test needn't re-implement
-    /// WXYCAPI's internal wire decoder.
+    /// snapshot, stored in the arbitrary order the server handed them over —
+    /// mirroring the `binResponseJSON` fixture, so the shelf sort is what puts
+    /// Molina first on load.
     static let persistedEntries: [BinEntry] = [
         BinEntry(
-            id: 1, djId: 42, albumId: 100,
-            addedAt: Date(timeIntervalSince1970: 1_730_500_000),
-            albumTitle: "DOGA", artistName: "Juana Molina",
-            codeLetters: "MOL", codeNumber: 12
+            albumId: 200,
+            albumTitle: "On Your Own Love Again", artistName: "Jessica Pratt",
+            alphabeticalName: "Pratt, Jessica", label: "Drag City",
+            codeLetters: "PRA", codeArtistNumber: 1, codeNumber: 5,
+            formatName: "LP", genreName: "Rock"
         ),
         BinEntry(
-            id: 2, djId: 42, albumId: 200,
-            addedAt: Date(timeIntervalSince1970: 1_730_600_000),
-            albumTitle: "On Your Own Love Again", artistName: "Jessica Pratt",
-            codeLetters: "PRA", codeNumber: 5
+            albumId: 100,
+            albumTitle: "DOGA", artistName: "Juana Molina",
+            alphabeticalName: "Molina, Juana", label: "Sonamos",
+            codeLetters: "MOL", codeArtistNumber: 1, codeNumber: 12,
+            formatName: "CD", genreName: "Rock"
         ),
     ]
 }
