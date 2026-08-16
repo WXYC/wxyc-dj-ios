@@ -4,7 +4,9 @@
 
 ## TL;DR
 
-The same conceptual entity — *a row of the WXYC library catalog* — is now defined four times across the org, by hand, with no enforced agreement: once canonically in `wxyc-shared/api.yaml` (`AlbumSearchResult`), once as a drifted hand-rolled mirror in this iOS app, and once as a private TypeScript type in Backend-Service (`CatalogExportRow`) that the new `GET /library/catalog` endpoint ships but that was **never added to `api.yaml`**. The fourth definition is the one #19 was about to hand-roll on iOS. The definitions disagree on fields, and — more dangerously — they reuse the field name `rotation_bin` with **two different semantics** depending on which endpoint produced the row. There is currently no drift-guard that would catch any of this. This is the general problem; the catalog clone ([#19](https://github.com/WXYC/wxyc-dj-ios/issues/19) / [ADR-0005](./adr/0005-ios-spotlight-on-device-catalog-clone.md)) is just the first instance to expose it.
+The same conceptual entity — *a row of the WXYC library catalog* — is now defined four times across the org, by hand, with no enforced agreement: once canonically in `wxyc-shared/api.yaml` (`AlbumSearchResult`), once as a drifted hand-rolled mirror in this iOS app, and once as a private TypeScript type in Backend-Service (`CatalogExportRow`) that the new `GET /library/catalog` endpoint ships but that was **never added to `api.yaml`**. The fourth definition is the one #19 was about to hand-roll on iOS. The definitions disagree on fields, and — more dangerously — they reuse the field name `rotation_bin` with **two different semantics** depending on which endpoint produced the row. There is currently no drift-guard that would catch any of this. **2026-08-16 — the predicted failure happened, on the bin.** This document warned that a future bin/export endpoint would repeat the pattern. `GET /djs/bin` did: `api.yaml` declared a `DJBinResponse` envelope of `BinEntry` rows that **no code has ever emitted**, while the handler returned a bare array of the `BinLibraryDetails` projection — and `BinLibraryDetails` was an orphan schema referenced by no path, so oasdiff (which diffs *operations*) never compared it to anything. The iOS DTO was built from the fiction and every Bin-tab load failed to decode ([#77](https://github.com/WXYC/wxyc-dj-ios/issues/77)). Note which guard would have caught it: not a mirror-drift check between `api.yaml` and Swift — both agreed, and both were wrong — but a check comparing a declared response against the handler that serves it. That gap is [wxyc-shared#328](https://github.com/WXYC/wxyc-shared/issues/328)'s finding too.
+
+This is the general problem; the catalog clone ([#19](https://github.com/WXYC/wxyc-dj-ios/issues/19) / [ADR-0005](./adr/0005-ios-spotlight-on-device-catalog-clone.md)) is just the first instance to expose it.
 
 ## How this surfaced
 
@@ -29,6 +31,8 @@ Four definitions of the same row, and where each lives:
 | `AlbumSearchResult` (Swift DTO, hand-rolled mirror) | `Packages/WXYCAPI/Sources/WXYCAPI/DTOs/AlbumSearchResult.swift` | wxyc-dj-ios | n/a (manual mirror) |
 | `CatalogExportRow` (private TS type, the wire shape of `/library/catalog`) | `apps/backend/services/catalog-export.service.ts:33` | Backend-Service | ❌ **no** |
 | the catalog DTO #19 was about to hand-roll/reuse on iOS | (not yet written) | wxyc-dj-ios | n/a |
+| `BinLibraryDetails` (the `/djs/bin` projection) | `api.yaml` line 2369 | wxyc-shared | ⚠️ declared but **orphaned** — no path referenced it until [#344](https://github.com/WXYC/wxyc-shared/issues/344); missing `alphabetical_name`, which the handler emits |
+| `BinEntry` (Swift DTO, hand-rolled mirror of the bin projection) | `Packages/WXYCAPI/Sources/WXYCAPI/DTOs/BinEntry.swift` | wxyc-dj-ios | n/a (manual mirror; a superset of `BinLibraryDetails` today) |
 
 Field-level disagreement among the three that exist today:
 

@@ -18,22 +18,17 @@ import Testing
 struct SQLiteBinStoreTests {
     // MARK: Fixtures / helpers
 
-    /// Two WXYC-representative bin entries, keyed (like the bin itself) by
-    /// album id: Juana Molina 100, Jessica Pratt 200.
-    static let juana = BinEntry(
-        albumId: 100,
-        albumTitle: "DOGA", artistName: "Juana Molina",
-        alphabeticalName: "Molina, Juana", label: "Sonamos",
-        codeLetters: "MOL", codeArtistNumber: 1, codeNumber: 12,
-        formatName: "CD", genreName: "Rock"
-    )
-    static let pratt = BinEntry(
-        albumId: 200,
-        albumTitle: "On Your Own Love Again", artistName: "Jessica Pratt",
-        alphabeticalName: "Pratt, Jessica", label: "Drag City",
-        codeLetters: "PRA", codeArtistNumber: 1, codeNumber: 5,
-        formatName: "LP", genreName: "Rock"
-    )
+    /// The two WXYC-representative bin entries, decoded from the bundle's wire
+    /// fixture so the projection is defined in exactly one place — Juana Molina
+    /// (album 100) and Jessica Pratt (album 200), keyed like the bin itself by
+    /// album id.
+    static func entries() throws -> (juana: BinEntry, pratt: BinEntry) {
+        let decoded = try Fixtures.binEntries()
+        return (
+            juana: try #require(decoded.first { $0.albumId == 100 }),
+            pratt: try #require(decoded.first { $0.albumId == 200 })
+        )
+    }
 
     /// Run `body` against a store at a fresh, unique temp path, then close it
     /// (the inner `do` releases the actor, whose `Connection` deinit closes the
@@ -73,10 +68,11 @@ struct SQLiteBinStoreTests {
     // MARK: Tests
 
     @Test func saveThenSnapshotRoundTripsEntries() async throws {
+        let (juana, pratt) = try Self.entries()
         try await Self.withStore { store in
-            try await store.saveSnapshot([Self.juana, Self.pratt])
+            try await store.saveSnapshot([juana, pratt])
             let snapshot = try await store.snapshot()
-            #expect(snapshot.map(Self.sortedByID) == [Self.juana, Self.pratt])
+            #expect(snapshot.map(Self.sortedByID) == [juana, pratt])
         }
     }
 
@@ -97,35 +93,73 @@ struct SQLiteBinStoreTests {
     }
 
     @Test func saveSnapshotIsWholesaleReplace() async throws {
+        let (juana, pratt) = try Self.entries()
         try await Self.withStore { store in
-            try await store.saveSnapshot([Self.juana, Self.pratt])
+            try await store.saveSnapshot([juana, pratt])
             // A second save with fewer rows drops the rest, not merges.
-            try await store.saveSnapshot([Self.pratt])
-            #expect(try await store.snapshot() == [Self.pratt])
+            try await store.saveSnapshot([pratt])
+            #expect(try await store.snapshot() == [pratt])
         }
     }
 
     @Test func persistsSnapshotAcrossLaunches() async throws {
+        let (juana, pratt) = try Self.entries()
         let url = Self.tempURL()
         defer { Self.removeFile(url) }
 
         // First "launch": write, then drop the store (closing the connection).
         do {
             let store = try SQLiteBinStore(url: url)
-            try await store.saveSnapshot([Self.juana, Self.pratt])
+            try await store.saveSnapshot([juana, pratt])
         }
 
         // Second "launch": a brand-new store at the same path sees committed data.
         do {
             let reopened = try SQLiteBinStore(url: url)
             let snapshot = try await reopened.snapshot()
-            #expect(snapshot.map(Self.sortedByID) == [Self.juana, Self.pratt])
+            #expect(snapshot.map(Self.sortedByID) == [juana, pratt])
+        }
+    }
+
+    /// The store is keyed by album id and inserts with a plain `INSERT`, so a
+    /// repeated album fails the save and rolls the whole transaction back —
+    /// including the rows that were fine. This is the fail-closed posture the
+    /// catalog store uses, and it is *why* every caller must run
+    /// `BinEntry.deduplicatedByAlbum` first (the `/djs/bin` projection omits
+    /// `track_title`, so one album binned under two tracks arrives twice).
+    /// Pinned here, at the constraint, so a future writer can't discover it the
+    /// hard way by losing a snapshot.
+    @Test func duplicateAlbumIdsFailTheSaveAndKeepTheLastGoodSnapshot() async throws {
+        let (juana, pratt) = try Self.entries()
+        try await Self.withStore { store in
+            try await store.saveSnapshot([juana, pratt])
+
+            await #expect(throws: BinStoreError.self) {
+                try await store.saveSnapshot([juana, juana])
+            }
+
+            // Rolled back: the previous snapshot is intact, not half-written.
+            let snapshot = try await store.snapshot()
+            #expect(snapshot.map(Self.sortedByID) == [juana, pratt])
+        }
+    }
+
+    /// The dedupe callers are required to run produces exactly the input the
+    /// store accepts, preserving first-seen order.
+    @Test func deduplicatedByAlbumCollapsesRepeatsInFirstSeenOrder() async throws {
+        let (juana, pratt) = try Self.entries()
+        let deduped = BinEntry.deduplicatedByAlbum([pratt, juana, pratt])
+        #expect(deduped == [pratt, juana])
+        try await Self.withStore { store in
+            try await store.saveSnapshot(deduped)
+            #expect(try await store.snapshot()?.count == 2)
         }
     }
 
     @Test func emptyAfterNonEmptyReplacePersistsAsEmptyNotNil() async throws {
+        let (juana, pratt) = try Self.entries()
         try await Self.withStore { store in
-            try await store.saveSnapshot([Self.juana, Self.pratt])
+            try await store.saveSnapshot([juana, pratt])
             try await store.saveSnapshot([])
             // Replacing a populated bin with an empty one stays [] (marker still
             // present), never regressing to the never-written nil.

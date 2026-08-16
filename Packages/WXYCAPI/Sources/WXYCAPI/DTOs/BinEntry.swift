@@ -3,8 +3,11 @@
 //  WXYCAPI
 //
 //  Decoded shape of a row in the DJ's personal bin (GET /djs/bin, which
-//  returns a bare array). Mirrors BinLibraryDetails in api.yaml — the
-//  denormalized library join Backend-Service actually emits.
+//  returns a bare array): the denormalized library join Backend-Service
+//  actually emits. Modelled on the *handler projection*, not on api.yaml —
+//  today it is a superset of api.yaml's BinLibraryDetails, which doesn't yet
+//  declare `alphabetical_name`. Interim: WXYC/wxyc-shared#344 points the 200 at
+//  an array of BinLibraryDetails and adds that field; #359 covers POST/DELETE.
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -78,6 +81,23 @@ public struct BinEntry: Codable, Sendable, Hashable, Identifiable {
     /// Key the bin sorts on: the librarian's filing name, falling back to the
     /// display name when the projection omits it.
     public var sortName: String { alphabeticalName ?? artistName }
+
+    /// Collapse rows that address the same album, keeping first-seen order.
+    ///
+    /// **Required before any ``BinStore/saveSnapshot(_:)``.** The store is keyed
+    /// by album id (`bin(id INTEGER PRIMARY KEY)`) and inserts with a plain
+    /// `INSERT`, so a duplicate raises `SQLITE_CONSTRAINT` and rolls back the
+    /// *entire* save — one repeated row costs the whole offline bin. It lives
+    /// here, next to that invariant, rather than in a view model: the wire can
+    /// genuinely repeat an album (the `/djs/bin` projection omits `track_title`,
+    /// so an album binned under two tracks arrives twice, and `DELETE /djs/bin`
+    /// clears the album wholesale — they are one row to every reader), and the
+    /// issue-#61 pending-intention writer will need the same collapse when it
+    /// merges queued adds into a snapshot.
+    public static func deduplicatedByAlbum(_ entries: [BinEntry]) -> [BinEntry] {
+        var seen: Set<Int> = []
+        return entries.filter { seen.insert($0.albumId).inserted }
+    }
 
     enum CodingKeys: String, CodingKey {
         case albumId = "album_id"

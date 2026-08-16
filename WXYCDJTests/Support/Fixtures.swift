@@ -11,6 +11,7 @@
 //
 
 import Foundation
+@testable import WXYCAPI
 
 enum Fixtures {
     /// Single-result wire body for GET /library/. Used by SearchViewModel tests.
@@ -31,6 +32,14 @@ enum Fixtures {
           }
         ]
         """
+
+    /// The two `binResponseJSON` rows, decoded, in wire order (Pratt, then
+    /// Molina) — so a test can model a previously-persisted snapshot without
+    /// re-spelling the projection. Mirrors `WXYCAPITests`' helper of the same
+    /// name, like the rest of this file.
+    static func binEntries() throws -> [BinEntry] {
+        try JSONCoders.decoder.decode([BinEntry].self, from: Data(binResponseJSON.utf8))
+    }
 
     /// Wire body for POST /djs/bin (201) — the raw inserted `bins` row the
     /// server returns. The client doesn't decode it; tests enqueue it only to

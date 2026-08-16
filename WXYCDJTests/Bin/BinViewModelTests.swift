@@ -84,21 +84,10 @@ struct BinViewModelTests {
     }
 
     @Test func removeSuccessDropsRowAndLeavesNoError() async throws {
-        let (client, session) = try await SignedInClient.make()
-        let viewModel = BinViewModel(api: client)
-
-        session.enqueue(StubRequestSession.Stub(
-            statusCode: 200,
-            body: Data(Fixtures.binResponseJSON.utf8)
-        ))
-        await viewModel.refresh()
-        let target = try #require(viewModel.entries.first)
-
-        session.enqueue(StubRequestSession.Stub(statusCode: 200))
-        await viewModel.remove(target)
+        let (viewModel, _, target) = try await Self.removeFirstAfterRefresh()
 
         #expect(viewModel.entries.count == 1)
-        #expect(!viewModel.entries.contains { $0.id == target.id })
+        #expect(!viewModel.entries.contains { $0.albumId == target.albumId })
         #expect(viewModel.removeError == nil)
         #expect(viewModel.state == .loaded)
     }
@@ -106,42 +95,18 @@ struct BinViewModelTests {
     /// A remove has to reach the persisted snapshot too, or the next cold launch
     /// resurrects the release from the store before the network refresh lands.
     @Test func removeSuccessPersistsTheShrunkenSnapshot() async throws {
-        let (client, session) = try await SignedInClient.make()
-        let store = SpyBinStore()
-        let viewModel = BinViewModel(api: client, binStore: store)
-
-        session.enqueue(StubRequestSession.Stub(
-            statusCode: 200,
-            body: Data(Fixtures.binResponseJSON.utf8)
-        ))
-        await viewModel.refresh()
-        let target = try #require(viewModel.entries.first)
-
-        session.enqueue(StubRequestSession.Stub(statusCode: 200))
-        await viewModel.remove(target)
+        let (_, store, target) = try await Self.removeFirstAfterRefresh()
 
         // Two saves: the refresh, then the remove.
         #expect(store.saveCalls.count == 2)
-        #expect(!store.saveCalls[1].contains { $0.id == target.id })
+        #expect(!store.saveCalls[1].contains { $0.albumId == target.albumId })
         #expect(store.saveCalls[1].count == 1)
     }
 
     /// The snapshot write is best-effort: a failing store must not turn a
     /// successful remove into an error the DJ has to dismiss.
     @Test func removeSurvivesAFailingSnapshotWrite() async throws {
-        let (client, session) = try await SignedInClient.make()
-        let store = SpyBinStore(throwOnSave: true)
-        let viewModel = BinViewModel(api: client, binStore: store)
-
-        session.enqueue(StubRequestSession.Stub(
-            statusCode: 200,
-            body: Data(Fixtures.binResponseJSON.utf8)
-        ))
-        await viewModel.refresh()
-        let target = try #require(viewModel.entries.first)
-
-        session.enqueue(StubRequestSession.Stub(statusCode: 200))
-        await viewModel.remove(target)
+        let (viewModel, _, _) = try await Self.removeFirstAfterRefresh(throwOnSave: true)
 
         #expect(viewModel.removeError == nil)
         #expect(viewModel.entries.count == 1)
@@ -167,7 +132,7 @@ struct BinViewModelTests {
 
         #expect(viewModel.removeError != nil)
         #expect(viewModel.entries.count == 2)
-        #expect(viewModel.entries.contains { $0.id == target.id })
+        #expect(viewModel.entries.contains { $0.albumId == target.albumId })
         #expect(viewModel.state == .loaded)
     }
 
@@ -187,13 +152,13 @@ struct BinViewModelTests {
         #expect(viewModel.state == .loaded)
         #expect(store.saveCalls.count == 1)
         // The persisted snapshot carries both fixture rows, keyed by album id.
-        #expect(Set(store.saveCalls[0].map(\.id)) == [100, 200])
+        #expect(Set(store.saveCalls[0].map(\.albumId)) == [100, 200])
     }
 
     @Test func coldLaunchOfflineShowsSnapshotAndRefreshFailureKeepsIt() async throws {
         let (client, session) = try await SignedInClient.make()
         // Prime the store as if a previous online session had persisted the bin.
-        let store = SpyBinStore(initial: Self.persistedEntries)
+        let store = SpyBinStore(initial: try Self.persistedEntries())
         let viewModel = BinViewModel(api: client, binStore: store)
 
         // Cold launch: load the snapshot first (no network), then refresh fails.
@@ -265,24 +230,32 @@ struct BinViewModelTests {
         #expect(viewModel.entries.isEmpty)
     }
 
-    /// Two WXYC-representative bin entries modelling a previously-persisted
-    /// snapshot, stored in the arbitrary order the server handed them over —
-    /// mirroring the `binResponseJSON` fixture, so the shelf sort is what puts
-    /// Molina first on load.
-    static let persistedEntries: [BinEntry] = [
-        BinEntry(
-            albumId: 200,
-            albumTitle: "On Your Own Love Again", artistName: "Jessica Pratt",
-            alphabeticalName: "Pratt, Jessica", label: "Drag City",
-            codeLetters: "PRA", codeArtistNumber: 1, codeNumber: 5,
-            formatName: "LP", genreName: "Rock"
-        ),
-        BinEntry(
-            albumId: 100,
-            albumTitle: "DOGA", artistName: "Juana Molina",
-            alphabeticalName: "Molina, Juana", label: "Sonamos",
-            codeLetters: "MOL", codeArtistNumber: 1, codeNumber: 12,
-            formatName: "CD", genreName: "Rock"
-        ),
-    ]
+    /// A previously-persisted snapshot, in the arbitrary order the server handed
+    /// the rows over — decoded from the same wire fixture the network tests use,
+    /// so the shelf sort (not the fixture's order) is what puts Molina first.
+    static func persistedEntries() throws -> [BinEntry] {
+        try Fixtures.binEntries()
+    }
+
+    /// Refresh from the two-row fixture, then remove the first entry. Shared by
+    /// the three remove tests, which differ only in what they assert and whether
+    /// the store's write fails.
+    private static func removeFirstAfterRefresh(
+        throwOnSave: Bool = false
+    ) async throws -> (viewModel: BinViewModel, store: SpyBinStore, removed: BinEntry) {
+        let (client, session) = try await SignedInClient.make()
+        let store = SpyBinStore(throwOnSave: throwOnSave)
+        let viewModel = BinViewModel(api: client, binStore: store)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.binResponseJSON.utf8)
+        ))
+        await viewModel.refresh()
+        let target = try #require(viewModel.entries.first)
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200))
+        await viewModel.remove(target)
+        return (viewModel, store, target)
+    }
 }

@@ -81,20 +81,11 @@ final class BinViewModel {
             state = .loading
         }
         do {
-            let normalized = Self.normalized(try await api.getBin())
-            entries = normalized
+            entries = Self.normalized(try await api.getBin())
             hasLoadedBin = true
             state = .loaded
-            // Persist the fresh server truth for the next offline launch. A write
-            // failure must not turn a successful refresh into an error — but log it,
-            // since a silently stale offline bin is otherwise invisible to debug.
-            // The *normalized* list is what's persisted: the store is keyed by
-            // album id, so a duplicate would fail the whole save.
-            do {
-                try await binStore?.saveSnapshot(normalized)
-            } catch {
-                binLog.error("Bin snapshot save failed: \(error.localizedDescription, privacy: .public). Offline bin may be stale.")
-            }
+            // Persist the fresh server truth for the next offline launch.
+            await persistSnapshot(after: "refresh")
         } catch let error as APIError {
             handleRefreshFailure(error.localizedMessage)
         } catch {
@@ -110,43 +101,45 @@ final class BinViewModel {
         state = hasLoadedBin ? .loaded : .error(message)
     }
 
+    /// Write the current `entries` to the offline snapshot. Best-effort: a
+    /// failed write must never turn a successful refresh or remove into an
+    /// error the DJ has to dismiss — but log it, since a silently stale offline
+    /// bin is otherwise invisible to debug. Always fed the normalized list,
+    /// which `BinEntry.deduplicatedByAlbum` has already made safe for the
+    /// album-id-keyed store.
+    private func persistSnapshot(after operation: String) async {
+        do {
+            try await binStore?.saveSnapshot(entries)
+        } catch {
+            binLog.error("Bin snapshot save after \(operation, privacy: .public) failed: \(error.localizedDescription, privacy: .public). Offline bin may be stale.")
+        }
+    }
+
     /// Shelf order for the bin: the artist's filing name, then album title.
     /// `GET /djs/bin` has no ORDER BY and carries no added-at column, so server
     /// order is arbitrary and unstable across refreshes — sorting here is what
-    /// keeps rows from reshuffling under the DJ. The dedupe collapses the
-    /// repeated projection of an album binned under two track titles: the wire
-    /// rows are identical (no `track_title` in the projection) and
-    /// `DELETE /djs/bin` clears the album wholesale, so they're one row here.
+    /// keeps rows from reshuffling under the DJ. It re-runs on every snapshot
+    /// load too: `SQLiteBinStore.snapshot()` reads back in album-id (rowid)
+    /// order, not the order it was handed.
+    ///
+    /// The dedupe half is the store's invariant, not a display choice, so it
+    /// lives in `WXYCAPI` beside the constraint it protects.
     private static func normalized(_ entries: [BinEntry]) -> [BinEntry] {
-        var seen: Set<Int> = []
-        return entries
-            .filter { seen.insert($0.albumId).inserted }
-            .sorted { lhs, rhs in
-                switch lhs.sortName.localizedStandardCompare(rhs.sortName) {
-                case .orderedAscending: true
-                case .orderedDescending: false
-                case .orderedSame: lhs.albumTitle.localizedStandardCompare(rhs.albumTitle) == .orderedAscending
-                }
-            }
+        BinEntry.deduplicatedByAlbum(entries).sorted { lhs, rhs in
+            let byFilingName = lhs.sortName.localizedStandardCompare(rhs.sortName)
+            if byFilingName != .orderedSame { return byFilingName == .orderedAscending }
+            return lhs.albumTitle.localizedStandardCompare(rhs.albumTitle) == .orderedAscending
+        }
     }
 
     func remove(_ entry: BinEntry) async {
         do {
             try await api.removeFromBin(albumId: entry.albumId, trackTitle: nil)
-            entries.removeAll { $0.id == entry.id }
-            // Mirror the removal into the snapshot. Without this the persisted
-            // bin still holds the release, so "remove → relaunch" resurrects it
-            // via loadSnapshot() until a network refresh lands — indefinitely
-            // while offline, which is exactly the case issue #60 exists for.
-            // (Unreachable before the wire-shape fix: getBin() threw on every
-            // call, so no snapshot was ever written.) Best-effort, like
-            // refresh(): a write failure must not turn a successful remove into
-            // an error the DJ has to dismiss.
-            do {
-                try await binStore?.saveSnapshot(entries)
-            } catch {
-                binLog.error("Bin snapshot save after remove failed: \(error.localizedDescription, privacy: .public). Offline bin may be stale.")
-            }
+            entries.removeAll { $0.albumId == entry.albumId }
+            // Mirror the removal into the snapshot, or "remove → relaunch"
+            // resurrects the release via loadSnapshot() until a network refresh
+            // lands — indefinitely while offline, the case issue #60 exists for.
+            await persistSnapshot(after: "remove")
         } catch {
             removeError = (error as? APIError)?.localizedMessage ?? error.localizedDescription
         }
