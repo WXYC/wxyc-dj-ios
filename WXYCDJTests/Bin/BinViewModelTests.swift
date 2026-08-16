@@ -103,6 +103,51 @@ struct BinViewModelTests {
         #expect(viewModel.state == .loaded)
     }
 
+    /// A remove has to reach the persisted snapshot too, or the next cold launch
+    /// resurrects the release from the store before the network refresh lands.
+    @Test func removeSuccessPersistsTheShrunkenSnapshot() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let store = SpyBinStore()
+        let viewModel = BinViewModel(api: client, binStore: store)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.binResponseJSON.utf8)
+        ))
+        await viewModel.refresh()
+        let target = try #require(viewModel.entries.first)
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200))
+        await viewModel.remove(target)
+
+        // Two saves: the refresh, then the remove.
+        #expect(store.saveCalls.count == 2)
+        #expect(!store.saveCalls[1].contains { $0.id == target.id })
+        #expect(store.saveCalls[1].count == 1)
+    }
+
+    /// The snapshot write is best-effort: a failing store must not turn a
+    /// successful remove into an error the DJ has to dismiss.
+    @Test func removeSurvivesAFailingSnapshotWrite() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let store = SpyBinStore(throwOnSave: true)
+        let viewModel = BinViewModel(api: client, binStore: store)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.binResponseJSON.utf8)
+        ))
+        await viewModel.refresh()
+        let target = try #require(viewModel.entries.first)
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200))
+        await viewModel.remove(target)
+
+        #expect(viewModel.removeError == nil)
+        #expect(viewModel.entries.count == 1)
+        #expect(viewModel.state == .loaded)
+    }
+
     @Test func removeFailurePreservesEntriesAndPopulatesRemoveError() async throws {
         let (client, session) = try await SignedInClient.make()
         let viewModel = BinViewModel(api: client)

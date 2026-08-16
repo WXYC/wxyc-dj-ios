@@ -47,6 +47,17 @@
     margin-bottom: 24px;
     font-size: 14px;
   }
+  /* A factual correction to this prototype's assumptions, added after the
+     design was drawn. Deliberately loud: the paragraph it follows described a
+     wire field that does not exist. */
+  .correction {
+    border-left: 3px solid #c0392b;
+    background: #fdf3f2;
+    padding: 10px 14px;
+    margin: 12px 0;
+    font-size: 13px;
+    line-height: 1.5;
+  }
   .stage {
     max-width: 900px;
     margin: 0 auto;
@@ -695,7 +706,7 @@
     </ul>
 
     <h4>BS contract</h4>
-    <p>Bin contents come from the existing <code>GET /djs/{id}/bin</code> endpoint — the per-album play counts join in as a separate batched lookup so this can ship as a pure additive layer.</p>
+    <p>Bin contents come from the existing <code>GET /djs/bin</code> endpoint — the per-album play counts join in as a separate batched lookup so this can ship as a pure additive layer.</p>
 <pre>GET /djs/{id}/has-played?album_ids=1,2,3,...
   -&gt; { "1": 0, "2": 1, "3": 2, ... }
 
@@ -703,13 +714,17 @@ GET /library/play-counts?album_ids=1,2,3,...
   -&gt; { "1": 12, "2": 8, "3": 21, ... }
 
 # both fan out from a single Bin fetch:
-GET /djs/{id}/bin
-  -&gt; [ { album_id, added_at, ... }, ... ]</pre>
+GET /djs/bin
+  -&gt; [ { album_id, album_title, artist_name, alphabetical_name, label,
+         code_letters, code_artist_number, code_number, format_name,
+         genre_name, legacy_release_id }, ... ]</pre>
+
+    <p class="correction"><strong>Correction (issue #77):</strong> the route is <code>GET /djs/bin</code> — no DJ id in the path; the bin is scoped to the bearer token. More importantly, <strong>there is no <code>added_at</code></strong>: the <code>bins</code> table has exactly four columns (<code>id</code>, <code>dj_id</code>, <code>album_id</code>, <code>track_title</code>) and no timestamp, and the projection above is everything the endpoint returns. The staleness feature below therefore has no "when did I bin this" signal to work from as designed. The only insertion-order proxy that exists today is the <code>bins.id</code> serial, which the endpoint does not project. Adding a real timestamp means a migration on <code>bins</code> plus a backfill decision for existing rows — there is no historical value to recover. Verify against <code>Backend-Service/apps/backend/services/djs.service.ts</code> before designing further; <code>api.yaml</code> still documents a <code>BinEntry</code> shape (with an <code>added_at</code>) that nothing has ever emitted.</p>
 
     <h4>Performance notes</h4>
     <ul>
       <li><strong>Badge latency is the binding constraint.</strong> DJ opens Bin → expects badges immediately. One batched <code>has-played</code> call (not N round-trips) is intentional.</li>
-      <li>Stale-ness is computed client-side from <code>added_at</code> + the personal count — no extra endpoint.</li>
+      <li>Stale-ness is computed client-side from <code>added_at</code> + the personal count — no extra endpoint. <strong>(Blocked — see the correction above: <code>added_at</code> does not exist on <code>bins</code> or on the wire.)</strong></li>
       <li>The summary tiles and mix bar are also client-side aggregates over the in-memory bin. No <code>/bin/summary</code> endpoint needed.</li>
       <li>If <code>/library/play-counts</code> proves too costly as a wholesale lookup, fall back to piggy-backing on the existing <code>/library/info</code> response shape (which already exposes a station play count per album).</li>
     </ul>
