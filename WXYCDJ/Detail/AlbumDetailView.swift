@@ -100,9 +100,10 @@ struct AlbumDetailView: View {
         Section {
             VStack(alignment: .leading, spacing: 4) {
                 if let url = Self.preferredArtworkURL(
-                    info: info?.artworkURL,
-                    fallback: resolution.catalogRow?.artworkURL,
-                    metadata: metadata?.artworkURL
+                    info: info,
+                    fallback: fallback,
+                    cloneRow: cloneRow,
+                    metadata: metadata
                 ) {
                     AsyncImage(url: url) { phase in
                         switch phase {
@@ -319,13 +320,28 @@ struct AlbumDetailView: View {
 
     /// Header artwork precedence. The catalog row is the source of truth for
     /// shelf data, so its art wins: `/library/info` first, then the live
-    /// search-row `fallback` that renders before `/library/info` lands.
-    /// LML's best-effort `metadata` art is only a last resort — it can
-    /// resolve to a label-level image rather than the cover (e.g. Autechre —
-    /// Confield coming back as the Warp Records logo), so it must never
-    /// replace catalog art that's already on screen.
-    static func preferredArtworkURL(info: URL?, fallback: URL?, metadata: URL?) -> URL? {
-        info ?? fallback ?? metadata
+    /// search-row `fallback`, then the on-device clone. LML's best-effort
+    /// `metadata` art is only a last resort — it can resolve to a label-level
+    /// image rather than the cover (e.g. Autechre — Confield coming back as the
+    /// Warp Records logo), so it must never replace catalog art already on screen.
+    ///
+    /// The catalog sources are read **directly**, not through
+    /// ``resolveCatalog(info:fallback:cloneRow:infoFailed:)``: that resolver drops
+    /// the search row the moment `info` lands (correct for shelf *fields*, which
+    /// `/library/info` re-states authoritatively), but Backend-Service's
+    /// `getAlbumFromDB` select doesn't project `artwork_url`, so `info.artworkURL`
+    /// is in practice always `nil`. Routing artwork through the resolver therefore
+    /// knocked the search row's cover out of the running the instant `/library/info`
+    /// landed, and LML's label logo took the slot — the visible "cover replaced a
+    /// beat after tapping" bug. The clone is only ever loaded on a failed `info`
+    /// fetch, so including it here doesn't change the online path.
+    static func preferredArtworkURL(
+        info: AlbumInfo?,
+        fallback: AlbumSearchResult?,
+        cloneRow: CatalogRow?,
+        metadata: AlbumMetadata?
+    ) -> URL? {
+        info?.artworkURL ?? fallback?.artworkURL ?? cloneRow?.artworkURL ?? metadata?.artworkURL
     }
 
     /// What the header + catalog sections render from once `/library/info`
