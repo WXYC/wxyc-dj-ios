@@ -144,6 +144,29 @@ Tapping a catalog result in the iOS home-screen search opens its detail **in its
 
 The deep link is an in-app `NSUserActivity` continuation (`CSSearchableItemActionType`), **not** a Universal Link — so it needs no Associated Domains / AASA entitlement.
 
+### App icon
+
+`WXYCDJ/AppIcon.icon` is an [Icon Composer](https://developer.apple.com/documentation/xcode/creating-your-app-icon-using-icon-composer) document (a Liquid Glass layer stack, not a flat `.appiconset`), compiled by `actool` because `ASSETCATALOG_COMPILER_APPICON_NAME` is `AppIcon`. Design source of truth lives outside the repo at `~/Pictures/Graphic Design/WXYC Assets/dj app/app icon/iOS/AppIcon.icon`.
+
+**The checked-in `icon.json` is deliberately not a byte-for-byte copy of that source.** Icon Composer 27 writes two constructs that make Xcode 26.x's `actool` *crash* rather than degrade — `error: Exception while running actool: … attempt to insert nil object from objects[0]`:
+
+| Construct | Xcode 26.x | Checked-in form |
+|---|---|---|
+| top-level `"features"` array (e.g. `refractivity`, `specular-location`) — any non-empty value | crash | key omitted |
+| `"specular"` / `"specular-specializations"` value `"outside"` | crash | `true` |
+
+Both are opt-in rendering nuances; the compiled raster is visually indistinguishable, and every other Icon Composer 27 key (`refractivity-specializations`, `lighting-specializations`, `blur-material-specializations`, …) compiles fine on 26.x. Since CI pins Xcode 26.2, keep the downgrade until the toolchain floor moves to 27.
+
+**If you re-export from Icon Composer, re-apply the downgrade** — the app will re-add both constructs on save and the build will break with the crash above. Sanity-check a change without a full build:
+
+```bash
+xcrun actool WXYCDJ/AppIcon.icon --compile /tmp/iconout --app-icon AppIcon \
+  --output-format human-readable-text --target-device iphone \
+  --minimum-deployment-target 18.4 --platform iphonesimulator \
+  --development-region en --bundle-identifier org.wxyc.dj \
+  --output-partial-info-plist /tmp/iconout/partial.plist
+```
+
 ## Conventions
 
 Follows `wxyc-ios-64/CLAUDE.md`:
