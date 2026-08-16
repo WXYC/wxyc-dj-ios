@@ -122,9 +122,21 @@ struct APIClientTests {
         #expect(session.recordedRequests.last?.url?.path == "/djs/bin")
     }
 
-    @Test func getBinTreatsANullBodyAsAnEmptyBin() async throws {
+    /// A `null` body must not read as an empty bin: `BinViewModel` persists what
+    /// this returns, and an `[]` would overwrite the offline snapshot with
+    /// authoritative emptiness. Fail closed so the last-good bin survives.
+    @Test func getBinRejectsANullBodyRatherThanReadingItAsEmpty() async throws {
         let (client, _, session) = try await Self.makeSignedInClient()
         session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data("null".utf8)))
+
+        await #expect(throws: APIError.self) { try await client.getBin() }
+    }
+
+    /// A genuinely empty bin is still authoritative emptiness — the distinction
+    /// issue #60's snapshot-present marker exists to carry.
+    @Test func getBinDecodesAnEmptyArrayAsAnEmptyBin() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data("[]".utf8)))
 
         #expect(try await client.getBin().isEmpty)
     }

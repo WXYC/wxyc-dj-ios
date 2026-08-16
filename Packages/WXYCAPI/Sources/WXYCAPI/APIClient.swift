@@ -139,11 +139,23 @@ public final class APIClient: Sendable {
     /// The DJ's bin, newest server truth. The response is a **bare array** of
     /// denormalized library rows (api.yaml `BinLibraryDetails`), not an
     /// envelope object — the DJ is identified by the bearer token, so nothing
-    /// wraps it. A literal `null` body decodes to an empty bin, matching
-    /// dj-site's `BinLibraryDetails[] | null` handling.
+    /// wraps it.
+    ///
+    /// A literal `null` body is a **decoding error, not an empty bin** —
+    /// deliberately unlike dj-site, which coerces it (`BinLibraryDetails[] |
+    /// null`). dj-site has no offline snapshot to protect; we do, and
+    /// `BinViewModel` persists whatever this returns. Coercing `null` to `[]`
+    /// would overwrite the DJ's last-good offline bin with *authoritative*
+    /// emptiness (the store's snapshot-present marker), so the Bin tab would
+    /// read "Bin is empty" across cold launches until a real refresh landed.
+    /// Throwing instead keeps the snapshot on screen — the same fail-closed
+    /// posture as `catalog()`'s `.skippedEmptyExport` guard, and for the same
+    /// reason: an empty body is likelier a backend hiccup than a real empty
+    /// bin. A genuinely empty bin arrives as `[]` and still persists as
+    /// authoritative emptiness, which is issue #60's whole written-empty vs.
+    /// never-written distinction.
     public func getBin() async throws -> [BinEntry] {
-        let entries: [BinEntry]? = try await getJSON("/djs/bin", query: [])
-        return entries ?? []
+        try await getJSON("/djs/bin", query: [])
     }
 
     /// Add a release to the signed-in DJ's bin. The `201` body is the raw

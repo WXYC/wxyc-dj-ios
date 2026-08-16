@@ -134,6 +134,19 @@ final class BinViewModel {
         do {
             try await api.removeFromBin(albumId: entry.albumId, trackTitle: nil)
             entries.removeAll { $0.id == entry.id }
+            // Mirror the removal into the snapshot. Without this the persisted
+            // bin still holds the release, so "remove → relaunch" resurrects it
+            // via loadSnapshot() until a network refresh lands — indefinitely
+            // while offline, which is exactly the case issue #60 exists for.
+            // (Unreachable before the wire-shape fix: getBin() threw on every
+            // call, so no snapshot was ever written.) Best-effort, like
+            // refresh(): a write failure must not turn a successful remove into
+            // an error the DJ has to dismiss.
+            do {
+                try await binStore?.saveSnapshot(entries)
+            } catch {
+                binLog.error("Bin snapshot save after remove failed: \(error.localizedDescription, privacy: .public). Offline bin may be stale.")
+            }
         } catch {
             removeError = (error as? APIError)?.localizedMessage ?? error.localizedDescription
         }
