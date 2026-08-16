@@ -465,10 +465,25 @@ struct AlbumDetailView: View {
         return merged.filter { tag in seen.insert(tag.lowercased()).inserted }
     }
 
+    /// Whether the on-device clone has to be read to have any chance at catalog
+    /// artwork. `/library/info` never carries `artwork_url`, so the live search
+    /// row is the only other catalog source — when it has no cover (or doesn't
+    /// exist at all, the Bin → Detail path), the clone is the last thing
+    /// standing between the header and LML's label-logo-prone art. Pure +
+    /// `static` so the decision is testable without rendering.
+    static func shouldReadCloneForArtwork(fallback: AlbumSearchResult?) -> Bool {
+        fallback?.artworkURL == nil
+    }
+
     private func loadAll() async {
         infoFailed = false
         cloneRow = nil
         metadataError = nil
+        // The clone is read *alongside* the network legs, not after them: were
+        // it awaited later, a clone-sourced cover would land after LML's and
+        // the header would visibly swap — the exact defect this screen's
+        // artwork precedence exists to prevent.
+        let readsClone = Self.shouldReadCloneForArtwork(fallback: fallback)
         // If we have a fallback (Search → Detail), kick metadata off in
         // parallel with the catalog fetch. If we don't (Bin → Detail), we
         // need the catalog row's artist/title to even build the metadata
@@ -477,26 +492,47 @@ struct AlbumDetailView: View {
             async let infoTask: AlbumInfo? = loadInfo()
             async let metaTask: AlbumMetadata? = loadMetadata(artistName: fallback?.artistName,
                                                               releaseTitle: fallback?.albumTitle)
-            let (loadedInfo, loadedMeta) = await (infoTask, metaTask)
+            async let cloneTask: CatalogRow? = readsClone ? await loadCloneRow() : nil
+            let (loadedInfo, loadedMeta, loadedClone) = await (infoTask, metaTask, cloneTask)
             if let loadedInfo { info = loadedInfo }
             infoLoaded = true
             if let loadedMeta { metadata = loadedMeta }
+            cloneRow = loadedClone
         } else {
-            let loadedInfo = await loadInfo()
+            // No search row at all, so `readsClone` is unconditionally true here.
+            async let infoTask: AlbumInfo? = loadInfo()
+            async let cloneTask: CatalogRow? = loadCloneRow()
+            let (loadedInfo, loadedClone) = await (infoTask, cloneTask)
             if let loadedInfo { info = loadedInfo }
             infoLoaded = true
+            cloneRow = loadedClone
             let loadedMeta = await loadMetadata(artistName: loadedInfo?.artistName,
                                                 releaseTitle: loadedInfo?.albumTitle)
             if let loadedMeta { metadata = loadedMeta }
         }
+        // A failed `/library/info` needs the clone for shelf data + rotation
+        // even when the live row already carried a cover (so the artwork read
+        // above was skipped).
+        if infoFailed, cloneRow == nil {
+            cloneRow = await loadCloneRow()
+        }
+    }
+
+    /// O(1) read of the on-device catalog clone. `nil` when there's no store,
+    /// no row for this album, or the read fails — all of which degrade to the
+    /// next artwork source rather than surfacing an error.
+    private func loadCloneRow() async -> CatalogRow? {
+        try? await deps.catalogStore?.row(id: albumId)
     }
 
     /// `/library/info` is the shelf source of truth, but a failure (offline, or a
     /// server error — indistinguishable without connectivity detection, which #56
-    /// owns) is no longer a red banner: we mark the load failed and read the
-    /// on-device catalog clone so the detail screen still renders saved shelf data
-    /// (call number, format, genre, rotation) behind a quiet note. A clone miss
-    /// (no store / absent row / read error) degrades to a minimal header.
+    /// owns) is no longer a red banner: we mark the load failed, and `loadAll`
+    /// reads the on-device catalog clone so the detail screen still renders saved
+    /// shelf data (call number, format, genre, rotation) behind a quiet note. A
+    /// clone miss (no store / absent row / read error) degrades to a minimal
+    /// header. The clone read itself lives in `loadAll` rather than here, so the
+    /// artwork-backstop read and this failure read can't fire twice for one load.
     private func loadInfo() async -> AlbumInfo? {
         do {
             return try await deps.api.albumInfo(albumId: albumId)
@@ -504,7 +540,6 @@ struct AlbumDetailView: View {
             let message = (error as? APIError)?.localizedMessage ?? error.localizedDescription
             detailLog.error("library/info failed for album \(albumId): \(message, privacy: .public); falling back to catalog clone")
             infoFailed = true
-            cloneRow = try? await deps.catalogStore?.row(id: albumId)
             return nil
         }
     }
