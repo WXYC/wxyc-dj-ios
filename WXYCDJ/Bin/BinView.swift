@@ -25,9 +25,12 @@ struct BinView: View {
             }
         }
         // Hoisted onto the always-mounted Group (was nested in the non-empty
-        // `default` case), keyed on the shared AlbumRoute. A bin row carries no
-        // catalog clone, so fallback is nil — AlbumDetailView resolves the row
-        // by awaiting /library/info. (issue #19 step 6)
+        // `default` case), keyed on the shared AlbumRoute. BinEntry decodes
+        // the full /djs/bin projection (issue #80), so a bin row routes a
+        // fallback-bearing AlbumRoute via BinEntry.detailFallback — the
+        // detail header renders instantly (offline included), and
+        // AlbumDetailView still fetches /library/info to replace it with the
+        // authoritative row. (issue #19 step 6, issue #87)
         .navigationDestination(for: AlbumRoute.self) { route in
             AlbumDetailView(albumId: route.id, fallback: route.fallback)
         }
@@ -62,7 +65,7 @@ struct BinView: View {
         default:
             List {
                 ForEach(viewModel.entries) { entry in
-                    NavigationLink(value: AlbumRoute(id: entry.albumId, fallback: nil)) {
+                    NavigationLink(value: AlbumRoute(id: entry.albumId, fallback: entry.detailFallback)) {
                         BinRow(entry: entry)
                     }
                     .swipeActions {
@@ -100,9 +103,14 @@ struct BinRow: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(entry.albumTitle).bold().lineLimit(1)
             Text(entry.artistName).foregroundStyle(.secondary).lineLimit(1)
-            Text(entry.callNumber)
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Text(entry.callNumber)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                if let format = entry.formatName, !format.isEmpty {
+                    FormatCapsule(format: format)
+                }
+            }
         }
         .padding(.vertical, 2)
     }

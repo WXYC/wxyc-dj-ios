@@ -94,4 +94,30 @@ struct AlbumRouteTests {
         #expect(fallback.albumTitle == "DOGA")
         #expect(fallback.artistName == "Juana Molina")
     }
+
+    /// Issue #87: BinEntry now decodes the full /djs/bin projection, so a bin
+    /// row's route carries a header stand-in via BinEntry.detailFallback
+    /// instead of `nil` — the detail header renders instantly, offline
+    /// included, instead of awaiting /library/info for an empty view.
+    @Test func binRowRoutesAFallbackBearingRoute() throws {
+        let entry = BinEntry(
+            albumId: 100,
+            albumTitle: "DOGA",
+            artistName: "Juana Molina",
+            alphabeticalName: "Molina, Juana",
+            label: "Sonamos",
+            codeLetters: "MOL",
+            codeArtistNumber: 1,
+            codeNumber: 12,
+            formatName: "CD",
+            genreName: "Rock"
+        )
+
+        let route = AlbumRoute(id: entry.albumId, fallback: entry.detailFallback)
+
+        let fallback = try #require(route.fallback)
+        #expect(fallback.albumTitle == "DOGA")
+        #expect(fallback.artistName == "Juana Molina")
+        #expect(fallback.callNumber == "MOL 1/12")
+    }
 }
