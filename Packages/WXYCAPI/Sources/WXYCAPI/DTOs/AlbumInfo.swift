@@ -53,20 +53,38 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
         AlbumSearchResult.formatCallNumber(letters: codeLetters, artistNumber: codeArtistNumber, releaseNumber: codeNumber)
     }
 
+    /// The nested `rotation` object on `GET /library/info`. **Every field is
+    /// optional, deliberately** — `api.yaml`'s nested `rotation` schema declares
+    /// no `required` list at all, and the generated `AlbumInfoResponseAllOfRotation`
+    /// mirrors that (all four fields optional). The columns being `.notNull()` in
+    /// Backend-Service's schema is a database constraint, not an OpenAPI
+    /// guarantee, and doesn't license a non-optional decode here.
+    ///
+    /// This type has no custom `init(from:)`, so **any** non-optional field would
+    /// throw `keyNotFound` out of the enclosing `AlbumInfo` the moment a present
+    /// `rotation` object omitted it — failing the entire release-detail load over
+    /// one rotation field. That is precisely the failure class issue #93 exists to
+    /// close, so closing it for `rotation_bin` alone would just move the defect to
+    /// `id` and `add_date`.
+    ///
+    /// Note that `GET /library/info` does not emit `rotation` at all today:
+    /// `library.service.getAlbumFromDB` projects no rotation columns and joins no
+    /// rotation table, so this decodes to `nil` in practice — the same shape
+    /// already documented for `artwork_url` on that identical handler. Rotation
+    /// reaches the app through the catalog export (``CatalogRow``) instead. Typed
+    /// defensively so the day that projection grows a rotation join isn't the day
+    /// release detail starts failing to load.
     public struct Rotation: Codable, Sendable, Hashable {
-        public let id: Int
+        public let id: Int?
 
         /// Raw current-rotation bin verbatim from the wire — **not** the closed
         /// ``RotationBin`` enum. Kept as the raw string as the same
         /// forward-compatibility hedge ``CatalogRow/rotationBin`` documents: a
-        /// bin added server-side ahead of this app must not fail the whole
-        /// `AlbumInfo` decode (issue #93). A *present* `rotation` object always
-        /// carries a bin — unlike `CatalogRow`, there's no "no rotation record"
-        /// case to represent here, since the surrounding `rotation` key is
-        /// itself optional for that — so this is non-optional, matching the
-        /// wire's `required` `rotation_bin`.
-        public let rotationBin: String
-        public let addDate: Date
+        /// bin added server-side ahead of this app must decode rather than throw
+        /// out of the whole `AlbumInfo` (issue #93). Read ``rotationCohort`` for
+        /// display; this is the unnarrowed wire value.
+        public let rotationBin: String?
+        public let addDate: Date?
         public let killDate: Date?
 
         enum CodingKeys: String, CodingKey {
@@ -77,11 +95,11 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
         }
 
         /// The DJ-facing display cohort (`H`/`M`/`L`/`S`) for ``rotationBin``, or
-        /// `nil` when the raw bin is outside those cohorts — the case
+        /// `nil` when the bin is absent or outside those cohorts — both cases
         /// ``rotationBin`` is deliberately typed to survive. Mirrors
         /// ``CatalogRow/rotationCohort``; use this only for labelling.
         public var rotationCohort: RotationBin? {
-            RotationBin(rawValue: rotationBin)
+            rotationBin.flatMap(RotationBin.init(rawValue:))
         }
     }
 

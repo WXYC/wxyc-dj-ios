@@ -274,8 +274,13 @@ struct AlbumDetailView: View {
                     Text("In rotation")
                 }
                 Spacer()
-                Text(rotation.addDate.formatted(WXYCDateFormatting.dateOnlyFormatStyle))
-                    .foregroundStyle(.secondary)
+                // Optional for the same reason as the bin (see AlbumInfo.Rotation):
+                // nothing in the contract guarantees add_date on a present
+                // rotation object.
+                if let addDate = rotation.addDate {
+                    Text(addDate.formatted(WXYCDateFormatting.dateOnlyFormatStyle))
+                        .foregroundStyle(.secondary)
+                }
             }
             if let kill = rotation.killDate {
                 metadataRow("Kill date", value: kill.formatted(WXYCDateFormatting.dateOnlyFormatStyle))
