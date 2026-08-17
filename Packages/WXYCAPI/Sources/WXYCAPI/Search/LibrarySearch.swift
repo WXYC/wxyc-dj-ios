@@ -103,6 +103,21 @@ public struct LibrarySearch {
     /// a transport success un-latches the monitor and fires the reconnect edge,
     /// and a transport failure moves `ConnectivityMonitor`'s cooldown anchor
     /// forward, restarting the wait for the next allowed probe.
+    ///
+    /// Some throws produce **no** outcome at all — `APIClient.perform` resolves
+    /// a bearer token before it touches the network, and the `fire` cancellation
+    /// carve-out reports nothing by design — so the monitor deliberately expires
+    /// a claim on time rather than on an outcome; a silent probe costs one
+    /// cooldown. See `ConnectivityMonitor.cooldownAnchor`.
+    ///
+    /// The `Task` is **unstructured on purpose**: it must outlive this search.
+    /// `SearchViewModel`'s debounce cancels its in-flight search task on every
+    /// keystroke, and a child task would be torn down with it — the probe would
+    /// then be cancelled before it reached the server, which (per the #58
+    /// carve-out) reports nothing, so the DJ could type their way past every
+    /// cooldown without a single real attempt ever completing. `Task.init`
+    /// inherits actor isolation and priority but **not** cancellation, and
+    /// nothing retains the handle, so the probe always runs to completion.
     private func fireHalfOpenProbe(query: String, limit: Int) {
         let api = self.api
         Task {

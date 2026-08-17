@@ -332,6 +332,46 @@ struct ConnectivityMonitorTests {
         #expect(monitor.consumeProbe() == true)
     }
 
+    @Test func aClaimedProbeThatReportsNoOutcomeExpiresAfterOneCooldown() {
+        // The claim must expire on *time*, not solely on an outcome arriving.
+        // A claimed probe can throw before it ever reaches the transport —
+        // `APIClient.perform` resolves a bearer token first, so a signed-out
+        // `AuthService` throws `.notSignedIn` with no request fired and no
+        // `onOutcome` call — and `offlineSince` only moves inside `apply`. If
+        // the claim were released only by an outcome, one such silent probe
+        // would strand the monitor offline forever with no further probes: the
+        // very dead end issue #81 exists to remove.
+        let clock = ManualClock()
+        let monitor = ConnectivityMonitor(initiallyOnline: true, probeCooldown: 30, now: clock.provider)
+        monitor.noteOutcome(success: false)
+        clock.advance(by: 30)
+        #expect(monitor.consumeProbe() == true)
+
+        // The probe reports nothing at all. Still rate-limited within the window…
+        clock.advance(by: 29)
+        #expect(monitor.isHalfOpen == false)
+        #expect(monitor.consumeProbe() == false)
+
+        // …but a full cooldown after the *claim*, a fresh probe is allowed.
+        clock.advance(by: 1)
+        #expect(monitor.isHalfOpen == true)
+        #expect(monitor.consumeProbe() == true)
+    }
+
+    @Test func silentProbesCostOneCooldownEachAndNeverExhaustTheMechanism() {
+        let clock = ManualClock()
+        let monitor = ConnectivityMonitor(initiallyOnline: true, probeCooldown: 30, now: clock.provider)
+        monitor.noteOutcome(success: false)
+
+        // Ten consecutive probes that never report an outcome still yield
+        // exactly one allowance per cooldown, indefinitely.
+        for _ in 0..<10 {
+            clock.advance(by: 30)
+            #expect(monitor.consumeProbe() == true)
+            #expect(monitor.consumeProbe() == false)
+        }
+    }
+
     @Test func successfulProbeUnlatchesAndFiresTheReconnectEdgeExactlyOnce() async {
         let clock = ManualClock()
         let monitor = ConnectivityMonitor(initiallyOnline: true, probeCooldown: 30, now: clock.provider)

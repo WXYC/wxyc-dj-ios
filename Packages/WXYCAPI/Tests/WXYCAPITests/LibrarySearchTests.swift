@@ -319,4 +319,56 @@ struct LibrarySearchTests {
         await drain(until: { connectivity.isOnline })
         #expect(connectivity.isOnline == true)
     }
+
+    @Test func aProbeThatThrowsBeforeReachingTheTransportDoesNotStrandTheMonitor() async throws {
+        // The end-to-end shape of the silent-probe hazard `ConnectivityMonitor`
+        // guards against. `APIClient.perform` resolves a bearer token *before*
+        // it touches the network, so a signed-out `AuthService` throws
+        // `.notSignedIn` with no request fired and therefore no `onOutcome`
+        // call — the claimed allowance is spent, yet nothing moves the
+        // monitor's offline anchor. Because the claim is timestamped rather
+        // than held until an outcome arrives, this costs one cooldown, not the
+        // whole half-open mechanism.
+        let clock = ManualClock()
+        let connectivity = ConnectivityMonitor(initiallyOnline: false, probeCooldown: 30, now: clock.provider)
+        let session = StubRequestSession()
+        let auth = AuthService(
+            configuration: Self.config, storage: InMemoryTokenStorage(), session: session
+        ) // no session token: currentJWT() throws before any transport
+        let client = APIClient(
+            configuration: Self.config,
+            session: session,
+            authService: auth,
+            onOutcome: { success in connectivity.ingest(isOnline: success) }
+        )
+        let store = SpyCatalogStore(rows: try Fixtures.catalogRows())
+        let search = LibrarySearch(api: client, catalogStore: store, connectivity: connectivity)
+
+        clock.advance(by: 30)
+        let outcome = await search.search(query: "juana", limit: 25)
+        await settle()
+
+        // The local results still render, and the probe never reached the wire.
+        #expect(outcome.source == .local)
+        #expect(outcome.results.map(\.id) == [100])
+        #expect(session.recordedRequests.isEmpty)
+        #expect(connectivity.isOnline == false)
+
+        // Still rate-limited inside the window the silent claim opened…
+        clock.advance(by: 29)
+        #expect(connectivity.isHalfOpen == false)
+        _ = await search.search(query: "juana", limit: 25)
+        await settle()
+        #expect(session.recordedRequests.isEmpty)
+
+        // …but the mechanism is alive rather than stranded: one cooldown after
+        // the silent claim the allowance is offered again, and the next search
+        // takes it. (That a *reaching* probe then un-latches is pinned by
+        // offlineSearchAfterCooldownFiresABackgroundProbeAndUnlatchesOnSuccess.)
+        clock.advance(by: 1)
+        #expect(connectivity.isHalfOpen == true)
+        _ = await search.search(query: "juana", limit: 25)
+        await settle()
+        #expect(connectivity.isHalfOpen == false)
+    }
 }
