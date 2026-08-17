@@ -71,7 +71,10 @@ struct DTODecodingTests {
         let data = Data(Fixtures.albumInfoJSON.utf8)
         let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: data)
         #expect(info.albumTitle == "DOGA")
-        #expect(info.rotation?.rotationBin == .heavy)
+        // rotationBin is the raw wire string (see the AlbumInfo.Rotation doc
+        // comment); rotationCohort is the derived, forward-compat-safe enum.
+        #expect(info.rotation?.rotationBin == "H")
+        #expect(info.rotation?.rotationCohort == .heavy)
         #expect(info.rotation?.killDate == nil)
         // Rotation date arrives as a date-only YYYY-MM-DD string; the
         // custom JSONDecoder strategy must parse it as a Date.
@@ -160,6 +163,48 @@ struct DTODecodingTests {
             """
         let row = try JSONCoders.decoder.decode(AlbumSearchResult.self, from: Data(raw.utf8))
         #expect(row.rotationBin == nil)
+    }
+
+    @Test func unrecognizedAlbumInfoRotationBinDoesNotFailTheWholeDecode() throws {
+        // Issue #93: a present `rotation` object carrying a `rotation_bin` value
+        // outside the current H/M/L/S set must not throw out of AlbumInfo's
+        // decode — the same forward-compat hedge CatalogRow.rotationBin
+        // documents, applied to the /library/info shape. `rotationBin` decodes
+        // as the raw wire string; `rotationCohort` degrades to nil rather than
+        // failing the surrounding album.
+        let raw = """
+            {
+              "id": 401,
+              "album_title": "Edits",
+              "artist_name": "Chuquimamani-Condori",
+              "rotation": {
+                "id": 12,
+                "rotation_bin": "N",
+                "add_date": "2025-10-15",
+                "kill_date": null
+              }
+            }
+            """
+        let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
+        #expect(info.albumTitle == "Edits")
+        #expect(info.rotation?.rotationBin == "N")
+        #expect(info.rotation?.rotationCohort == nil)
+    }
+
+    @Test func absentAlbumInfoRotationDecodesToNil() throws {
+        let raw = """
+            { "id": 1, "album_title": "On Your Own Love Again", "artist_name": "Jessica Pratt" }
+            """
+        let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
+        #expect(info.rotation == nil)
+    }
+
+    @Test func nullAlbumInfoRotationDecodesToNil() throws {
+        let raw = """
+            { "id": 1, "album_title": "On Your Own Love Again", "artist_name": "Jessica Pratt", "rotation": null }
+            """
+        let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
+        #expect(info.rotation == nil)
     }
 
     @Test func decodesEmptyMatchedViaWhenFieldAbsent() throws {
