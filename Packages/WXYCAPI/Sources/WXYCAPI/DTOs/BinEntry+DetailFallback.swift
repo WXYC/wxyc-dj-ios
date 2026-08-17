@@ -21,24 +21,22 @@ public extension BinEntry {
     /// plus format/genre — everything the header needs except artwork and
     /// play count.
     ///
-    /// `artworkURL` and `plays` are deliberately `nil`: the bin projection
-    /// doesn't carry either (see the type's header note), and widening
-    /// `BinEntry` to fetch them here would duplicate what `AlbumDetailView`
-    /// already does against `/library/info` and the on-device catalog clone.
-    /// `rotationBin` is `nil` for the same reason as
-    /// `CatalogRow.detailFallback` — the projection carries no rotation data
-    /// at all, so there's nothing to bridge. Fields the projection never
-    /// carries, or that exist only to decorate search results (`addDate`,
-    /// `labelId`, `rotationId`, `onStreaming`, `albumArtist`, `matchedVia`),
-    /// are likewise `nil`/`[]`.
+    /// `artworkURL`, `plays`, and `onStreaming` are left at the factory's `nil`
+    /// default: the bin projection carries none of them (see the type's header
+    /// note), and widening `BinEntry` to fetch them here would duplicate what
+    /// `AlbumDetailView` already does against `/library/info` and the on-device
+    /// catalog clone. An artwork-less fallback is *expected* downstream —
+    /// `AlbumDetailView.shouldReadCloneForArtwork` branches on
+    /// `fallback?.artworkURL`, not on whether `fallback` itself is nil, so the
+    /// clone stays the artwork backstop on this path exactly as it was when Bin
+    /// rows routed `fallback: nil`.
     ///
-    /// Lossless **for the header render**, not a full round-trip: the detail
-    /// view's authoritative shelf data, artwork, and LML enrichment still
-    /// come from `/library/info` and `/proxy/metadata/album`.
+    /// What a stand-in deliberately drops — including why `rotationBin` is
+    /// never bridged — is decided once in
+    /// ``AlbumSearchResult/headerStandIn(id:albumTitle:artistName:codeLetters:codeNumber:codeArtistNumber:formatName:genreName:label:plays:onStreaming:artworkURL:)``.
     var detailFallback: AlbumSearchResult {
-        AlbumSearchResult(
+        .headerStandIn(
             id: albumId,
-            addDate: nil,
             albumTitle: albumTitle,
             artistName: artistName,
             codeLetters: codeLetters,
@@ -46,15 +44,7 @@ public extension BinEntry {
             codeArtistNumber: codeArtistNumber,
             formatName: formatName,
             genreName: genreName,
-            label: label,
-            labelId: nil,
-            rotationBin: nil,
-            rotationId: nil,
-            plays: nil,
-            onStreaming: nil,
-            albumArtist: nil,
-            artworkURL: nil,
-            matchedVia: []
+            label: label
         )
     }
 }

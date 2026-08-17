@@ -41,6 +41,28 @@ enum Fixtures {
         try JSONCoders.decoder.decode([BinEntry].self, from: Data(binResponseJSON.utf8))
     }
 
+    /// The Juana Molina / DOGA row from ``binEntries()``. Mirrors `WXYCAPITests`'
+    /// helper of the same name, like the rest of this file — a suite that wants
+    /// one representative bin row decodes it from the shared wire body instead
+    /// of re-spelling the projection as a literal that drifts on the next
+    /// `/djs/bin` field addition.
+    static func dogaBinEntry() throws -> BinEntry {
+        guard let row = try binEntries().first(where: { $0.albumId == 100 }) else {
+            throw FixtureError.missingRow("bin row album_id 100 (Juana Molina / DOGA)")
+        }
+        return row
+    }
+
+    enum FixtureError: Error, CustomStringConvertible {
+        case missingRow(String)
+
+        var description: String {
+            switch self {
+            case let .missingRow(what): "Fixtures is missing \(what)"
+            }
+        }
+    }
+
     /// Wire body for POST /djs/bin (201) — the raw inserted `bins` row the
     /// server returns. The client doesn't decode it; tests enqueue it only to
     /// satisfy the response side after exercising addToBin.

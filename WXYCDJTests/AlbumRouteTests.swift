@@ -100,18 +100,7 @@ struct AlbumRouteTests {
     /// instead of `nil` — the detail header renders instantly, offline
     /// included, instead of awaiting /library/info for an empty view.
     @Test func binRowRoutesAFallbackBearingRoute() throws {
-        let entry = BinEntry(
-            albumId: 100,
-            albumTitle: "DOGA",
-            artistName: "Juana Molina",
-            alphabeticalName: "Molina, Juana",
-            label: "Sonamos",
-            codeLetters: "MOL",
-            codeArtistNumber: 1,
-            codeNumber: 12,
-            formatName: "CD",
-            genreName: "Rock"
-        )
+        let entry = try Fixtures.dogaBinEntry()
 
         let route = AlbumRoute(id: entry.albumId, fallback: entry.detailFallback)
 

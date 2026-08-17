@@ -140,6 +140,28 @@ enum Fixtures {
         try JSONCoders.decoder.decode([BinEntry].self, from: Data(binResponseJSON.utf8))
     }
 
+    /// The Juana Molina / DOGA row from ``binEntries()``, named so a suite that
+    /// wants one representative bin row doesn't re-spell the projection as a
+    /// literal — a literal drifts silently the next time `/djs/bin` gains a
+    /// field (wxyc-shared#344 adds `alphabetical_name` to the schema), whereas
+    /// this decodes from the same wire body every other bin test uses.
+    static func dogaBinEntry() throws -> BinEntry {
+        guard let row = try binEntries().first(where: { $0.albumId == 100 }) else {
+            throw FixtureError.missingRow("bin row album_id 100 (Juana Molina / DOGA)")
+        }
+        return row
+    }
+
+    enum FixtureError: Error, CustomStringConvertible {
+        case missingRow(String)
+
+        var description: String {
+            switch self {
+            case let .missingRow(what): "Fixtures is missing \(what)"
+            }
+        }
+    }
+
     /// Wire body for POST /djs/bin (201). The server returns the raw inserted
     /// `bins` row — NOT a bin entry — so the client deliberately doesn't decode
     /// it. Kept so the addToBin test proves that body can't fail the call.
