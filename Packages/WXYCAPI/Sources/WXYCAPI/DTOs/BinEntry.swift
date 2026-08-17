@@ -9,31 +9,31 @@
 //  declare `alphabetical_name`. Interim: WXYC/wxyc-shared#344 points the 200 at
 //  an array of BinLibraryDetails and adds that field; #359 covers POST/DELETE.
 //
-//  Deliberately kept hand-authored, not generated (issue #75). NOT for the
-//  same required-vs-nullable gap cited for AlbumSearchResult in an earlier
-//  version of this comment — that framing doesn't hold here either (see
-//  AlbumSearchResult.swift's doc comment for why the "V/A rows carry NULL"
-//  premise is false in general). `code_letters` / `code_number` are kept
-//  optional below defensively, and `decodesBinEntryWithNullCallNumberLegs`
-//  stays as a regression test, but that's not the load-bearing reason.
+//  Deliberately kept hand-authored, not generated (issue #75) — blocked on
+//  exactly one field. NOT the required-vs-nullable gap an earlier version of
+//  this comment cited; see AlbumSearchResult.swift for why the "V/A rows
+//  carry NULL" premise is false in general. `code_letters` / `code_number`
+//  are kept optional below defensively, and `decodesBinEntryWithNullCallNumberLegs`
+//  stays as a regression test, but that isn't the load-bearing reason either.
 //
-//  The actual reason: generating this type would change nothing, because
-//  BOTH forms are wrong about the wire. `GET /djs/bin` returns a BARE ARRAY
-//  of a different projection — `DJService.getBinFromDB` (djs.service.ts) is
-//  a Drizzle `.select({...})` handed straight to `res.json()`, selecting
-//  `album_id, album_title, artist_name, alphabetical_name, label,
-//  code_letters, code_artist_number, code_number, format_name, genre_name,
-//  legacy_release_id`. No `id`, no `dj_id`, no `added_at`, and no wrapper
-//  object; the `bins` table has no `added_at` column at all and types
-//  `dj_id` as a varchar. api.yaml describes the wrapper shape and marks
-//  those three `required`, so WXYCAPIModels.BinEntry declares them
-//  non-optional — but so does the hand-authored type below, and both throw
-//  identically. Switching to the generated form would buy nothing and cost
-//  the ability to edit this type while the divergence is resolved.
+//  The generated types NAMED BinEntry / DJBinResponse are a false cognate:
+//  api.yaml's `/djs/bin` GET still refs a `{dj_id, entries: [...]}` wrapper
+//  that no handler has ever emitted, so WXYCAPIModels.BinEntry declares
+//  `id` / `dj_id` / `added_at` non-optional and would throw on the real
+//  response. The generated type that DOES match the wire is
+//  WXYCAPIModels.BinLibraryDetails — every field optional, and field-for-field
+//  identical to the struct below except that it lacks `alphabetical_name`,
+//  which `BinViewModel.normalized` sorts on. (Same trap the AddToBinRequest
+//  and AlbumMetadata rows in CLAUDE.md's table catch: match the schema the
+//  PATH refs, not the one that shares a name.)
 //
-//  Tracked in WXYC/wxyc-dj-ios#77 — reconcile the contract there, then
-//  revisit whether this can be generated. See CLAUDE.md's "Code Generation"
-//  section.
+//  So the blocker is one field, not a modeling disagreement. When
+//  WXYC/wxyc-shared#344 lands — it points the 200 at an array of
+//  BinLibraryDetails and declares `alphabetical_name` — this becomes a
+//  typealias plus an extension carrying `id` / `callNumber` / `sortName` /
+//  `deduplicatedByAlbum`. Residual cost to weigh then: BinLibraryDetails
+//  types `album_id` as `Int?`, which ripples into BinStore, BinView, and
+//  AlbumRoute. See CLAUDE.md's "Code Generation" section.
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
