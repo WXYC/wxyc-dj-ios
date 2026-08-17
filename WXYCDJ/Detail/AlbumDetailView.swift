@@ -33,6 +33,13 @@ struct AlbumDetailView: View {
     // on-device catalog clone, read only once the live fetch has failed.
     @State private var infoFailed: Bool = false
     @State private var cloneRow: CatalogRow?
+    // Issue #86: URLs the header's `AsyncImage` has genuinely finished
+    // failing to load (its `.failure` phase, never `.empty`/loading), keyed
+    // by URL rather than a bare bool so a later source with a *different*
+    // URL is never suppressed. `preferredArtworkURL` skips anything in this
+    // set; membership is permanent for the life of this view, so a dead URL
+    // is retried at most once, not in a loop.
+    @State private var failedArtworkURLs: Set<URL> = []
     @State private var addError: String?
     @State private var addedToBin: Bool = false
     @State private var addInFlight: Bool = false
@@ -103,12 +110,27 @@ struct AlbumDetailView: View {
                     info: info,
                     fallback: fallback,
                     cloneRow: cloneRow,
-                    metadata: metadata
+                    metadata: metadata,
+                    failedURLs: failedArtworkURLs
                 ) {
                     AsyncImage(url: url) { phase in
                         switch phase {
-                        case .success(let image): image.resizable().scaledToFit()
-                        default: Color.clear
+                        case .success(let image):
+                            image.resizable().scaledToFit()
+                        case .failure:
+                            // Genuinely failed to load (not "still loading" —
+                            // `.empty` is handled separately below), so mark
+                            // it and let the next `body` evaluation's
+                            // `preferredArtworkURL` call skip past it.
+                            // `.onAppear` runs after this phase has already
+                            // rendered, not during body evaluation, so
+                            // mutating `@State` here is safe.
+                            Color.clear
+                                .onAppear { failedArtworkURLs.insert(url) }
+                        case .empty:
+                            Color.clear
+                        @unknown default:
+                            Color.clear
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -335,13 +357,36 @@ struct AlbumDetailView: View {
     /// landed, and LML's label logo took the slot — the visible "cover replaced a
     /// beat after tapping" bug. The clone is only ever loaded on a failed `info`
     /// fetch, so including it here doesn't change the online path.
+    ///
+    /// **Issue #86 — dead-URL fallthrough.** `failedURLs` is the set of URLs the
+    /// header's `AsyncImage` has already tried and genuinely failed to load
+    /// (never "still loading" — see the call site's phase switch, which only
+    /// inserts on `.failure`, not `.empty`). Candidates are walked in the precedence
+    /// order above and the first one **not** in `failedURLs` wins, so a dead catalog
+    /// URL (expired pre-signed CDN signature, purged asset) falls through to the
+    /// next source instead of leaving the header blank. Keying by URL rather than a
+    /// bare "the catalog failed" bool matters twice: (1) the search row and the
+    /// clone commonly carry the *same* dead URL (same underlying column), so one
+    /// failure record retires both in a single step instead of needing two failed
+    /// `AsyncImage` attempts against an identical URL; (2) a failure recorded
+    /// against one source's URL can never suppress a *different*, healthy URL from
+    /// another source — e.g. a failed clone URL cannot mask a working `info` URL
+    /// if `/library/info` ever starts projecting `artwork_url`. An empty
+    /// `failedURLs` (nothing has been recorded as failed yet) reproduces the
+    /// pre-#86 behavior exactly, which is what keeps the #83 invariant intact:
+    /// a source that is merely still loading is never treated as failed.
     static func preferredArtworkURL(
         info: AlbumInfo?,
         fallback: AlbumSearchResult?,
         cloneRow: CatalogRow?,
-        metadata: AlbumMetadata?
+        metadata: AlbumMetadata?,
+        failedURLs: Set<URL> = []
     ) -> URL? {
-        info?.artworkURL ?? fallback?.artworkURL ?? cloneRow?.artworkURL ?? metadata?.artworkURL
+        let candidates = [info?.artworkURL, fallback?.artworkURL, cloneRow?.artworkURL, metadata?.artworkURL]
+        for case let url? in candidates where !failedURLs.contains(url) {
+            return url
+        }
+        return nil
     }
 
     /// What the header + catalog sections render from once `/library/info`
