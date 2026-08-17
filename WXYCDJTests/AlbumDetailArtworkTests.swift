@@ -321,4 +321,44 @@ struct AlbumDetailArtworkTests {
         )
         #expect(url == nil)
     }
+    // MARK: Bin -> Detail (issue #87)
+
+    // Issue #87 routes Bin rows with a fallback-bearing AlbumRoute
+    // (BinEntry.detailFallback) instead of `fallback: nil`. The bin
+    // projection carries no `artwork_url`, so `detailFallback.artworkURL` is
+    // always nil — the two tests below confirm that a non-nil fallback with
+    // a nil artworkURL behaves identically to the old `fallback: nil` case
+    // (`shouldReadCloneForArtwork` and `preferredArtworkURL` both branch on
+    // `.artworkURL`, not on whether `fallback` itself is nil), so the clone
+    // stays the artwork backstop on the Bin -> Detail path exactly as before.
+
+    private static func dogaBinEntry() -> BinEntry {
+        BinEntry(
+            albumId: 100,
+            albumTitle: "DOGA",
+            artistName: "Juana Molina",
+            label: "Sonamos",
+            codeLetters: "MOL",
+            codeArtistNumber: 1,
+            codeNumber: 12,
+            formatName: "CD",
+            genreName: "Rock"
+        )
+    }
+
+    @Test("a bin row's detailFallback (no artwork) still reads the clone for artwork")
+    func binEntryFallbackReadsClone() {
+        #expect(AlbumDetailView.shouldReadCloneForArtwork(fallback: Self.dogaBinEntry().detailFallback))
+    }
+
+    @Test("on-device clone art wins for a bin row, since BinEntry carries no artwork")
+    func binEntryFallbackFallsThroughToClone() throws {
+        let url = AlbumDetailView.preferredArtworkURL(
+            info: nil,
+            fallback: Self.dogaBinEntry().detailFallback,
+            cloneRow: Self.dogaCloneRow(),
+            metadata: try Self.labelLogoMetadata()
+        )
+        #expect(url == Self.cloneArt)
+    }
 }
