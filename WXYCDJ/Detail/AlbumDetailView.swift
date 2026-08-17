@@ -277,9 +277,9 @@ struct AlbumDetailView: View {
     /// Offline rotation, derived from the raw cloned ``CatalogRow`` (the bridged
     /// `detailFallback` drops `rotationBin`). The caller gates this on
     /// ``CatalogRow/isInRotation(asOf:timeZone:)``, so the row is known to be in
-    /// rotation; a non-cohort bin (e.g. `"N"`) is still in rotation but carries no
-    /// `H`/`M`/`L`/`S` badge, so render a plain "In rotation" label rather than
-    /// collapsing it to out-of-rotation. The kill date is the raw `"YYYY-MM-DD"`
+    /// rotation; a bin outside the `H`/`M`/`L`/`S` cohorts is still in rotation but
+    /// has no badge, so render a plain "In rotation" label rather than collapsing
+    /// it to out-of-rotation. The kill date is the raw `"YYYY-MM-DD"`
     /// string the export carries; ``WXYCDateFormatting/dateOnly(fromISOString:locale:)``
     /// renders it in the same GMT-anchored abbreviated form as the online
     /// ``rotationSection`` (no leaked ISO string), passing through verbatim if it

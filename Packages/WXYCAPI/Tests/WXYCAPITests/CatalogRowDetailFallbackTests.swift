@@ -50,7 +50,7 @@ struct CatalogRowDetailFallbackTests {
 
     @Test func rotationIsNotBridged() throws {
         // rotationBin is deliberately left nil: AlbumSearchResult's H/M/L/S
-        // cohort enum can't faithfully carry a raw catalog bin (a valid "N"
+        // cohort enum can't faithfully carry a raw catalog bin (an out-of-cohort value
         // would collapse to nil and read as out of rotation). Rotation state
         // for a cloned row comes from CatalogRow.isInRotation / rotationCohort,
         // not this bridge — so even a clean cohort bin like "H" is not carried.

@@ -169,7 +169,9 @@ struct AlbumDetailFallbackTests {
             infoFailed: true
         )
         let rotationRow = try #require(resolution.rotationRow)
-        // "N" is still in rotation per the server predicate, but has no H/M/L/S cohort.
+        // An out-of-cohort bin is still in rotation per the server predicate, but
+        // has no H/M/L/S cohort. "N" is the historical fixture value, not a bin
+        // the server emits — BS#2173 established it was never a rotation bin.
         #expect(rotationRow.isInRotation() == true)
         #expect(rotationRow.rotationCohort == nil)
         // The clone-only failed render is still framed as saved data.

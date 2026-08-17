@@ -69,15 +69,25 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
     public let artworkURL: URL?
 
     /// Raw current-rotation bin verbatim from the most-recent rotation record —
-    /// **not** `CURRENT_DATE`-filtered. The server enumerates `S`/`L`/`M`/`H`/`N`
-    /// (Backend-Service `app.yaml` `CatalogExportRow`), of which only `H`/`M`/`L`/`S`
-    /// are the DJ-facing display cohorts (see ``rotationCohort``); `"N"` and any
-    /// future value are still *valid rotation* per the server's predicate. Kept
-    /// as the raw string (not the ``RotationBin`` enum) precisely so a non-cohort
-    /// value is preserved rather than collapsed to `nil` — collapsing it would
-    /// make ``isInRotation(asOf:timeZone:)`` wrongly report an `"N"` row as out of
-    /// rotation. `nil` (including a dirty empty string, normalized on decode)
-    /// means the album has no rotation record. Evaluate rotation state with
+    /// **not** `CURRENT_DATE`-filtered. `H`/`M`/`L`/`S` are the DJ-facing display
+    /// cohorts (see ``rotationCohort``).
+    ///
+    /// Kept as the raw string rather than the ``RotationBin`` enum as a
+    /// **forward-compatibility hedge**, which is the same reason api.yaml types
+    /// it as a free string: a bin added server-side ahead of this app would
+    /// otherwise collapse to `nil` and make ``isInRotation(asOf:timeZone:)``
+    /// report a genuinely in-rotation row as out of it. The invariant this
+    /// protects is "**any** non-nil bin means in rotation, per the server's
+    /// predicate" — not the specific set of values, which is why the hedge
+    /// survives the set being currently closed.
+    ///
+    /// An earlier version cited `"N"` as a fifth server value and built the
+    /// hedge's justification on it. It was never a rotation bin and was removed
+    /// from Backend-Service's `freq_enum` in BS#2173 — don't restore the
+    /// example; the hedge stands on its own.
+    ///
+    /// `nil` (including a dirty empty string, normalized on decode) means the
+    /// album has no rotation record. Evaluate rotation state with
     /// ``isInRotation(asOf:timeZone:)``, never by reading this directly.
     public let rotationBin: String?
 
@@ -157,7 +167,7 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
         // nil, which is acceptable here — the goal is row survival, not validation.
         artworkURL = (try c.decodeIfPresent(String.self, forKey: .artworkURL))
             .flatMap { $0.isEmpty ? nil : URL(string: $0) }
-        // Raw bin verbatim — preserves "N" and any future server value (see the
+        // Raw bin verbatim — preserves any future server value (see the
         // rotationBin doc). null/absent decode to nil; a dirty empty string
         // normalizes to nil too (an empty bin is no rotation), mirroring the
         // artwork_url treatment above.
@@ -167,9 +177,10 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
     }
 
     /// The DJ-facing display cohort (`H`/`M`/`L`/`S`) for ``rotationBin``, or
-    /// `nil` when there is no bin **or** the raw bin is outside those cohorts
-    /// (e.g. `"N"`). A row can be in rotation (``isInRotation(asOf:timeZone:)``)
-    /// yet have no display cohort — use this only for labelling, not rotation state.
+    /// `nil` when there is no bin **or** the raw bin is outside those cohorts —
+    /// the case ``rotationBin`` is deliberately typed to survive. A row can be in
+    /// rotation (``isInRotation(asOf:timeZone:)``) yet have no display cohort;
+    /// use this only for labelling, never for rotation state.
     public var rotationCohort: RotationBin? {
         rotationBin.flatMap(RotationBin.init(rawValue:))
     }
@@ -190,9 +201,9 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
     /// raw export — `rotation_bin != null && (rotation_kill_date == null ||
     /// rotation_kill_date > today)` — evaluated against the client's local
     /// calendar day, because the export defers daily kill-date expiry to the
-    /// client. **Any** non-null bin counts as in rotation, including non-cohort
-    /// values like `"N"`; the kill-date comparison is strict (a record expiring
-    /// *today* is already out), matching the server's `kill_date > CURRENT_DATE`.
+    /// client. **Any** non-null bin counts as in rotation, including one outside
+    /// the current `H`/`M`/`L`/`S` cohorts; the kill-date comparison is strict (a
+    /// record expiring *today* is already out), matching `kill_date > CURRENT_DATE`.
     public func isInRotation(asOf now: Date = Date(), timeZone: TimeZone = .current) -> Bool {
         isInRotation(localDay: Self.localDay(now, timeZone: timeZone))
     }

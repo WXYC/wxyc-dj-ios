@@ -161,8 +161,9 @@ public struct AlbumSearchResult: Codable, Sendable, Hashable, Identifiable {
         genreName = try c.decodeIfPresent(String.self, forKey: .genreName)
         label = try c.decodeIfPresent(String.self, forKey: .label)
         labelId = try c.decodeIfPresent(Int.self, forKey: .labelId)
-        // Unknown rotation_bin values (e.g. the legacy 'N') are decoded as nil
-        // rather than blowing up the row.
+        // An unknown rotation_bin decodes to nil rather than blowing up the
+        // row — the same forward-compat hedge CatalogRow.rotationBin documents,
+        // applied to the search projection.
         rotationBin = (try? c.decodeIfPresent(RotationBin.self, forKey: .rotationBin)) ?? nil
         rotationId = try c.decodeIfPresent(Int.self, forKey: .rotationId)
         plays = try c.decodeIfPresent(Int.self, forKey: .plays)
@@ -215,12 +216,14 @@ public struct AlbumSearchResult: Codable, Sendable, Hashable, Identifiable {
     /// Detail) so the decision can't drift between them. Callers pass only the
     /// twelve fields a stand-in can ever carry; the six below are fixed here:
     ///
-    /// - `rotationBin` / `rotationId` are **always** `nil`. `RotationBin` is an
-    ///   `H`/`M`/`L`/`S` cohort enum and cannot faithfully represent a raw
-    ///   catalog bin — it would collapse a valid `"N"` (still in rotation per
-    ///   the server predicate) to `nil` and read as *out* of rotation. Rotation
-    ///   for a cloned row comes from `CatalogRow.isInRotation(asOf:timeZone:)` /
-    ///   `rotationCohort`; the bin projection carries no rotation data at all.
+    /// - `rotationBin` / `rotationId` are **always** `nil`. `RotationBin` is a
+    ///   closed `H`/`M`/`L`/`S` cohort enum and cannot faithfully represent the
+    ///   raw catalog bin, which `CatalogRow` keeps as a `String?` precisely so a
+    ///   bin added server-side ahead of this app survives — bridging through the
+    ///   enum would collapse such a value to `nil` and read as *out* of rotation
+    ///   when the server predicate says it is in. Rotation for a cloned row
+    ///   comes from `CatalogRow.isInRotation(asOf:timeZone:)` / `rotationCohort`;
+    ///   the bin projection carries no rotation data at all.
     /// - `addDate`, `labelId`, `albumArtist`, `matchedVia` exist only to
     ///   decorate a real search response and have no meaning on a stand-in.
     ///
