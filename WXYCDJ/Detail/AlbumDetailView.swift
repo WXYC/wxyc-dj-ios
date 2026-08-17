@@ -65,7 +65,15 @@ struct AlbumDetailView: View {
             if let metadata, let tracks = metadata.tracklist, !tracks.isEmpty {
                 tracklistSection(tracks)
             }
-            if let rotation = info?.rotation {
+            // A present `rotation` object is no longer evidence of a rotation
+            // assignment: since issue #93 every field on it is optional, so a
+            // `{}` or `{"rotation_bin": null}` object decodes fine and would
+            // otherwise render "In rotation" for a payload that asserts none.
+            // Gate on the bin, the same first guard CatalogRow.isInRotation
+            // opens with, so the online and cloned paths agree; a bin-less
+            // rotation falls through to the clone below exactly as an absent
+            // one does.
+            if let rotation = info?.rotation, rotation.rotationBin != nil {
                 rotationSection(rotation)
             } else if let rotationRow = resolution.rotationRow, rotationRow.isInRotation() {
                 offlineRotationSection(rotationRow)
@@ -265,8 +273,16 @@ struct AlbumDetailView: View {
                 // A bin outside the H/M/L/S cohorts (issue #93's forward-compat
                 // hedge) still means the album is in rotation, just with no
                 // display cohort — render a plain label rather than crashing
-                // the decode or silently dropping the section. Mirrors
-                // offlineRotationSection's identical fallback below.
+                // the decode or silently dropping the section. This
+                // missing-cohort fallback is identical to
+                // offlineRotationSection's below. The *gating* is only half
+                // identical: the caller applies the same `rotationBin != nil`
+                // guard CatalogRow.isInRotation opens with, but not its
+                // kill-date expiry compare, so an expired record would still
+                // render here. Unreachable today (/library/info emits no
+                // rotation at all) and closing it needs a GMT-anchored
+                // local-day compare against the parsed `killDate` rather than
+                // CatalogRow's raw-string one — left to a follow-up.
                 if let cohort = rotation.rotationCohort {
                     RotationBadge(bin: cohort)
                     Text(cohort.label)

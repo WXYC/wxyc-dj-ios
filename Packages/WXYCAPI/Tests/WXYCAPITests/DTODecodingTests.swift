@@ -191,6 +191,30 @@ struct DTODecodingTests {
         #expect(info.rotation?.rotationCohort == nil)
     }
 
+    @Test func emptyAlbumInfoRotationBinNormalizesToNil() throws {
+        // A dirty empty bin is no rotation assignment, exactly as
+        // CatalogRow.init(from:) already treats it — both types read the same
+        // underlying rotation column, so they must not disagree about what an
+        // empty string means. It matters beyond tidiness: `rotationBin != nil`
+        // is the in-rotation test (the first guard CatalogRow.isInRotation
+        // opens with, and what AlbumDetailView gates its online Rotation
+        // section on), so an empty string carried through verbatim would
+        // satisfy that guard and render "In rotation" for a record that
+        // asserts no rotation at all.
+        let raw = """
+            {
+              "id": 401,
+              "album_title": "DOGA",
+              "artist_name": "Juana Molina",
+              "rotation": { "id": 12, "rotation_bin": "", "add_date": "2025-10-15" }
+            }
+            """
+        let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
+        #expect(info.rotation != nil)
+        #expect(info.rotation?.rotationBin == nil)
+        #expect(info.rotation?.rotationCohort == nil)
+    }
+
     @Test(arguments: [
         // Bin key absent entirely.
         #"{ "id": 13, "add_date": "2025-10-15" }"#,
@@ -205,10 +229,11 @@ struct DTODecodingTests {
     func partialAlbumInfoRotationDoesNotFailTheWholeDecode(rotationObject: String) throws {
         // Issue #93 review: api.yaml's nested `rotation` object declares no
         // `required` list, and the generated AlbumInfoResponseAllOfRotation
-        // agrees (all fields optional). Rotation has no custom init(from:), so
-        // any non-optional field would throw keyNotFound out of the enclosing
-        // AlbumInfo on a present-but-partial rotation — the same whole-decode
-        // failure the raw-String hedge closes, reached through a different door.
+        // agrees (all fields optional). Rotation reads every field with
+        // decodeIfPresent; a plain `decode` on any one of them would throw
+        // keyNotFound out of the enclosing AlbumInfo on a present-but-partial
+        // rotation — the same whole-decode failure the raw-String hedge closes,
+        // reached through a different door.
         let raw = """
             {
               "id": 401,
