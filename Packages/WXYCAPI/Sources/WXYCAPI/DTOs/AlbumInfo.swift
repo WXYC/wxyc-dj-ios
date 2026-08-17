@@ -60,12 +60,13 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
     /// Backend-Service's schema is a database constraint, not an OpenAPI
     /// guarantee, and doesn't license a non-optional decode here.
     ///
-    /// This type has no custom `init(from:)`, so **any** non-optional field would
-    /// throw `keyNotFound` out of the enclosing `AlbumInfo` the moment a present
-    /// `rotation` object omitted it — failing the entire release-detail load over
-    /// one rotation field. That is precisely the failure class issue #93 exists to
-    /// close, so closing it for `rotation_bin` alone would just move the defect to
-    /// `id` and `add_date`.
+    /// Every field is read with `decodeIfPresent`, so a present-but-partial
+    /// `rotation` object can never throw. A non-optional field decoded with plain
+    /// `decode` would throw `keyNotFound` out of the enclosing `AlbumInfo` the
+    /// moment a present `rotation` object omitted it — failing the entire
+    /// release-detail load over one rotation field. That is precisely the failure
+    /// class issue #93 exists to close, so closing it for `rotation_bin` alone
+    /// would just move the defect to `id` and `add_date`.
     ///
     /// Note that `GET /library/info` does not emit `rotation` at all today:
     /// `library.service.getAlbumFromDB` projects no rotation columns and joins no
@@ -83,6 +84,13 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
         /// bin added server-side ahead of this app must decode rather than throw
         /// out of the whole `AlbumInfo` (issue #93). Read ``rotationCohort`` for
         /// display; this is the unnarrowed wire value.
+        ///
+        /// `nil` (including a dirty empty string, normalized on decode) means the
+        /// record carries no rotation assignment — the same treatment
+        /// ``CatalogRow/rotationBin`` gives the same underlying column, so the
+        /// online and cloned paths can't disagree about what `""` means. This is
+        /// the in-rotation test callers use, so an empty string left verbatim
+        /// would read as in-rotation.
         public let rotationBin: String?
         public let addDate: Date?
         public let killDate: Date?
@@ -92,6 +100,19 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
             case rotationBin = "rotation_bin"
             case addDate = "add_date"
             case killDate = "kill_date"
+        }
+
+        /// Decodes every field with `decodeIfPresent` (see the type doc — a plain
+        /// `decode` on any one of them would fail the whole `AlbumInfo`), and
+        /// normalizes a dirty empty `rotation_bin` to `nil`. `encode(to:)` stays
+        /// synthesized, as on ``CatalogRow``, whose decoder this mirrors.
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decodeIfPresent(Int.self, forKey: .id)
+            rotationBin = (try c.decodeIfPresent(String.self, forKey: .rotationBin))
+                .flatMap { $0.isEmpty ? nil : $0 }
+            addDate = try c.decodeIfPresent(Date.self, forKey: .addDate)
+            killDate = try c.decodeIfPresent(Date.self, forKey: .killDate)
         }
 
         /// The DJ-facing display cohort (`H`/`M`/`L`/`S`) for ``rotationBin``, or
