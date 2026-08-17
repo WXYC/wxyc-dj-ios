@@ -7,6 +7,9 @@
 //  UI made before); on a failed request, or when the ConnectivityMonitor reports
 //  offline, it searches the on-device catalog clone's FTS index instead. The
 //  outcome carries which tier served the results so the UI can frame local hits.
+//  Issue #81: an offline search past the connectivity monitor's half-open
+//  cooldown also fires a fire-and-forget probe at the server so a latched
+//  monitor can self-recover through the surface the DJ is actually using.
 //
 //  Created by Jake on 06/28/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -41,7 +44,10 @@ public struct LibrarySearchOutcome: Sendable, Equatable {
 /// driven by the `@MainActor` search view model. The routing is:
 ///
 /// - **online** → try the server; on *any* thrown error fall back to local.
-/// - **offline** → go straight to local (no network round-trip).
+/// - **offline, half-open** → ``ConnectivityMonitor/consumeProbe()`` claims the
+///   cooldown's one allowance: fire a real server request in the background
+///   (issue #81), then go straight to local without waiting on it.
+/// - **offline, otherwise** → go straight to local (no network round-trip).
 /// - **local** → ``CatalogStore/search(query:limit:)``, each cloned row bridged
 ///   to an `AlbumSearchResult` via ``CatalogRow/detailFallback``.
 ///
@@ -75,7 +81,33 @@ public struct LibrarySearch {
                 return await localOutcome(query: query, limit: limit)
             }
         }
+        // Latched offline. If the monitor's half-open cooldown has elapsed,
+        // claim its one allowance and fire a real probe in the background
+        // (issue #81) — but this search's own results still come from the
+        // clone; see fireHalfOpenProbe's doc for why.
+        if connectivity.consumeProbe() {
+            fireHalfOpenProbe(query: query, limit: limit)
+        }
         return await localOutcome(query: query, limit: limit)
+    }
+
+    /// Fire-and-forget half-open probe (issue #81): a real `searchLibrary` hit
+    /// for the same query, launched without being awaited so a slow or failed
+    /// probe never delays the local results this search already has ready —
+    /// the offline-first ergonomics of #58 stay intact. Its result is
+    /// discarded on purpose; the probe exists to produce a **connectivity
+    /// signal**, not to serve this particular search (the local branch already
+    /// covers that). The signal itself needs no extra plumbing: `APIClient.fire`
+    /// reports every transport outcome through the same hook a foreground
+    /// request would (`onOutcome` → `ConnectivityMonitor.ingest(isOnline:)`), so
+    /// a transport success un-latches the monitor and fires the reconnect edge,
+    /// and a transport failure moves `ConnectivityMonitor`'s cooldown anchor
+    /// forward, restarting the wait for the next allowed probe.
+    private func fireHalfOpenProbe(query: String, limit: Int) {
+        let api = self.api
+        Task {
+            _ = try? await api.searchLibrary(artist: query, title: query, limit: limit)
+        }
     }
 
     /// Resolve the local fallback: search the clone (a missing store or a thrown

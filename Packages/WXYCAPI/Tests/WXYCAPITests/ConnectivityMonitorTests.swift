@@ -269,4 +269,116 @@ struct ConnectivityMonitorTests {
         #expect(box.count <= 1)
         collector.cancel()
     }
+
+    // MARK: Half-open probe (issue #81)
+
+    @Test func isHalfOpenIsFalseWhileOnline() {
+        let clock = ManualClock()
+        let monitor = ConnectivityMonitor(initiallyOnline: true, probeCooldown: 30, now: clock.provider)
+        clock.advance(by: 100)
+        #expect(monitor.isHalfOpen == false)
+        #expect(monitor.consumeProbe() == false)
+    }
+
+    @Test func isHalfOpenIsFalseBeforeCooldownElapses() {
+        let clock = ManualClock()
+        let monitor = ConnectivityMonitor(initiallyOnline: true, probeCooldown: 30, now: clock.provider)
+        monitor.noteOutcome(success: false)
+        clock.advance(by: 29)
+        #expect(monitor.isHalfOpen == false)
+        #expect(monitor.consumeProbe() == false)
+    }
+
+    @Test func isHalfOpenBecomesTrueOnceCooldownElapses() {
+        let clock = ManualClock()
+        let monitor = ConnectivityMonitor(initiallyOnline: true, probeCooldown: 30, now: clock.provider)
+        monitor.noteOutcome(success: false)
+        clock.advance(by: 30)
+        #expect(monitor.isHalfOpen == true)
+    }
+
+    @Test func consumeProbeClaimsAtMostOncePerCooldownWindow() {
+        let clock = ManualClock()
+        let monitor = ConnectivityMonitor(initiallyOnline: true, probeCooldown: 30, now: clock.provider)
+        monitor.noteOutcome(success: false)
+        clock.advance(by: 30)
+
+        #expect(monitor.consumeProbe() == true)
+        // The allowance is spent: a second caller inside the same window (no
+        // further time passing, no new outcome) gets nothing.
+        #expect(monitor.isHalfOpen == false)
+        #expect(monitor.consumeProbe() == false)
+    }
+
+    @Test func failedProbeRestartsTheCooldown() {
+        let clock = ManualClock()
+        let monitor = ConnectivityMonitor(initiallyOnline: true, probeCooldown: 30, now: clock.provider)
+        monitor.noteOutcome(success: false)
+        clock.advance(by: 30)
+        #expect(monitor.consumeProbe() == true)
+
+        // The claimed probe's request fails, reported through the ordinary
+        // outcome hook — still offline, but the cooldown restarts from here.
+        monitor.noteOutcome(success: false)
+        #expect(monitor.isHalfOpen == false)
+
+        // The old cooldown boundary (60s from the very first failure) is not
+        // enough on its own — only 30s have passed since the *restart*.
+        clock.advance(by: 29)
+        #expect(monitor.isHalfOpen == false)
+
+        clock.advance(by: 1)
+        #expect(monitor.isHalfOpen == true)
+        #expect(monitor.consumeProbe() == true)
+    }
+
+    @Test func successfulProbeUnlatchesAndFiresTheReconnectEdgeExactlyOnce() async {
+        let clock = ManualClock()
+        let monitor = ConnectivityMonitor(initiallyOnline: true, probeCooldown: 30, now: clock.provider)
+        let box = EdgeBox()
+        let collector = Task { @MainActor in
+            for await _ in monitor.reconnects { box.count += 1 }
+        }
+        await settle()
+
+        monitor.noteOutcome(success: false)
+        clock.advance(by: 30)
+        #expect(monitor.consumeProbe() == true)
+
+        monitor.noteOutcome(success: true)
+        await drain(until: { box.count == 1 })
+
+        #expect(monitor.isOnline == true)
+        #expect(box.count == 1)
+        #expect(monitor.isHalfOpen == false) // online now — nothing left to probe
+        collector.cancel()
+    }
+
+    @Test func initiallyOfflineMonitorStartsItsOwnCooldownAtConstruction() {
+        let clock = ManualClock()
+        let monitor = ConnectivityMonitor(initiallyOnline: false, probeCooldown: 10, now: clock.provider)
+        #expect(monitor.isHalfOpen == false)
+        clock.advance(by: 10)
+        #expect(monitor.isHalfOpen == true)
+    }
+
+    @Test func aFreshSatisfiedPathAfterAProbeClaimClearsTheHalfOpenState() async {
+        // The half-open bookkeeping isn't probe-specific — any signal that
+        // restores `isOnline` (not just a request outcome) must clear it, same
+        // as the reconnect edge is cause-agnostic.
+        let clock = ManualClock()
+        let monitor = ConnectivityMonitor(initiallyOnline: true, probeCooldown: 30, now: clock.provider)
+        let provider = StubPathProvider()
+        monitor.start(pathProvider: provider)
+
+        monitor.noteOutcome(success: false)
+        clock.advance(by: 30)
+        #expect(monitor.consumeProbe() == true)
+
+        provider.send(satisfied: true)
+        await settle()
+
+        #expect(monitor.isOnline == true)
+        #expect(monitor.isHalfOpen == false)
+    }
 }
