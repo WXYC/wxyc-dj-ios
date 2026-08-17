@@ -55,7 +55,17 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
 
     public struct Rotation: Codable, Sendable, Hashable {
         public let id: Int
-        public let rotationBin: RotationBin
+
+        /// Raw current-rotation bin verbatim from the wire — **not** the closed
+        /// ``RotationBin`` enum. Kept as the raw string as the same
+        /// forward-compatibility hedge ``CatalogRow/rotationBin`` documents: a
+        /// bin added server-side ahead of this app must not fail the whole
+        /// `AlbumInfo` decode (issue #93). A *present* `rotation` object always
+        /// carries a bin — unlike `CatalogRow`, there's no "no rotation record"
+        /// case to represent here, since the surrounding `rotation` key is
+        /// itself optional for that — so this is non-optional, matching the
+        /// wire's `required` `rotation_bin`.
+        public let rotationBin: String
         public let addDate: Date
         public let killDate: Date?
 
@@ -64,6 +74,14 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
             case rotationBin = "rotation_bin"
             case addDate = "add_date"
             case killDate = "kill_date"
+        }
+
+        /// The DJ-facing display cohort (`H`/`M`/`L`/`S`) for ``rotationBin``, or
+        /// `nil` when the raw bin is outside those cohorts — the case
+        /// ``rotationBin`` is deliberately typed to survive. Mirrors
+        /// ``CatalogRow/rotationCohort``; use this only for labelling.
+        public var rotationCohort: RotationBin? {
+            RotationBin(rawValue: rotationBin)
         }
     }
 

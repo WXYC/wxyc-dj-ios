@@ -262,8 +262,17 @@ struct AlbumDetailView: View {
         // the wire day.
         Section("Rotation") {
             HStack {
-                RotationBadge(bin: rotation.rotationBin)
-                Text(rotation.rotationBin.label)
+                // A bin outside the H/M/L/S cohorts (issue #93's forward-compat
+                // hedge) still means the album is in rotation, just with no
+                // display cohort — render a plain label rather than crashing
+                // the decode or silently dropping the section. Mirrors
+                // offlineRotationSection's identical fallback below.
+                if let cohort = rotation.rotationCohort {
+                    RotationBadge(bin: cohort)
+                    Text(cohort.label)
+                } else {
+                    Text("In rotation")
+                }
                 Spacer()
                 Text(rotation.addDate.formatted(WXYCDateFormatting.dateOnlyFormatStyle))
                     .foregroundStyle(.secondary)
