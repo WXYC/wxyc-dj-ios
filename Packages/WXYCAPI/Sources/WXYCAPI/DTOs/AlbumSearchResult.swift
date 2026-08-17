@@ -135,6 +135,64 @@ public struct AlbumSearchResult: Codable, Sendable, Hashable, Identifiable {
         Self.formatCallNumber(letters: codeLetters, artistNumber: codeArtistNumber, releaseNumber: codeNumber)
     }
 
+    /// Build an `AlbumSearchResult` that stands in for a row not yet fetched,
+    /// so `AlbumDetailView` (whose `fallback` is typed `AlbumSearchResult?`)
+    /// can render its header immediately from data already in hand.
+    ///
+    /// This is the one place that decides what a stand-in **drops**, and it is
+    /// shared by every `detailFallback` bridge (``CatalogRow/detailFallback``
+    /// for the Spotlight deep link, ``BinEntry/detailFallback`` for Bin →
+    /// Detail) so the decision can't drift between them. Callers pass only the
+    /// twelve fields a stand-in can ever carry; the six below are fixed here:
+    ///
+    /// - `rotationBin` / `rotationId` are **always** `nil`. `RotationBin` is an
+    ///   `H`/`M`/`L`/`S` cohort enum and cannot faithfully represent a raw
+    ///   catalog bin — it would collapse a valid `"N"` (still in rotation per
+    ///   the server predicate) to `nil` and read as *out* of rotation. Rotation
+    ///   for a cloned row comes from `CatalogRow.isInRotation(asOf:timeZone:)` /
+    ///   `rotationCohort`; the bin projection carries no rotation data at all.
+    /// - `addDate`, `labelId`, `albumArtist`, `matchedVia` exist only to
+    ///   decorate a real search response and have no meaning on a stand-in.
+    ///
+    /// Lossless **for the header render**, not a full round-trip: the detail
+    /// view's authoritative shelf and rotation data still come from
+    /// `/library/info`.
+    static func headerStandIn(
+        id: Int,
+        albumTitle: String,
+        artistName: String,
+        codeLetters: String?,
+        codeNumber: Int?,
+        codeArtistNumber: Int?,
+        formatName: String?,
+        genreName: String?,
+        label: String?,
+        plays: Int? = nil,
+        onStreaming: Bool? = nil,
+        artworkURL: URL? = nil
+    ) -> AlbumSearchResult {
+        AlbumSearchResult(
+            id: id,
+            addDate: nil,
+            albumTitle: albumTitle,
+            artistName: artistName,
+            codeLetters: codeLetters,
+            codeNumber: codeNumber,
+            codeArtistNumber: codeArtistNumber,
+            formatName: formatName,
+            genreName: genreName,
+            label: label,
+            labelId: nil,
+            rotationBin: nil,
+            rotationId: nil,
+            plays: plays,
+            onStreaming: onStreaming,
+            albumArtist: nil,
+            artworkURL: artworkURL,
+            matchedVia: []
+        )
+    }
+
     static func formatCallNumber(letters: String?, artistNumber: Int?, releaseNumber: Int?) -> String {
         var parts: [String] = []
         if let letters, !letters.isEmpty { parts.append(letters) }

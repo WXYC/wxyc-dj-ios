@@ -19,20 +19,11 @@ import Testing
 @Suite("BinEntry.detailFallback")
 struct BinEntryDetailFallbackTests {
     /// A WXYC-representative bin row (Juana Molina / DOGA), carrying every
-    /// field the `/djs/bin` projection decodes (issue #80).
-    private static func dogaEntry() -> BinEntry {
-        BinEntry(
-            albumId: 100,
-            albumTitle: "DOGA",
-            artistName: "Juana Molina",
-            alphabeticalName: "Molina, Juana",
-            label: "Sonamos",
-            codeLetters: "MOL",
-            codeArtistNumber: 1,
-            codeNumber: 12,
-            formatName: "CD",
-            genreName: "Rock"
-        )
+    /// field the `/djs/bin` projection decodes (issue #80). Decoded from the
+    /// shared wire fixture rather than spelled as a literal, so it can't drift
+    /// from the projection the rest of the bin suites decode.
+    private static func dogaEntry() throws -> BinEntry {
+        try Fixtures.dogaBinEntry()
     }
 
     /// The render-critical fields AlbumDetailView's header actually reads off
@@ -41,8 +32,8 @@ struct BinEntryDetailFallbackTests {
     /// projection decodes; the detail view still re-fetches the authoritative
     /// row from `/library/info`, so this is lossless *for the instant
     /// header*, not a full round-trip.
-    @Test func carriesHeaderFieldsFromBinEntry() {
-        let fallback = Self.dogaEntry().detailFallback
+    @Test func carriesHeaderFieldsFromBinEntry() throws {
+        let fallback = try Self.dogaEntry().detailFallback
 
         #expect(fallback.id == 100)
         #expect(fallback.albumTitle == "DOGA")
@@ -61,8 +52,8 @@ struct BinEntryDetailFallbackTests {
     /// AlbumDetailView's header artwork precedence and rotation section
     /// depend on this to keep reading the on-device clone / `/library/info`
     /// as the real backstops instead of silently trusting an absent value.
-    @Test func nilsArtworkPlaysRotationAndSearchOnlyFields() {
-        let fallback = Self.dogaEntry().detailFallback
+    @Test func nilsArtworkPlaysRotationAndSearchOnlyFields() throws {
+        let fallback = try Self.dogaEntry().detailFallback
 
         #expect(fallback.artworkURL == nil)
         #expect(fallback.plays == nil)
