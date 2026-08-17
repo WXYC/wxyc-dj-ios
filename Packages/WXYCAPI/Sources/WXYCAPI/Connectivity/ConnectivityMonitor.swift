@@ -78,8 +78,9 @@ public final class ConnectivityMonitor {
     @ObservationIgnored private var consumer: Task<Void, Never>?
 
     /// How long a caller must wait after the monitor latches offline (or a
-    /// half-open probe subsequently fails) before ``consumeProbe()`` allows
-    /// another attempt. Issue #81's chosen middle ground: long enough that a
+    /// half-open probe is claimed, or one subsequently fails — see
+    /// ``cooldownAnchor``) before ``consumeProbe()`` allows another attempt.
+    /// Issue #81's chosen middle ground: long enough that a
     /// down backend isn't hammered on every keystroke, short enough that a DJ
     /// who's actually back online self-recovers without leaving the search tab.
     public static let defaultProbeCooldown: TimeInterval = 30
@@ -91,11 +92,11 @@ public final class ConnectivityMonitor {
     /// reporting failure (which restarts the cooldown from that failure, not
     /// the original latch). `nil` while online.
     @ObservationIgnored private var offlineSince: Date?
-    /// The `offlineSince` value a probe was already claimed for. Compared by
-    /// value (not a plain "claimed" `Bool`) so a probe failure — which moves
-    /// `offlineSince` forward — automatically re-opens eligibility for the new
-    /// window without any extra bookkeeping.
-    @ObservationIgnored private var probeClaimedOfflineSince: Date?
+    /// When ``consumeProbe()`` last handed out this offline window's allowance.
+    /// Cleared when the monitor goes back online; otherwise it only ever moves
+    /// forward. See ``cooldownAnchor`` for why the claim is stamped with a
+    /// *time* rather than latched until an outcome arrives.
+    @ObservationIgnored private var probeClaimedAt: Date?
 
     /// - Parameters:
     ///   - initiallyOnline: the optimistic starting value before the first
@@ -176,16 +177,46 @@ public final class ConnectivityMonitor {
         apply(isOnline: success)
     }
 
-    /// `true` when the monitor is latched offline, ``defaultProbeCooldown``
-    /// (or the injected `probeCooldown`) has elapsed since the current offline
-    /// window began, and no probe has yet been claimed for that window — i.e.
-    /// the next call to ``consumeProbe()`` would succeed. Read-only: checking
-    /// it has no side effects, so callers (and tests) can observe eligibility
-    /// without spending the allowance.
+    /// The instant the current cooldown is measured from: the **later** of the
+    /// offline window's start and the last claim handed out inside it. `nil`
+    /// while online.
+    ///
+    /// Taking the max of the two — rather than latching the claim until an
+    /// outcome arrives — is what makes the allowance **expire on time**, and
+    /// that is load-bearing rather than defensive. A claimed probe is not
+    /// guaranteed to produce a transport outcome at all: `APIClient.perform`
+    /// resolves a bearer token *before* it touches the network, so
+    /// `AuthService.currentJWT()` throwing `.notSignedIn` (a purely local
+    /// `sessionToken == nil` check), a URL that fails to build, or the
+    /// deliberate cancellation carve-out in `APIClient.fire`, all return
+    /// without ever calling the `onOutcome` hook. Keying release solely on
+    /// `offlineSince` moving — which only happens inside ``apply(isOnline:)``,
+    /// i.e. only when *something* reports an outcome — would let one such
+    /// silent probe spend the allowance permanently and strand the monitor
+    /// offline with no further probes ever attempted: precisely the dead end
+    /// issue #81 exists to remove, reintroduced through a narrower door. With a
+    /// timestamped claim, a silent probe costs exactly one cooldown.
+    ///
+    /// The rate limit is unaffected: after a claim at `C`, eligibility needs
+    /// `now >= max(offlineSince, C) + probeCooldown >= C + probeCooldown`, so
+    /// no second claim can be issued within a cooldown of the first however
+    /// many callers ask. And a probe that *does* fail still restarts the
+    /// cooldown from the failure, because `apply(isOnline: false)` moves
+    /// `offlineSince` past the claim.
+    private var cooldownAnchor: Date? {
+        guard let offlineSince else { return nil }
+        guard let probeClaimedAt else { return offlineSince }
+        return max(offlineSince, probeClaimedAt)
+    }
+
+    /// `true` when the monitor is latched offline and ``defaultProbeCooldown``
+    /// (or the injected `probeCooldown`) has elapsed since the current
+    /// ``cooldownAnchor`` — i.e. the next call to ``consumeProbe()`` would
+    /// succeed. Read-only: checking it has no side effects, so callers (and
+    /// tests) can observe eligibility without spending the allowance.
     public var isHalfOpen: Bool {
-        guard !isOnline, let offlineSince else { return false }
-        guard probeClaimedOfflineSince != offlineSince else { return false }
-        return now().timeIntervalSince(offlineSince) >= probeCooldown
+        guard !isOnline, let cooldownAnchor else { return false }
+        return now().timeIntervalSince(cooldownAnchor) >= probeCooldown
     }
 
     /// Atomically claim the current offline window's one allowed half-open
@@ -210,12 +241,17 @@ public final class ConnectivityMonitor {
     /// `probeCooldown` away again — "costing one timeout" as the issue puts it,
     /// not an open door.
     ///
+    /// A probe that reports *no* outcome at all is neither of those, and is
+    /// possible (see ``cooldownAnchor``): the claim is therefore **stamped with
+    /// the time it was issued**, not held until an outcome releases it, so a
+    /// silent probe costs one cooldown and never the mechanism itself.
+    ///
     /// Synchronous and `@MainActor`-isolated with no `await` between the
     /// eligibility check and the claim, so two calls issued back to back on the
     /// main actor's serial executor can never both observe `true`.
     public func consumeProbe() -> Bool {
         guard isHalfOpen else { return false }
-        probeClaimedOfflineSince = offlineSince
+        probeClaimedAt = now()
         return true
     }
 
@@ -229,7 +265,7 @@ public final class ConnectivityMonitor {
             // means something while latched offline, so drop it entirely. A
             // later latch starts a fresh offline window with its own cooldown.
             offlineSince = nil
-            probeClaimedOfflineSince = nil
+            probeClaimedAt = nil
             if !wasOnline {
                 reconnectContinuation.yield()
             }
@@ -239,6 +275,10 @@ public final class ConnectivityMonitor {
             // half-open probe that fails reports `false` here too, and that
             // failure should restart the cooldown rather than let a stale
             // offlineSince make the very next caller re-probe immediately.
+            // `probeClaimedAt` is deliberately left alone — `cooldownAnchor`
+            // takes the later of the two, so a failure that lands after the
+            // claim wins, and one that somehow lands before it doesn't hand
+            // out a second allowance early.
             offlineSince = now()
         }
     }
