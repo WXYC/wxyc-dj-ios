@@ -86,17 +86,26 @@ public final class ConnectivityMonitor {
     public static let defaultProbeCooldown: TimeInterval = 30
 
     @ObservationIgnored private let probeCooldown: TimeInterval
-    @ObservationIgnored private let now: @Sendable () -> Date
+    /// The cooldown's time source. Deliberately a **monotonic** clock rather
+    /// than `Date`: everything here measures an *elapsed interval*, and nothing
+    /// needs a calendar date. A wall clock would let a backward correction —
+    /// NTP stepping the clock after a flat-battery restore, or a DJ changing the
+    /// device date — put the anchor in the future, making the elapsed interval
+    /// negative and blocking every probe until wall time caught back up, which
+    /// could be hours of no self-recovery. `ContinuousClock` (not
+    /// `SuspendingClock`) so the cooldown keeps elapsing while the device is
+    /// asleep, matching a DJ's expectation that 30 s of real time have passed.
+    @ObservationIgnored private let now: @Sendable () -> ContinuousClock.Instant
     /// When the current offline window began, per the most recent offline
     /// signal — the initial online→offline latch, or a later half-open probe
     /// reporting failure (which restarts the cooldown from that failure, not
     /// the original latch). `nil` while online.
-    @ObservationIgnored private var offlineSince: Date?
+    @ObservationIgnored private var offlineSince: ContinuousClock.Instant?
     /// When ``consumeProbe()`` last handed out this offline window's allowance.
     /// Cleared when the monitor goes back online; otherwise it only ever moves
     /// forward. See ``cooldownAnchor`` for why the claim is stamped with a
     /// *time* rather than latched until an outcome arrives.
-    @ObservationIgnored private var probeClaimedAt: Date?
+    @ObservationIgnored private var probeClaimedAt: ContinuousClock.Instant?
 
     /// - Parameters:
     ///   - initiallyOnline: the optimistic starting value before the first
@@ -104,14 +113,15 @@ public final class ConnectivityMonitor {
     ///     something proves we're offline. `false` starts the half-open
     ///     cooldown immediately, anchored at construction time.
     ///   - probeCooldown: see ``defaultProbeCooldown``.
-    ///   - now: the time source `isHalfOpen`/``consumeProbe()`` measure the
-    ///     cooldown against. Defaults to the wall clock; tests inject a
+    ///   - now: the monotonic time source `isHalfOpen`/``consumeProbe()``
+    ///     measure the cooldown against (see the property's doc for why it is
+    ///     not a wall clock). Defaults to `ContinuousClock`; tests inject a
     ///     stubbed clock so the cooldown is exercised deterministically with
     ///     no wall-clock sleeps.
     public init(
         initiallyOnline: Bool = true,
         probeCooldown: TimeInterval = defaultProbeCooldown,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now }
     ) {
         self.isOnline = initiallyOnline
         self.probeCooldown = probeCooldown
@@ -203,7 +213,7 @@ public final class ConnectivityMonitor {
     /// many callers ask. And a probe that *does* fail still restarts the
     /// cooldown from the failure, because `apply(isOnline: false)` moves
     /// `offlineSince` past the claim.
-    private var cooldownAnchor: Date? {
+    private var cooldownAnchor: ContinuousClock.Instant? {
         guard let offlineSince else { return nil }
         guard let probeClaimedAt else { return offlineSince }
         return max(offlineSince, probeClaimedAt)
@@ -216,7 +226,7 @@ public final class ConnectivityMonitor {
     /// tests) can observe eligibility without spending the allowance.
     public var isHalfOpen: Bool {
         guard !isOnline, let cooldownAnchor else { return false }
-        return now().timeIntervalSince(cooldownAnchor) >= probeCooldown
+        return cooldownAnchor.duration(to: now()) >= .seconds(probeCooldown)
     }
 
     /// Atomically claim the current offline window's one allowed half-open
@@ -279,6 +289,26 @@ public final class ConnectivityMonitor {
             // takes the later of the two, so a failure that lands after the
             // claim wins, and one that somehow lands before it doesn't hand
             // out a second allowance early.
+            //
+            // Moving the anchor for *any* failing request — not just a claimed
+            // probe's — reads like it could starve the probe: a caller that
+            // doesn't gate on `isOnline` (`AlbumDetailView`, `BinViewModel`,
+            // `CatalogRefreshService` today) failing every few seconds keeps
+            // pushing this forward, so `isHalfOpen` never opens. That is the
+            // intended behavior, not a gap, because of the invariant below:
+            //
+            //     the anchor moves  <=>  a request just reached the transport
+            //
+            // (`apply` runs only on a reported outcome, and an outcome is only
+            // reported once `fire`/`send` actually attempted the network — the
+            // pre-transport throws never get here, which is exactly why the
+            // claim is timestamped; see `cooldownAnchor`.) So a moving anchor
+            // means the backend is *already* being probed, more often than this
+            // mechanism would, and the very next success un-latches through the
+            // ordinary hook. A half-open probe there would be redundant traffic
+            // against a backend the issue explicitly says not to hammer. The
+            // dead end #81 removes is "no request is ever made, so no outcome
+            // can ever arrive" — the opposite of this case.
             offlineSince = now()
         }
     }
