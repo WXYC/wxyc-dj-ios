@@ -191,6 +191,39 @@ struct DTODecodingTests {
         #expect(info.rotation?.rotationCohort == nil)
     }
 
+    @Test(arguments: [
+        // Bin key absent entirely.
+        #"{ "id": 13, "add_date": "2025-10-15" }"#,
+        // Bin key present but null.
+        #"{ "id": 13, "rotation_bin": null, "add_date": "2025-10-15" }"#,
+        // Only the bin — no id, no add_date.
+        #"{ "rotation_bin": "H" }"#,
+        // Empty object: contract-legal, since the nested `rotation` schema
+        // declares no required properties.
+        #"{}"#,
+    ])
+    func partialAlbumInfoRotationDoesNotFailTheWholeDecode(rotationObject: String) throws {
+        // Issue #93 review: api.yaml's nested `rotation` object declares no
+        // `required` list, and the generated AlbumInfoResponseAllOfRotation
+        // agrees (all fields optional). Rotation has no custom init(from:), so
+        // any non-optional field would throw keyNotFound out of the enclosing
+        // AlbumInfo on a present-but-partial rotation — the same whole-decode
+        // failure the raw-String hedge closes, reached through a different door.
+        let raw = """
+            {
+              "id": 401,
+              "album_title": "DOGA",
+              "artist_name": "Juana Molina",
+              "rotation": \(rotationObject)
+            }
+            """
+        let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
+        #expect(info.albumTitle == "DOGA")
+        // The rotation object survives as a present-but-partial value rather
+        // than taking the whole album down with it.
+        #expect(info.rotation != nil)
+    }
+
     @Test func absentAlbumInfoRotationDecodesToNil() throws {
         let raw = """
             { "id": 1, "album_title": "On Your Own Love Again", "artist_name": "Jessica Pratt" }
