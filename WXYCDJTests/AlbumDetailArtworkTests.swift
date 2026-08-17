@@ -162,8 +162,9 @@ struct AlbumDetailArtworkTests {
 
     @Test("LML metadata art is used only when the catalog has none")
     func metadataIsLastResort() throws {
-        // The Bin → Detail path: no search row, no clone, and `/library/info`
-        // carries no art — LML is all that's left, so it renders.
+        // Every catalog source is exhausted — an artwork-less fallback row, a
+        // clone row with no cover, and `/library/info` (which never projects
+        // artwork_url) — so LML is all that's left and it renders.
         let url = AlbumDetailView.preferredArtworkURL(
             info: try Self.dogaInfo(),
             fallback: Self.dogaSearchRow(artworkURL: nil),
@@ -179,9 +180,13 @@ struct AlbumDetailArtworkTests {
     // it's the sole remaining catalog source. It used to be read *only* in
     // `loadInfo()`'s catch, so on every path where `/library/info` succeeded
     // (i.e. all of them, online) the clone leg was unreachable and Bin → Detail
-    // — which has no search row at all — still fell through to LML's logo.
+    // — which then carried no fallback row at all — still fell through to
+    // LML's logo.
 
-    @Test("Bin → Detail (no search row) reads the clone for artwork")
+    // A route with no `fallback` at all is the Spotlight deep link that missed
+    // the on-device clone. (Bin → Detail routed `fallback: nil` too until issue
+    // #87 gave it `BinEntry.detailFallback`; see the Bin section below.)
+    @Test("a route with no fallback reads the clone for artwork")
     func noFallbackReadsClone() {
         #expect(AlbumDetailView.shouldReadCloneForArtwork(fallback: nil))
     }
