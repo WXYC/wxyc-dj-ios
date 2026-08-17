@@ -208,15 +208,15 @@ struct CatalogRowTests {
         var utc = Calendar(identifier: .gregorian)
         utc.timeZone = TimeZone(identifier: "UTC")!
         let jan5 = utc.date(from: DateComponents(year: 2026, month: 1, day: 5))!
-        #expect(CatalogRow.localDay(jan5, timeZone: TimeZone(identifier: "UTC")!) == "2026-01-05")
+        #expect(RotationPredicate.localDay(jan5, timeZone: TimeZone(identifier: "UTC")!) == "2026-01-05")
     }
 
     @Test func localDayShiftsWithTimeZone() {
         var utc = Calendar(identifier: .gregorian)
         utc.timeZone = TimeZone(identifier: "UTC")!
         let instant = utc.date(from: DateComponents(year: 2026, month: 6, day: 22, hour: 0, minute: 30))!
-        #expect(CatalogRow.localDay(instant, timeZone: TimeZone(identifier: "UTC")!) == "2026-06-22")
-        #expect(CatalogRow.localDay(instant, timeZone: TimeZone(identifier: "America/New_York")!) == "2026-06-21")
+        #expect(RotationPredicate.localDay(instant, timeZone: TimeZone(identifier: "UTC")!) == "2026-06-22")
+        #expect(RotationPredicate.localDay(instant, timeZone: TimeZone(identifier: "America/New_York")!) == "2026-06-21")
     }
 
     // MARK: - Helpers

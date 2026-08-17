@@ -72,12 +72,13 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
     /// worth stating because it reads like more than it is: a *present* value of
     /// the wrong shape still throws, and still takes the whole `AlbumInfo` with
     /// it. A non-string `rotation_bin` or non-integer `id` throws `typeMismatch`,
-    /// and a date string none of ``JSONCoders``' three parsers accepts (`""`
-    /// among them) throws `dataCorrupted`. That exposure is endpoint-wide rather
-    /// than rotation-specific — `AlbumInfo`'s own top-level `add_date` and
-    /// `artwork_url` decode exactly the same way — so it isn't something this
-    /// type can close on its own. The hedge here is scoped to the shapes a
-    /// *contract-legal* response can take, which is what #93 turned on.
+    /// and a `kill_date` string none of ``JSONCoders``' three parsers accepts
+    /// (`""` among them) throws `dataCorrupted` — deliberately, per the decoder's
+    /// note on why the two dates aren't treated alike. That residue is
+    /// endpoint-wide rather than rotation-specific — `AlbumInfo`'s own top-level
+    /// `add_date` and `artwork_url` decode exactly the same way — so it isn't
+    /// something this type can close on its own. The hedge here is scoped to the
+    /// shapes a *contract-legal* response can take, which is what #93 turned on.
     ///
     /// Note that `GET /library/info` does not emit `rotation` at all today:
     /// `library.service.getAlbumFromDB` projects no rotation columns and joins no
@@ -122,12 +123,22 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
         /// `decode` on any one of them would fail the whole `AlbumInfo`), and
         /// normalizes a dirty empty `rotation_bin` to `nil`. `encode(to:)` stays
         /// synthesized, as on ``CatalogRow``, whose decoder this mirrors.
+        ///
+        /// The two dates are deliberately **not** treated alike, and the
+        /// asymmetry is about which way each one fails. ``addDate`` is purely
+        /// decorative — one grey line in the Rotation section — so it swallows a
+        /// malformed value with `try?`: losing the date costs a line of text,
+        /// whereas throwing costs the entire release-detail screen, which is the
+        /// trade issue #93 was filed over. ``killDate`` stays strict because
+        /// `try?` there fails **open**: an unparseable kill date would decode to
+        /// `nil`, read as "no expiry", and leave a long-dead record showing as in
+        /// rotation indefinitely. A loud failure beats a silently wrong shelf.
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             id = try c.decodeIfPresent(Int.self, forKey: .id)
             rotationBin = (try c.decodeIfPresent(String.self, forKey: .rotationBin))
                 .flatMap { $0.isEmpty ? nil : $0 }
-            addDate = try c.decodeIfPresent(Date.self, forKey: .addDate)
+            addDate = try? c.decodeIfPresent(Date.self, forKey: .addDate)
             killDate = try c.decodeIfPresent(Date.self, forKey: .killDate)
         }
 
@@ -153,27 +164,31 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
         /// render an expired record as in-rotation online while the clone
         /// correctly hid it.
         public func isInRotation(asOf now: Date = Date(), timeZone: TimeZone = .current) -> Bool {
-            isInRotation(localDay: CatalogRow.localDay(now, timeZone: timeZone))
+            isInRotation(localDay: RotationPredicate.localDay(now, timeZone: timeZone))
         }
 
-        /// Pure core of ``isInRotation(asOf:timeZone:)``, mirroring
-        /// ``CatalogRow/isInRotation(localDay:)``. `today` MUST be the zero-padded
-        /// `"YYYY-MM-DD"` local day ``CatalogRow/localDay(_:timeZone:)`` produces —
-        /// the lexicographic compare is equivalent to a chronological one only for
+        /// Pure core of ``isInRotation(asOf:timeZone:)``. `today` MUST be the
+        /// zero-padded `"YYYY-MM-DD"` local day
+        /// ``RotationPredicate/localDay(_:timeZone:)`` produces — the
+        /// lexicographic compare is equivalent to a chronological one only for
         /// that fixed-width form — which is why this stays `internal` and callers
         /// go through the public overload.
         ///
-        /// ``killDate`` is a parsed `Date` here rather than ``CatalogRow``'s raw
-        /// string (`/library/info` ships a date the decoder parses; the export
-        /// ships a bare string), so it is rendered back to its wire day **in GMT**
-        /// before the compare. `JSONCoders` decodes a date-only value to midnight
-        /// GMT, so rendering through any other zone would slip the day on every
+        /// The rule itself is ``RotationPredicate/isInRotation(bin:killDay:today:)``,
+        /// shared with ``CatalogRow``. All this adds is the one thing that
+        /// genuinely differs between the two: ``killDate`` is a parsed `Date`
+        /// here rather than the export's raw string (`/library/info` ships a date
+        /// the decoder parses), so it is rendered back to its wire day **in GMT**
+        /// first. `JSONCoders` decodes a date-only value to midnight GMT, so
+        /// rendering through any other zone would slip the day on every
         /// negative-UTC host (PT/MT/CT/ET) and retire a record a day early — the
         /// same drift ``WXYCDateFormatting`` pins for the render path.
         func isInRotation(localDay today: String) -> Bool {
-            guard rotationBin != nil else { return false }
-            guard let killDate else { return true }
-            return CatalogRow.localDay(killDate, timeZone: .gmt) > today
+            RotationPredicate.isInRotation(
+                bin: rotationBin,
+                killDay: killDate.map { RotationPredicate.localDay($0, timeZone: .gmt) },
+                today: today
+            )
         }
     }
 

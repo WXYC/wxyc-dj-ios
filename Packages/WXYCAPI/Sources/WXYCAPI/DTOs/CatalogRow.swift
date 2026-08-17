@@ -204,33 +204,21 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
     /// client. **Any** non-null bin counts as in rotation, including one outside
     /// the current `H`/`M`/`L`/`S` cohorts; the kill-date comparison is strict (a
     /// record expiring *today* is already out), matching `kill_date > CURRENT_DATE`.
+    /// The rule itself lives in ``RotationPredicate`` so this type and
+    /// ``AlbumInfo/Rotation`` cannot answer differently for the same album.
     public func isInRotation(asOf now: Date = Date(), timeZone: TimeZone = .current) -> Bool {
-        isInRotation(localDay: Self.localDay(now, timeZone: timeZone))
+        isInRotation(localDay: RotationPredicate.localDay(now, timeZone: timeZone))
     }
 
     /// Pure core of ``isInRotation(asOf:timeZone:)``. `today` MUST be a
-    /// zero-padded `"YYYY-MM-DD"` local day (the output of ``localDay(_:timeZone:)``);
-    /// the lexicographic kill-date compare is only equivalent to a chronological
-    /// one for that fixed-width form. Kept `internal` so external callers can't
-    /// pass a malformed string — they go through ``isInRotation(asOf:timeZone:)``,
-    /// which builds `today` correctly. Batch callers compute the day once with
-    /// ``localDay(_:timeZone:)`` and reuse it across rows.
+    /// zero-padded `"YYYY-MM-DD"` local day (the output of
+    /// ``RotationPredicate/localDay(_:timeZone:)``); the lexicographic kill-date
+    /// compare is only equivalent to a chronological one for that fixed-width
+    /// form. Kept `internal` so external callers can't pass a malformed string —
+    /// they go through ``isInRotation(asOf:timeZone:)``, which builds `today`
+    /// correctly. Batch callers compute the day once with
+    /// ``RotationPredicate/localDay(_:timeZone:)`` and reuse it across rows.
     func isInRotation(localDay today: String) -> Bool {
-        guard rotationBin != nil else { return false }
-        guard let rotationKillDate else { return true }
-        return rotationKillDate > today
-    }
-
-    /// The calendar day of `now` in `timeZone` as a zero-padded `"YYYY-MM-DD"`
-    /// string, via the locale-independent ISO-8601 calendar so the result never
-    /// drifts with host locale/calendar settings. Uses a value-type format style
-    /// (no per-call `DateFormatter` allocation) — the same date-only shape
-    /// `JSONCoders` uses for the inverse parse — so it stays cheap if called per row.
-    static func localDay(_ now: Date = Date(), timeZone: TimeZone = .current) -> String {
-        now.formatted(
-            Date.ISO8601FormatStyle(timeZone: timeZone)
-                .year().month().day()
-                .dateSeparator(.dash)
-        )
+        RotationPredicate.isInRotation(bin: rotationBin, killDay: rotationKillDate, today: today)
     }
 }
