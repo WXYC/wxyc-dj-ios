@@ -7,6 +7,11 @@
 //  PathProvider seam; a transport failure or success from APIClient overrides
 //  it (last-write-wins). Owned by the composition root like AuthService and read
 //  by the offline banner (#56) and the rest of the offline epic (#58–#61).
+//  Issue #81 adds a half-open probe (circuit-breaker sense): once latched
+//  offline for at least `probeCooldown`, `consumeProbe()` lets exactly one
+//  caller attempt the server anyway, so a surface with no other network
+//  activity (library search) can self-recover instead of staying latched
+//  forever.
 //
 //  Created by Jake on 6/26/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -27,6 +32,14 @@ import Observation
 /// Whichever signal fired most recently wins. A `noteOutcome(success: false)`
 /// stays offline until *either* a later successful outcome *or* a fresh
 /// satisfied path update arrives.
+///
+/// A third, narrower mechanism supplements those two: once latched offline for
+/// at least `probeCooldown`, ``isHalfOpen``/``consumeProbe()`` (issue #81) let a
+/// caller with no other pending network activity — ``LibrarySearch`` is the
+/// first — attempt one real request anyway. That request's own outcome still
+/// flows through the ordinary ``ingest(isOnline:)``/``noteOutcome(success:)``
+/// hook, so success or failure is handled exactly like any other request; the
+/// half-open machinery only decides *whether* one gets attempted.
 @MainActor
 @Observable
 public final class ConnectivityMonitor {
@@ -64,11 +77,45 @@ public final class ConnectivityMonitor {
     @ObservationIgnored private let signalContinuation: AsyncStream<Bool>.Continuation
     @ObservationIgnored private var consumer: Task<Void, Never>?
 
-    /// - Parameter initiallyOnline: the optimistic starting value before the
-    ///   first signal arrives. Defaults to `true` so the banner stays hidden
-    ///   until something proves we're offline.
-    public init(initiallyOnline: Bool = true) {
+    /// How long a caller must wait after the monitor latches offline (or a
+    /// half-open probe subsequently fails) before ``consumeProbe()`` allows
+    /// another attempt. Issue #81's chosen middle ground: long enough that a
+    /// down backend isn't hammered on every keystroke, short enough that a DJ
+    /// who's actually back online self-recovers without leaving the search tab.
+    public static let defaultProbeCooldown: TimeInterval = 30
+
+    @ObservationIgnored private let probeCooldown: TimeInterval
+    @ObservationIgnored private let now: @Sendable () -> Date
+    /// When the current offline window began, per the most recent offline
+    /// signal — the initial online→offline latch, or a later half-open probe
+    /// reporting failure (which restarts the cooldown from that failure, not
+    /// the original latch). `nil` while online.
+    @ObservationIgnored private var offlineSince: Date?
+    /// The `offlineSince` value a probe was already claimed for. Compared by
+    /// value (not a plain "claimed" `Bool`) so a probe failure — which moves
+    /// `offlineSince` forward — automatically re-opens eligibility for the new
+    /// window without any extra bookkeeping.
+    @ObservationIgnored private var probeClaimedOfflineSince: Date?
+
+    /// - Parameters:
+    ///   - initiallyOnline: the optimistic starting value before the first
+    ///     signal arrives. Defaults to `true` so the banner stays hidden until
+    ///     something proves we're offline. `false` starts the half-open
+    ///     cooldown immediately, anchored at construction time.
+    ///   - probeCooldown: see ``defaultProbeCooldown``.
+    ///   - now: the time source `isHalfOpen`/``consumeProbe()`` measure the
+    ///     cooldown against. Defaults to the wall clock; tests inject a
+    ///     stubbed clock so the cooldown is exercised deterministically with
+    ///     no wall-clock sleeps.
+    public init(
+        initiallyOnline: Bool = true,
+        probeCooldown: TimeInterval = defaultProbeCooldown,
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) {
         self.isOnline = initiallyOnline
+        self.probeCooldown = probeCooldown
+        self.now = now
+        self.offlineSince = initiallyOnline ? nil : now()
         let (reconnectStream, reconnectContinuation) = AsyncStream<Void>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
         )
@@ -129,13 +176,70 @@ public final class ConnectivityMonitor {
         apply(isOnline: success)
     }
 
+    /// `true` when the monitor is latched offline, ``defaultProbeCooldown``
+    /// (or the injected `probeCooldown`) has elapsed since the current offline
+    /// window began, and no probe has yet been claimed for that window — i.e.
+    /// the next call to ``consumeProbe()`` would succeed. Read-only: checking
+    /// it has no side effects, so callers (and tests) can observe eligibility
+    /// without spending the allowance.
+    public var isHalfOpen: Bool {
+        guard !isOnline, let offlineSince else { return false }
+        guard probeClaimedOfflineSince != offlineSince else { return false }
+        return now().timeIntervalSince(offlineSince) >= probeCooldown
+    }
+
+    /// Atomically claim the current offline window's one allowed half-open
+    /// probe (issue #81, circuit-breaker "half-open" sense). A caller that
+    /// gets `true` back is the single one that should attempt a real request
+    /// despite ``isOnline`` being `false`; every other caller — concurrent, or
+    /// merely later within the same cooldown window — gets `false`. That's
+    /// what keeps "N attempts inside one cooldown window produce at most one
+    /// server hit" true regardless of how many call sites read this monitor
+    /// (``LibrarySearch`` today; `AlbumDetailView`, `BinViewModel`,
+    /// `CatalogRefreshService` are documented future readers who'd want the
+    /// same allowance rather than each inventing their own cooldown).
+    ///
+    /// The claim is spent the instant it's issued — it does not wait to see
+    /// whether the caller's subsequent request succeeds or fails. A caller
+    /// reports that outcome through the ordinary hook
+    /// (``ingest(isOnline:)``/``noteOutcome(success:)``) exactly like any other
+    /// request: success clears the offline window in ``apply(isOnline:)`` (the
+    /// latch lifts and ``reconnects`` fires "for free"); failure keeps the
+    /// window open but moves ``offlineSince`` forward to the failure's
+    /// timestamp, restarting the cooldown so the next allowed probe is a full
+    /// `probeCooldown` away again — "costing one timeout" as the issue puts it,
+    /// not an open door.
+    ///
+    /// Synchronous and `@MainActor`-isolated with no `await` between the
+    /// eligibility check and the claim, so two calls issued back to back on the
+    /// main actor's serial executor can never both observe `true`.
+    public func consumeProbe() -> Bool {
+        guard isHalfOpen else { return false }
+        probeClaimedOfflineSince = offlineSince
+        return true
+    }
+
     /// The single mutation funnel for both signals, so the reconnect edge is
     /// detected once regardless of cause and last-write-wins falls out naturally.
     private func apply(isOnline newValue: Bool) {
         let wasOnline = isOnline
         isOnline = newValue
-        if !wasOnline && newValue {
-            reconnectContinuation.yield()
+        if newValue {
+            // Online again, whatever the cause: the half-open bookkeeping only
+            // means something while latched offline, so drop it entirely. A
+            // later latch starts a fresh offline window with its own cooldown.
+            offlineSince = nil
+            probeClaimedOfflineSince = nil
+            if !wasOnline {
+                reconnectContinuation.yield()
+            }
+        } else {
+            // Still (or newly) offline. Move the anchor on *every* offline
+            // signal, not just the online->offline transition: a claimed
+            // half-open probe that fails reports `false` here too, and that
+            // failure should restart the cooldown rather than let a stale
+            // offlineSince make the very next caller re-probe immediately.
+            offlineSince = now()
         }
     }
 }
