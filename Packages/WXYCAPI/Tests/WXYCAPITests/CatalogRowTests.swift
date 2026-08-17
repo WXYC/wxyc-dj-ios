@@ -80,11 +80,16 @@ struct CatalogRowTests {
     }
 
     @Test func preservesNonCohortRotationBinAndCountsAsInRotation() throws {
-        // "N" is a CURRENT server bin (Backend-Service app.yaml enum [S,L,M,H,N])
-        // outside the H/M/L/S display cohorts. It must be preserved RAW, have no
-        // display cohort, and — per the server predicate (non-null bin = in
-        // rotation) — count as in rotation. Collapsing "N" to nil (the old enum
-        // decode) wrongly reported it out of rotation.
+        // The fixture value is "N" for historical reasons — it is the bin that
+        // motivated this hedge — but it is NOT a current server bin, and this
+        // test does not depend on it being one. BS#2173 established it was never
+        // a rotation bin and removed it from Backend-Service's freq_enum. What
+        // is under test is the general rule: a bin outside the H/M/L/S display
+        // cohorts must be preserved RAW, have no display cohort, and count as in
+        // rotation per the server predicate (non-null bin = in rotation).
+        // Collapsing it to nil (the old enum decode) wrongly reported it out of
+        // rotation. Keeping an out-of-cohort literal here is the point of the
+        // test; only the claim that the server currently emits one was wrong.
         let raw = #"{"id":1,"artist_name":"y","album_title":"x","code_letters":"X","code_number":1,"code_artist_number":1,"genre_name":"Rock","format_name":"LP","rotation_bin":"N","rotation_kill_date":null}"#
         let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
         #expect(row.rotationBin == "N")
@@ -128,9 +133,10 @@ struct CatalogRowTests {
     }
 
     @Test func roundTripsNonCohortBin() throws {
-        // The headline Fix-2 protection: a persisted "N" row must survive
-        // encode -> decode (the old enum-typed field collapsed it on decode,
-        // silently corrupting the clone on reload).
+        // The headline Fix-2 protection: a persisted out-of-cohort bin must
+        // survive encode -> decode (the old enum-typed field collapsed it,
+        // silently corrupting the clone on reload). "N" is the historical
+        // example, not a bin the server emits — see the note above.
         let original = makeRow(bin: "N", killDate: nil)
         let roundTripped = try JSONCoders.decoder.decode(
             CatalogRow.self,
