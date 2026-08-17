@@ -214,6 +214,15 @@ struct AlbumDetailArtworkTests {
         // The search row's cover is dead (expired CDN signature); the clone
         // still resolves, so it must win — precedence among catalog sources
         // is preserved, not abandoned in favor of LML the moment one leg fails.
+        //
+        // Note this state needs *both* legs populated, which `loadAll` only
+        // arranges when `/library/info` failed: `shouldReadCloneForArtwork` is
+        // `fallback?.artworkURL == nil`, so a search row that carries any
+        // cover (dead or not) suppresses the clone read on the online
+        // Search → Detail path, and the fallthrough there lands on LML
+        // instead. Harmless in practice — both sources project the same
+        // `library.artwork_url` column, so the clone would usually supply the
+        // identical dead URL — but the clone leg is not the common path.
         let url = AlbumDetailView.preferredArtworkURL(
             info: nil,
             fallback: Self.dogaSearchRow(),
@@ -311,5 +320,59 @@ struct AlbumDetailArtworkTests {
             failedURLs: [Self.infoArt, Self.searchArt, Self.cloneArt, Self.lmlArt]
         )
         #expect(url == nil)
+    }
+
+    // MARK: Issue #86 review — only a failure that indicts the URL retires it
+
+    // Recording is a one-way door (membership is permanent for the view's
+    // life), so a connectivity blip must never retire a healthy cover: doing
+    // so would hand the header to LML's label logo the moment the network
+    // came back, reintroducing the #83 defect on a path with no self-recovery.
+
+    @Test(
+        "a connectivity-class failure does not retire the URL",
+        arguments: [
+            URLError.Code.notConnectedToInternet,
+            .networkConnectionLost,
+            .timedOut,
+            .cannotConnectToHost,
+            .cannotFindHost,
+            .dnsLookupFailed,
+            .secureConnectionFailed,
+            .dataNotAllowed,
+            .internationalRoamingOff,
+            .callIsActive,
+            .cancelled,
+        ]
+    )
+    func transientFailuresAreNotRecorded(code: URLError.Code) {
+        #expect(AlbumDetailView.shouldRecordArtworkFailure(URLError(code)) == false)
+    }
+
+    @Test(
+        "a resource-level URLError retires the URL",
+        arguments: [
+            // What a CDN's 403/404 error page looks like by the time it
+            // reaches the image decoder — the expired-signature and
+            // purged-asset cases #86 exists to recover from. Classifying
+            // every URLError as transient would disable the fallthrough.
+            URLError.Code.cannotDecodeContentData,
+            .badServerResponse,
+            .fileDoesNotExist,
+            .resourceUnavailable,
+            .badURL,
+            .unsupportedURL,
+        ]
+    )
+    func resourceLevelFailuresAreRecorded(code: URLError.Code) {
+        #expect(AlbumDetailView.shouldRecordArtworkFailure(URLError(code)))
+    }
+
+    @Test("a non-URLError failure retires the URL")
+    func nonURLErrorFailuresAreRecorded() {
+        // `AsyncImage` surfaces a decode failure that isn't a `URLError` for
+        // a body that transferred fine but isn't an image; that indicts the
+        // URL, so it must fall through rather than fail safe.
+        #expect(AlbumDetailView.shouldRecordArtworkFailure(CocoaError(.fileReadCorruptFile)))
     }
 }
