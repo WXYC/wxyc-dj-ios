@@ -33,12 +33,9 @@ struct AlbumDetailView: View {
     // on-device catalog clone, read only once the live fetch has failed.
     @State private var infoFailed: Bool = false
     @State private var cloneRow: CatalogRow?
-    // Issue #86: URLs the header's `AsyncImage` has genuinely finished
-    // failing to load (its `.failure` phase, never `.empty`/loading), keyed
-    // by URL rather than a bare bool so a later source with a *different*
-    // URL is never suppressed. `preferredArtworkURL` skips anything in this
-    // set; membership is permanent for the life of this view, so a dead URL
-    // is retried at most once, not in a loop.
+    // Issue #86: URLs the header's `AsyncImage` has genuinely finished failing to
+    // load. Permanent for the life of this view, so a dead URL is retried at most
+    // once; see `preferredArtworkURL` for why it is keyed by URL.
     @State private var failedArtworkURLs: Set<URL> = []
     @State private var addError: String?
     @State private var addedToBin: Bool = false
@@ -128,19 +125,20 @@ struct AlbumDetailView: View {
                             //
                             // Only a failure that indicts the *URL* is recorded:
                             // a connectivity blip must not retire a healthy
-                            // cover (see `shouldRecordArtworkFailure`).
+                            // cover (see `ArtworkFailureClassification`).
                             //
-                            // `.id(url)` makes the re-mount unconditional. The
-                            // recording relies on this branch appearing afresh
-                            // per URL, which otherwise depends on `AsyncImage`
-                            // passing back through `.empty` between two failing
-                            // URLs — if it ever went `.failure(a)` → `.failure(b)`
-                            // directly, the `_ConditionalContent` branch would
-                            // not change, `onAppear` would not re-fire, and the
-                            // chain would stall on `b` with candidates unvisited.
+                            // `.id(url)` ties this node's identity to the URL, so
+                            // a `.failure(a)` → `.failure(b)` transition is a
+                            // fresh mount (and a fresh `onAppear`) by
+                            // construction, rather than depending on whether
+                            // `AsyncImage` happens to pass back through `.empty`
+                            // between the two. Without it the
+                            // `_ConditionalContent` branch would be unchanged,
+                            // `onAppear` would not re-fire, and the chain would
+                            // stall on `b` with candidates unvisited.
                             Color.clear
                                 .onAppear {
-                                    guard Self.shouldRecordArtworkFailure(error) else { return }
+                                    guard ArtworkFailureClassification.indictsURL(error) else { return }
                                     failedArtworkURLs.insert(url)
                                 }
                                 .id(url)
@@ -404,57 +402,6 @@ struct AlbumDetailView: View {
             return url
         }
         return nil
-    }
-
-    /// Connectivity-class `URLError` codes: the *link* failed, so the URL itself
-    /// tells us nothing and may be perfectly healthy.
-    ///
-    /// Deliberately excluded — these are `URLError`s too, but they describe the
-    /// **resource** rather than the link, so they must still retire the URL:
-    /// `.cannotDecodeContentData` / `.badServerResponse` (what a CDN's 403/404
-    /// error page looks like by the time it reaches the image decoder — i.e. the
-    /// exact expired-signature and purged-asset cases issue #86 exists to
-    /// recover from), `.fileDoesNotExist`, `.resourceUnavailable`, `.badURL`,
-    /// `.unsupportedURL`. Classifying *every* `URLError` as transient would
-    /// silently disable the fallthrough entirely.
-    private static let transientArtworkFailureCodes: Set<URLError.Code> = [
-        .notConnectedToInternet,
-        .networkConnectionLost,
-        .timedOut,
-        .cannotConnectToHost,
-        .cannotFindHost,
-        .dnsLookupFailed,
-        .secureConnectionFailed,
-        .dataNotAllowed,
-        .internationalRoamingOff,
-        .callIsActive,
-        .cancelled,
-    ]
-
-    /// Whether an `AsyncImage` load failure should **retire** its URL from the
-    /// artwork chain (issue #86 review).
-    ///
-    /// The set `preferredArtworkURL` skips is permanent for the life of the view,
-    /// so recording a failure is a one-way door: it must mean "this URL is dead,"
-    /// never "the network was down for a moment." Recording a transient failure
-    /// would retire a *healthy* catalog cover and hand the header to LML's label
-    /// logo the moment connectivity returned — reintroducing the very #83 defect
-    /// this precedence exists to prevent, on a path with no self-recovery.
-    ///
-    /// So the classification fails **safe**: a connectivity-class `URLError`
-    /// (see ``transientArtworkFailureCodes``) is not recorded, leaving the
-    /// catalog URL in the running. Everything else — an undecodable body, a
-    /// resource-level `URLError`, any non-`URLError` — retires it. The cost of
-    /// the safe direction is a blank header until the DJ re-enters the screen
-    /// (`@State` resets, so the URL is retried); the cost of the unsafe
-    /// direction is a permanently wrong cover.
-    ///
-    /// This mirrors the transient/terminal split `AuthService` draws for the JWT
-    /// leg (issue #53) and the transport-vs-cancellation split `APIClient` draws
-    /// for the connectivity monitor (issue #58).
-    static func shouldRecordArtworkFailure(_ error: Error) -> Bool {
-        guard let urlError = error as? URLError else { return true }
-        return !transientArtworkFailureCodes.contains(urlError.code)
     }
 
     /// What the header + catalog sections render from once `/library/info`
