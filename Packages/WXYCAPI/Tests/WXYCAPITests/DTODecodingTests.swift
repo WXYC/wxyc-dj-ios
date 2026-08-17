@@ -195,12 +195,11 @@ struct DTODecodingTests {
         // A dirty empty bin is no rotation assignment, exactly as
         // CatalogRow.init(from:) already treats it — both types read the same
         // underlying rotation column, so they must not disagree about what an
-        // empty string means. It matters beyond tidiness: `rotationBin != nil`
-        // is the in-rotation test (the first guard CatalogRow.isInRotation
-        // opens with, and what AlbumDetailView gates its online Rotation
-        // section on), so an empty string carried through verbatim would
-        // satisfy that guard and render "In rotation" for a record that
-        // asserts no rotation at all.
+        // empty string means. It matters beyond tidiness: bin presence is the
+        // first guard both isInRotation predicates open with (see
+        // AlbumInfoRotationTests), so an empty string carried through verbatim
+        // would satisfy it and render "In rotation" for a record that asserts
+        // no rotation at all.
         let raw = """
             {
               "id": 401,

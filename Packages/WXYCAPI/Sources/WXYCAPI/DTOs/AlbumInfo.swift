@@ -60,13 +60,24 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
     /// Backend-Service's schema is a database constraint, not an OpenAPI
     /// guarantee, and doesn't license a non-optional decode here.
     ///
-    /// Every field is read with `decodeIfPresent`, so a present-but-partial
-    /// `rotation` object can never throw. A non-optional field decoded with plain
-    /// `decode` would throw `keyNotFound` out of the enclosing `AlbumInfo` the
-    /// moment a present `rotation` object omitted it — failing the entire
-    /// release-detail load over one rotation field. That is precisely the failure
-    /// class issue #93 exists to close, so closing it for `rotation_bin` alone
-    /// would just move the defect to `id` and `add_date`.
+    /// Every field is read with `decodeIfPresent`, so a **missing or null** field
+    /// can never throw. A non-optional field decoded with plain `decode` would
+    /// throw `keyNotFound` out of the enclosing `AlbumInfo` the moment a present
+    /// `rotation` object omitted it — failing the entire release-detail load over
+    /// one rotation field. That is precisely the failure class issue #93 exists to
+    /// close, so closing it for `rotation_bin` alone would just move the defect to
+    /// `id` and `add_date`.
+    ///
+    /// What `decodeIfPresent` does **not** buy is total decode safety, which is
+    /// worth stating because it reads like more than it is: a *present* value of
+    /// the wrong shape still throws, and still takes the whole `AlbumInfo` with
+    /// it. A non-string `rotation_bin` or non-integer `id` throws `typeMismatch`,
+    /// and a date string none of ``JSONCoders``' three parsers accepts (`""`
+    /// among them) throws `dataCorrupted`. That exposure is endpoint-wide rather
+    /// than rotation-specific — `AlbumInfo`'s own top-level `add_date` and
+    /// `artwork_url` decode exactly the same way — so it isn't something this
+    /// type can close on its own. The hedge here is scoped to the shapes a
+    /// *contract-legal* response can take, which is what #93 turned on.
     ///
     /// Note that `GET /library/info` does not emit `rotation` at all today:
     /// `library.service.getAlbumFromDB` projects no rotation columns and joins no
@@ -88,9 +99,14 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
         /// `nil` (including a dirty empty string, normalized on decode) means the
         /// record carries no rotation assignment — the same treatment
         /// ``CatalogRow/rotationBin`` gives the same underlying column, so the
-        /// online and cloned paths can't disagree about what `""` means. This is
-        /// the in-rotation test callers use, so an empty string left verbatim
+        /// online and cloned paths can't disagree about what `""` means. This
+        /// feeds the in-rotation predicate, so an empty string left verbatim
         /// would read as in-rotation.
+        ///
+        /// Don't read this directly to decide rotation state — a bin can be set
+        /// on a record whose ``killDate`` has already passed. Call
+        /// ``isInRotation(asOf:timeZone:)``, the same caution
+        /// ``CatalogRow/rotationBin`` carries.
         public let rotationBin: String?
         public let addDate: Date?
         public let killDate: Date?
@@ -121,6 +137,43 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
         /// ``CatalogRow/rotationCohort``; use this only for labelling.
         public var rotationCohort: RotationBin? {
             rotationBin.flatMap(RotationBin.init(rawValue:))
+        }
+
+        /// Whether this record is in rotation as of `now` in `timeZone` (defaults:
+        /// the device's current clock). Deliberately the **same** predicate
+        /// ``CatalogRow/isInRotation(asOf:timeZone:)`` applies — a bin is set, and
+        /// either there's no kill date or it is strictly after today, matching the
+        /// server's `rotation_bin != null && (kill_date == null || kill_date >
+        /// CURRENT_DATE)`. A record expiring *today* is already out.
+        ///
+        /// Sharing one rule is the whole point: rotation reaches the DJ through
+        /// this type when `/library/info` answers and through ``CatalogRow`` when
+        /// the on-device clone does, and the two must not give one album two
+        /// answers. Gating a rotation UI on `rotationBin != nil` instead would
+        /// render an expired record as in-rotation online while the clone
+        /// correctly hid it.
+        public func isInRotation(asOf now: Date = Date(), timeZone: TimeZone = .current) -> Bool {
+            isInRotation(localDay: CatalogRow.localDay(now, timeZone: timeZone))
+        }
+
+        /// Pure core of ``isInRotation(asOf:timeZone:)``, mirroring
+        /// ``CatalogRow/isInRotation(localDay:)``. `today` MUST be the zero-padded
+        /// `"YYYY-MM-DD"` local day ``CatalogRow/localDay(_:timeZone:)`` produces —
+        /// the lexicographic compare is equivalent to a chronological one only for
+        /// that fixed-width form — which is why this stays `internal` and callers
+        /// go through the public overload.
+        ///
+        /// ``killDate`` is a parsed `Date` here rather than ``CatalogRow``'s raw
+        /// string (`/library/info` ships a date the decoder parses; the export
+        /// ships a bare string), so it is rendered back to its wire day **in GMT**
+        /// before the compare. `JSONCoders` decodes a date-only value to midnight
+        /// GMT, so rendering through any other zone would slip the day on every
+        /// negative-UTC host (PT/MT/CT/ET) and retire a record a day early — the
+        /// same drift ``WXYCDateFormatting`` pins for the render path.
+        func isInRotation(localDay today: String) -> Bool {
+            guard rotationBin != nil else { return false }
+            guard let killDate else { return true }
+            return CatalogRow.localDay(killDate, timeZone: .gmt) > today
         }
     }
 
