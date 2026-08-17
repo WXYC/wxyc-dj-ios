@@ -526,11 +526,15 @@ struct AlbumDetailView: View {
     }
 
     /// Whether the on-device clone has to be read to have any chance at catalog
-    /// artwork. `/library/info` never carries `artwork_url`, so the live search
-    /// row is the only other catalog source — when it has no cover (or doesn't
-    /// exist at all, the Bin → Detail path), the clone is the last thing
-    /// standing between the header and LML's label-logo-prone art. Pure +
-    /// `static` so the decision is testable without rendering.
+    /// artwork. `/library/info` never carries `artwork_url`, so the `fallback`
+    /// row is the only other catalog source — when it carries no cover, the
+    /// clone is the last thing standing between the header and LML's
+    /// label-logo-prone art. This branches on the **cover**, not on whether a
+    /// `fallback` exists, which is what keeps the Bin → Detail path (issue #87:
+    /// a `BinEntry.detailFallback`, always artwork-less, since the `/djs/bin`
+    /// projection carries no `artwork_url`) and a Spotlight clone miss (no
+    /// `fallback` at all) both reading the clone. Pure + `static` so the
+    /// decision is testable without rendering.
     static func shouldReadCloneForArtwork(fallback: AlbumSearchResult?) -> Bool {
         fallback?.artworkURL == nil
     }
@@ -544,10 +548,15 @@ struct AlbumDetailView: View {
         // the header would visibly swap — the exact defect this screen's
         // artwork precedence exists to prevent.
         let readsClone = Self.shouldReadCloneForArtwork(fallback: fallback)
-        // If we have a fallback (Search → Detail), kick metadata off in
-        // parallel with the catalog fetch. If we don't (Bin → Detail), we
-        // need the catalog row's artist/title to even build the metadata
-        // request, so await it first.
+        // A `fallback` already names the artist/release, so metadata can be
+        // fetched in parallel with the catalog fetch — the case for every tab
+        // push: Search → Detail (the live/local search row) and, since issue
+        // #87, Bin → Detail (`BinEntry.detailFallback`; the bin projection and
+        // `/library/info` read `artists.artist_name` / `library.album_title`
+        // off the same joins, so the LML lookup keys are the same strings,
+        // just a round-trip earlier). Without one — a Spotlight deep link that
+        // missed the on-device clone — the catalog row is the only source of
+        // an artist name to look up with, so await it first.
         if fallback != nil {
             async let infoTask: AlbumInfo? = loadInfo()
             async let metaTask: AlbumMetadata? = loadMetadata(artistName: fallback?.artistName,
@@ -559,7 +568,7 @@ struct AlbumDetailView: View {
             if let loadedMeta { metadata = loadedMeta }
             cloneRow = loadedClone
         } else {
-            // No search row at all, so `readsClone` is unconditionally true here.
+            // No fallback at all, so `readsClone` is unconditionally true here.
             async let infoTask: AlbumInfo? = loadInfo()
             async let cloneTask: CatalogRow? = loadCloneRow()
             let (loadedInfo, loadedClone) = await (infoTask, cloneTask)

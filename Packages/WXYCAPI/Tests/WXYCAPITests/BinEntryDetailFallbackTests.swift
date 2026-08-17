@@ -78,6 +78,12 @@ struct BinEntryDetailFallbackTests {
     /// A bin row with unfiled call-number legs (V/A compilations, unfiled
     /// adds) bridges to a fallback whose `callNumber` degrades the same way
     /// `AlbumSearchResult.callNumber` always has — no `Optional()` literals.
+    ///
+    /// The row's **own** `callNumber` is empty for the same input, which is
+    /// what `BinRow` keys on to omit the call-number `Text` entirely: an empty
+    /// `Text` is still a laid-out subview, so leaving it in would let the
+    /// `HStack`'s spacing indent the format capsule out of line with the
+    /// title/artist above it.
     @Test func toleratesMissingCallNumberLegs() {
         let entry = BinEntry(
             albumId: 7,
@@ -89,6 +95,7 @@ struct BinEntryDetailFallbackTests {
 
         let fallback = entry.detailFallback
 
+        #expect(entry.callNumber.isEmpty)
         #expect(fallback.codeLetters == nil)
         #expect(fallback.callNumber.isEmpty)
     }

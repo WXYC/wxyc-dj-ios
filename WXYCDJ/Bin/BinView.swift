@@ -104,9 +104,15 @@ struct BinRow: View {
             Text(entry.albumTitle).bold().lineLimit(1)
             Text(entry.artistName).foregroundStyle(.secondary).lineLimit(1)
             HStack(spacing: 6) {
-                Text(entry.callNumber)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
+                // An unfiled add or a V/A compilation has no call-number legs,
+                // so `callNumber` is "" — an empty Text is still a laid-out
+                // subview, and the HStack's spacing would indent the capsule
+                // 6pt out of line with the title/artist above. Omit it instead.
+                if !entry.callNumber.isEmpty {
+                    Text(entry.callNumber)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
                 if let format = entry.formatName, !format.isEmpty {
                     FormatCapsule(format: format)
                 }
