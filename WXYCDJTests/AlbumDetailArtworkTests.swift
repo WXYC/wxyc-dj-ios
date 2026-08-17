@@ -10,6 +10,16 @@
 //  its forms: LML landing first, and `/library/info` landing with no
 //  `artwork_url` and knocking the search-row cover out of the running.
 //
+//  Also pins issue #86: a catalog `artwork_url` that fails to *load* (dead
+//  pre-signed CDN URL, purged asset) falls through to the next source
+//  instead of leaving the header blank, via the `failedURLs` parameter on
+//  `preferredArtworkURL`. The load-bearing distinction is "recorded as
+//  failed" vs. "not yet recorded" — `preferredArtworkURL` never sees a
+//  loading/pending state, so a source that is merely still fetching is
+//  indistinguishable here from one that already succeeded, and the #83
+//  invariant (catalog art is never displaced by LML while genuinely
+//  in-flight) holds by construction.
+//
 //  Created by Jake on 6/23/26.
 //  Copyright © 2026 WXYC. All rights reserved.
 //
@@ -193,6 +203,112 @@ struct AlbumDetailArtworkTests {
             fallback: nil,
             cloneRow: nil,
             metadata: nil
+        )
+        #expect(url == nil)
+    }
+
+    // MARK: Issue #86 — a dead catalog URL falls through instead of blanking
+
+    @Test("a failed search-row URL is skipped in favor of the on-device clone")
+    func failedFallbackFallsThroughToClone() throws {
+        // The search row's cover is dead (expired CDN signature); the clone
+        // still resolves, so it must win — precedence among catalog sources
+        // is preserved, not abandoned in favor of LML the moment one leg fails.
+        let url = AlbumDetailView.preferredArtworkURL(
+            info: nil,
+            fallback: Self.dogaSearchRow(),
+            cloneRow: Self.dogaCloneRow(),
+            metadata: try Self.labelLogoMetadata(),
+            failedURLs: [Self.searchArt]
+        )
+        #expect(url == Self.cloneArt)
+    }
+
+    @Test("every catalog source failing falls through to LML as the last resort")
+    func allCatalogSourcesFailedFallsThroughToMetadata() throws {
+        let url = AlbumDetailView.preferredArtworkURL(
+            info: nil,
+            fallback: Self.dogaSearchRow(),
+            cloneRow: Self.dogaCloneRow(),
+            metadata: try Self.labelLogoMetadata(),
+            failedURLs: [Self.searchArt, Self.cloneArt]
+        )
+        #expect(url == Self.lmlArt)
+    }
+
+    @Test("a failed info URL falls through to the search-row fallback, not straight to LML")
+    func failedInfoFallsThroughToFallbackNotMetadata() throws {
+        // Confirms the fallthrough only skips the specific failed URL and
+        // keeps walking the existing precedence chain — it doesn't collapse
+        // straight to LML the instant the *first* candidate fails.
+        let url = AlbumDetailView.preferredArtworkURL(
+            info: try Self.dogaInfo(artworkURL: Self.infoArt),
+            fallback: Self.dogaSearchRow(),
+            cloneRow: nil,
+            metadata: try Self.labelLogoMetadata(),
+            failedURLs: [Self.infoArt]
+        )
+        #expect(url == Self.searchArt)
+    }
+
+    @Test("a failure is keyed by URL: marking one occurrence skips every source sharing it")
+    func failureIsKeyedByURLNotByBool() throws {
+        // The search row and the clone both source `artwork_url` from the
+        // same underlying column, so a dead URL commonly appears in both. A
+        // single failure record for that URL must retire it everywhere it
+        // appears in one step, landing straight on LML rather than needing a
+        // second AsyncImage attempt against the identical dead URL.
+        let url = AlbumDetailView.preferredArtworkURL(
+            info: nil,
+            fallback: Self.dogaSearchRow(artworkURL: Self.searchArt),
+            cloneRow: Self.dogaCloneRow(artworkURL: Self.searchArt),
+            metadata: try Self.labelLogoMetadata(),
+            failedURLs: [Self.searchArt]
+        )
+        #expect(url == Self.lmlArt)
+    }
+
+    @Test("a failed clone URL cannot mask a working info URL")
+    func failedCloneCannotMaskWorkingInfo() throws {
+        // If `/library/info` ever starts projecting `artwork_url`, a stale
+        // failure recorded against the *clone's* URL must never suppress a
+        // healthy `info` URL — failures are scoped to the specific URL that
+        // failed, not to "the catalog" as a whole.
+        let url = AlbumDetailView.preferredArtworkURL(
+            info: try Self.dogaInfo(artworkURL: Self.infoArt),
+            fallback: nil,
+            cloneRow: Self.dogaCloneRow(),
+            metadata: try Self.labelLogoMetadata(),
+            failedURLs: [Self.cloneArt]
+        )
+        #expect(url == Self.infoArt)
+    }
+
+    @Test("an empty failure set (still loading) never displaces catalog art with LML")
+    func emptyFailureSetKeepsCatalogArt() throws {
+        // The #83 invariant, restated for the fallthrough mechanism: nothing
+        // has been recorded as failed yet (the image may simply still be
+        // loading), so the catalog source must still win over LML. A
+        // fallthrough keyed on "not yet succeeded" rather than "recorded as
+        // failed" would reintroduce the #83 cover-swap bug.
+        let url = AlbumDetailView.preferredArtworkURL(
+            info: nil,
+            fallback: Self.dogaSearchRow(),
+            cloneRow: Self.dogaCloneRow(),
+            metadata: try Self.labelLogoMetadata(),
+            failedURLs: []
+        )
+        #expect(url == Self.searchArt)
+    }
+
+    @Test("every source failed yields nil, not LML")
+    func everySourceFailedYieldsNil() throws {
+        let url = AlbumDetailView.preferredArtworkURL(
+            info: try Self.dogaInfo(artworkURL: Self.infoArt),
+            fallback: Self.dogaSearchRow(),
+            cloneRow: Self.dogaCloneRow(),
+            metadata: try Self.labelLogoMetadata(),
+            failedURLs: [Self.infoArt, Self.searchArt, Self.cloneArt, Self.lmlArt]
         )
         #expect(url == nil)
     }
