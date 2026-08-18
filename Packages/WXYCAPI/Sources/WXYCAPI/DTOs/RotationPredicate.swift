@@ -45,6 +45,7 @@ enum RotationPredicate {
     /// equivalent to a chronological one only for that fixed-width form, which
     /// is why this stays `internal` and callers reach it through their type's
     /// public `isInRotation(asOf:timeZone:)`.
+    ///
     /// A `killDay` the compare cannot read is treated as **expired**, not as "no
     /// expiry". Both row types hold this value as the raw wire string, so a
     /// malformed one reaches here intact rather than being rejected at decode —
@@ -93,10 +94,15 @@ enum RotationPredicate {
     /// ``JSONCoders`` uses for the inverse parse — so it stays cheap if called
     /// per row. Batch callers compute the day once and reuse it across rows.
     ///
-    /// Also the renderer for a rotation date that arrives already *parsed*:
-    /// `/library/info` ships `kill_date` as a date the decoder turns into a
-    /// midnight-GMT `Date`, so ``AlbumInfo/Rotation`` passes it back through
-    /// here with `timeZone: .gmt` to recover the wire day before comparing.
+    /// This converts *the client's clock* to a day, and nothing else. Both row
+    /// types hold their kill date as the raw wire string and hand it to
+    /// ``isInRotation(bin:killDay:today:)`` untouched, so no caller passes a
+    /// rotation date through here — there is no `Date` on that side to convert.
+    /// Do not reintroduce one: turning the wire value into a `Date` and
+    /// rendering it back means choosing a zone, and any choice is wrong for some
+    /// input (GMT suits a bare `"2026-06-23"` but shifts an offset-bearing
+    /// timestamp to the following day), which would make the online path
+    /// disagree with the cloned one about the same album.
     static func localDay(_ now: Date = Date(), timeZone: TimeZone = .current) -> String {
         now.formatted(
             Date.ISO8601FormatStyle(timeZone: timeZone)
