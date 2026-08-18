@@ -109,11 +109,11 @@ struct AlbumInfoRotationTests {
         #expect(rotation.isInRotation(asOf: justAfterMidnightUTC, timeZone: TimeZone(identifier: "America/New_York")!))
     }
 
-    // MARK: - Decode leniency asymmetry between the two dates
+    // MARK: - Unreadable dates cost the date, never the screen
 
-    @Test func unparseableAddDateCostsTheDateNotTheScreen() throws {
-        // add_date is decorative, so a malformed value decodes to nil and the
-        // album still renders — the failure class issue #93 exists to close,
+    @Test func emptyAddDateCostsTheDateNotTheScreen() throws {
+        // add_date is decorative, so a dirty empty value normalizes to nil and
+        // the album still renders — the failure class issue #93 exists to close,
         // applied to the sibling field.
         let raw = """
             {
@@ -129,21 +129,43 @@ struct AlbumInfoRotationTests {
         #expect(info.rotation?.isInRotation(localDay: "2026-06-22") == true)
     }
 
-    @Test func unparseableKillDateFailsLoudlyRatherThanOpen() throws {
-        // The deliberate asymmetry: `try?` on kill_date would decode to nil,
-        // read as "no expiry", and leave a dead record in rotation forever. A
-        // throw is the safer failure here, so it stays strict.
+    @Test(arguments: ["not-a-date", "", "2026-6-2", "20260622", "twenty-twenty-six"])
+    func unreadableKillDateFailsClosedRatherThanOpen(killDate: String) throws {
+        // Now that kill_date is held raw rather than decoded, an unreadable value
+        // no longer throws — so the safety property the old strict decode bought
+        // has to be enforced where the comparison happens. A bare `killDay > today`
+        // would read "not-a-date" as in rotation forever (it sorts above every
+        // real day), which is the silently-wrong shelf the rule exists to prevent.
+        // Unreadable therefore means expired.
         let raw = """
             {
               "id": 401,
               "album_title": "Edits",
               "artist_name": "Chuquimamani-Condori",
-              "rotation": { "id": 12, "rotation_bin": "H", "kill_date": "not-a-date" }
+              "rotation": { "id": 12, "rotation_bin": "H", "kill_date": "\(killDate)" }
             }
             """
-        #expect(throws: DecodingError.self) {
-            try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
-        }
+        let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
+        // The album still decodes — losing rotation must never cost the screen.
+        #expect(info.albumTitle == "Edits")
+        #expect(info.rotation?.isInRotation(localDay: "2026-06-22") == false)
+    }
+
+    @Test func killDateAsAFullTimestampStillCompares() throws {
+        // The prefix rule: a date-time is comparable against a bare day without
+        // being reinterpreted through a zone, so a projection that someday ships
+        // timestamps doesn't silently retire every record.
+        let raw = """
+            {
+              "id": 401,
+              "album_title": "Edits",
+              "artist_name": "Chuquimamani-Condori",
+              "rotation": { "id": 12, "rotation_bin": "H", "kill_date": "2026-07-01T20:00:00-04:00" }
+            }
+            """
+        let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
+        #expect(info.rotation?.isInRotation(localDay: "2026-06-22") == true)
+        #expect(info.rotation?.isInRotation(localDay: "2026-08-01") == false)
     }
 
     // MARK: - Parity with CatalogRow
