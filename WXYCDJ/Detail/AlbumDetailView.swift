@@ -270,11 +270,12 @@ struct AlbumDetailView: View {
     }
 
     private func rotationSection(_ rotation: AlbumInfo.Rotation) -> some View {
-        // Rotation dates are date-only wire values decoded as midnight GMT.
-        // Formatting with `Calendar.current` / `TimeZone.current` slips to
-        // the previous day on negative-UTC hosts (PT/MT/CT/ET); use the
-        // GMT-anchored style from WXYCAPI so the displayed day matches
-        // the wire day.
+        // Rotation dates are the raw `"YYYY-MM-DD"` wire strings (see
+        // AlbumInfo.Rotation.killDate for why they are not decoded to `Date`),
+        // so they render through the same `dateOnly(fromISOString:)` helper
+        // `offlineRotationSection` uses for the cloned row — GMT-anchored, and
+        // passing the value through verbatim if it somehow isn't a calendar
+        // date. Both sections now make character-for-character the same call.
         Section("Rotation") {
             HStack {
                 // A bin outside the H/M/L/S cohorts (issue #93's forward-compat
@@ -296,12 +297,12 @@ struct AlbumDetailView: View {
                 // nothing in the contract guarantees add_date on a present
                 // rotation object.
                 if let addDate = rotation.addDate {
-                    Text(addDate.formatted(WXYCDateFormatting.dateOnlyFormatStyle))
+                    Text(WXYCDateFormatting.dateOnly(fromISOString: addDate))
                         .foregroundStyle(.secondary)
                 }
             }
             if let kill = rotation.killDate {
-                metadataRow("Kill date", value: kill.formatted(WXYCDateFormatting.dateOnlyFormatStyle))
+                metadataRow("Kill date", value: WXYCDateFormatting.dateOnly(fromISOString: kill))
             }
         }
     }

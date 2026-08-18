@@ -76,28 +76,24 @@ struct DTODecodingTests {
         #expect(info.rotation?.rotationBin == "H")
         #expect(info.rotation?.rotationCohort == .heavy)
         #expect(info.rotation?.killDate == nil)
-        // Rotation date arrives as a date-only YYYY-MM-DD string; the
-        // custom JSONDecoder strategy must parse it as a Date.
-        let components = Calendar(identifier: .gregorian).dateComponents(
-            in: TimeZone(identifier: "UTC")!,
-            from: try #require(info.rotation?.addDate)
-        )
-        #expect(components.year == 2025)
-        #expect(components.month == 10)
-        #expect(components.day == 15)
+        // Both rotation dates are held as the raw `"YYYY-MM-DD"` the wire
+        // carries, never decoded to `Date` — see AlbumInfo.Rotation.killDate for
+        // why. Nothing reinterprets them, so the value is byte-identical to the
+        // fixture.
+        #expect(info.rotation?.addDate == "2025-10-15")
     }
 
     @Test func rotationDateRendersInGMTRegardlessOfHostTimeZone() throws {
-        // Regression: `JSONCoders.decoder` parses date-only fields like
-        // `"2025-10-15"` as midnight GMT. If the render side uses
-        // Calendar.current / TimeZone.current it slips to the previous day
-        // on any negative-UTC host (PT/MT/CT/ET). Pin the render path to
-        // GMT via `WXYCDateFormatting.dateOnlyFormatStyle`.
+        // Regression: `dateOnly(fromISOString:)` parses a date-only value as
+        // midnight GMT before formatting it. If either leg used
+        // Calendar.current / TimeZone.current it would slip to the previous day
+        // on any negative-UTC host (PT/MT/CT/ET). The rotation dates are now
+        // raw wire strings, so this pins the render path that reads them.
         let data = Data(Fixtures.albumInfoJSON.utf8)
         let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: data)
-        let date = try #require(info.rotation?.addDate)
+        let addDate = try #require(info.rotation?.addDate)
 
-        let rendered = date.formatted(WXYCDateFormatting.dateOnlyFormatStyle)
+        let rendered = WXYCDateFormatting.dateOnly(fromISOString: addDate)
         // The fixture uses "2025-10-15". The day component must survive
         // through the render layer, no matter the host time zone.
         #expect(rendered.contains("15"))
@@ -105,9 +101,38 @@ struct DTODecodingTests {
 
         // Pin against the exact en_US_POSIX abbreviated rendering so a
         // future locale/calendar drift would surface here.
-        let posix = WXYCDateFormatting.dateOnlyFormatStyle
-            .locale(Locale(identifier: "en_US_POSIX"))
-        #expect(date.formatted(posix) == "Oct 15, 2025")
+        #expect(
+            WXYCDateFormatting.dateOnly(fromISOString: addDate, locale: Locale(identifier: "en_US_POSIX"))
+                == "Oct 15, 2025"
+        )
+    }
+
+    @Test func rotationDatesAreHeldVerbatimRatherThanReinterpreted() throws {
+        // The reason the two rotation dates are raw strings rather than `Date`s
+        // (see AlbumInfo.Rotation.killDate): a `Date` is an instant, not a
+        // calendar day, so recovering the wire day means picking a zone to
+        // render it back through — and GMT, right for a bare "YYYY-MM-DD", is
+        // off by one for an offset-bearing timestamp that crosses midnight UTC.
+        // Holding the string sidesteps the question, so the online path compares
+        // exactly what the server wrote, as the cloned CatalogRow path does.
+        let raw = """
+            {
+              "id": 402,
+              "album_title": "On Your Own Love Again",
+              "artist_name": "Jessica Pratt",
+              "rotation": {
+                "id": 14,
+                "rotation_bin": "L",
+                "add_date": "2026-06-23T20:00:00-04:00",
+                "kill_date": "2026-06-23T20:00:00-04:00"
+              }
+            }
+            """
+        let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
+        let rotation = try #require(info.rotation)
+        // Untouched — not shifted into GMT, where this instant lands on the 24th.
+        #expect(rotation.addDate == "2026-06-23T20:00:00-04:00")
+        #expect(rotation.killDate == "2026-06-23T20:00:00-04:00")
     }
 
     @Test func decodesAlbumSearchResultWithNullLabel() throws {

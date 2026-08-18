@@ -45,10 +45,45 @@ enum RotationPredicate {
     /// equivalent to a chronological one only for that fixed-width form, which
     /// is why this stays `internal` and callers reach it through their type's
     /// public `isInRotation(asOf:timeZone:)`.
+    /// A `killDay` the compare cannot read is treated as **expired**, not as "no
+    /// expiry". Both row types hold this value as the raw wire string, so a
+    /// malformed one reaches here intact rather than being rejected at decode —
+    /// and a bare `killDay > today` on garbage is worse than useless: `"not-a-date"`
+    /// sorts above every real `"YYYY-MM-DD"`, so a corrupt value would read as in
+    /// rotation *forever*, which is precisely the silently-wrong shelf this rule
+    /// is supposed to prevent. Failing closed costs at most a badge on a record
+    /// whose expiry is unreadable; failing open leaves dead records on the shelf
+    /// indefinitely with nothing to surface it.
     static func isInRotation(bin: String?, killDay: String?, today: String) -> Bool {
         guard bin != nil else { return false }
         guard let killDay else { return true }
-        return killDay > today
+        guard let day = calendarDay(from: killDay) else { return false }
+        return day > today
+    }
+
+    /// The leading `"YYYY-MM-DD"` of an ISO-8601 date or date-time, or `nil` when
+    /// the value isn't one.
+    ///
+    /// Taking the prefix rather than demanding an exact-width match is what keeps
+    /// a full timestamp (`"2026-06-23T20:00:00-04:00"`) comparable against a bare
+    /// day without either reinterpreting it through a time zone or failing closed
+    /// on a legitimately-in-rotation record — the server has never sent that shape
+    /// for this column, but this type is a hedge against a projection that doesn't
+    /// exist yet, so the wire shape is the thing not to assume. Digits are checked
+    /// against ASCII `0`-`9` specifically: `Character.isNumber` also accepts other
+    /// Unicode digit forms, which would pass the shape check and then sort
+    /// arbitrarily against an ASCII day.
+    static func calendarDay(from raw: String) -> String? {
+        guard raw.count >= 10 else { return nil }
+        let day = Array(raw.prefix(10))
+        for (offset, character) in day.enumerated() {
+            if offset == 4 || offset == 7 {
+                guard character == "-" else { return nil }
+            } else {
+                guard ("0"..."9").contains(character) else { return nil }
+            }
+        }
+        return String(day)
     }
 
     /// The calendar day of `now` in `timeZone` as a zero-padded `"YYYY-MM-DD"`
