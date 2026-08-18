@@ -107,6 +107,42 @@ struct CatalogRowTests {
         #expect(row.isInRotation(localDay: "2026-06-22") == false)
     }
 
+    @Test(arguments: ["not-a-date", "", "2026-6-2", "20260622", "twenty-twenty-six"])
+    func unreadableKillDateFailsClosedRatherThanOpen(killDate: String) throws {
+        // The catalog export is the ONLY rotation source that runs in production
+        // today — `/library/info` projects no rotation columns at all — so this
+        // is the path where a wrong answer actually reaches a DJ's shelf. The
+        // behavior was previously pinned only on the `AlbumInfo.Rotation` side,
+        // which meant `calendarDay` could be deleted or weakened with CI fully
+        // green while dead records silently returned to every shelf.
+        //
+        // `rotation_kill_date` is held raw (a `::text` cast server-side), so an
+        // unreadable value is not rejected at decode. A bare `killDay > today`
+        // would then read "not-a-date" as in rotation forever — it sorts above
+        // every real "YYYY-MM-DD". Unreadable therefore means expired.
+        let raw = """
+            {"id":1,"artist_name":"Jessica Pratt","album_title":"On Your Own Love Again",\
+            "code_letters":"PRA","code_number":1,"code_artist_number":1,"genre_name":"Rock",\
+            "format_name":"LP","rotation_bin":"H","rotation_kill_date":"\(killDate)"}
+            """
+        let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
+        // The row still decodes — losing rotation must never cost the whole row,
+        // which would drop the album from the offline clone entirely.
+        #expect(row.albumTitle == "On Your Own Love Again")
+        #expect(row.rotationBin == "H")
+        #expect(row.isInRotation(localDay: "2026-06-22") == false)
+    }
+
+    @Test func killDateAsAFullTimestampStillCompares() throws {
+        // The prefix rule, on the live path: a date-time stays comparable against
+        // a bare day, so a server that someday widens this column doesn't
+        // silently retire every rotation record at once.
+        let raw = #"{"id":1,"artist_name":"y","album_title":"x","code_letters":"X","code_number":1,"code_artist_number":1,"genre_name":"Rock","format_name":"LP","rotation_bin":"H","rotation_kill_date":"2026-07-01T20:00:00-04:00"}"#
+        let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
+        #expect(row.isInRotation(localDay: "2026-06-22"))
+        #expect(row.isInRotation(localDay: "2026-08-01") == false)
+    }
+
     @Test func decodesNullRotationFields() throws {
         // An album that has never been in rotation: both fields null.
         let raw = #"{"id":1,"artist_name":"y","album_title":"x","code_letters":"X","code_number":1,"code_artist_number":1,"genre_name":"Rock","format_name":"LP","rotation_bin":null,"rotation_kill_date":null}"#

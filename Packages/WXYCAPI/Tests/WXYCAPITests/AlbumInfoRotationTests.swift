@@ -32,23 +32,24 @@ struct AlbumInfoRotationTests {
     }
 
     /// The `CatalogRow` carrying the same rotation state, for the parity test.
-    private func makeRow(bin: String?, killDate: String?) -> CatalogRow {
-        CatalogRow(
-            id: 100,
-            artistName: "Juana Molina",
-            albumTitle: "DOGA",
-            codeLetters: "MOL",
-            codeNumber: 12,
-            codeArtistNumber: 1,
-            label: "Sonamos",
-            genreName: "Rock",
-            formatName: "CD",
-            onStreaming: true,
-            plays: 34,
-            artworkURL: nil,
-            rotationBin: bin,
-            rotationKillDate: killDate
-        )
+    ///
+    /// Built through its **decoder**, not the memberwise init, for the same
+    /// reason `makeRotation` is: the parity claim is that the two types agree
+    /// end-to-end on a wire value, and each normalizes on decode. Constructing
+    /// this one memberwise forced the caller to hand-apply `"" -> nil` first,
+    /// which made the test assert parity against a normalization *the test* had
+    /// performed — it would have stayed green if `CatalogRow`'s decoder stopped
+    /// normalizing at all.
+    private func makeRow(bin: String?, killDate: String?) throws -> CatalogRow {
+        var fields = [
+            #""id": 100"#,
+            #""artist_name": "Juana Molina""#,
+            #""album_title": "DOGA""#,
+        ]
+        if let bin { fields.append(#""rotation_bin": "\#(bin)""#) }
+        if let killDate { fields.append(#""rotation_kill_date": "\#(killDate)""#) }
+        let raw = "{ \(fields.joined(separator: ", ")) }"
+        return try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
     }
 
     // MARK: - The bin reaching the predicate
@@ -70,15 +71,15 @@ struct AlbumInfoRotationTests {
         #expect(try makeRotation(bin: "", killDate: nil).isInRotation(localDay: "2026-06-22") == false)
     }
 
-    // MARK: - The kill date, which is a parsed Date here rather than a raw string
+    // MARK: - The kill date, held raw and compared against the client's day
 
-    @Test func killDateComparesOnItsGMTWireDay() throws {
-        // JSONCoders decodes a date-only value to midnight GMT. Rendering it
-        // back through anything but GMT would slip it to the previous day on
-        // every negative-UTC host (PT/MT/CT/ET) and retire a record a day early
-        // — the same drift WXYCDateFormatting pins for the render path. A kill
+    @Test func killDateIsNotRetiredEarlyOnANegativeUTCHost() throws {
+        // Only one side of the compare is derived from a clock now: the kill date
+        // is the verbatim wire string, and `today` comes from the device. A kill
         // date of the 23rd must still be in rotation on the 22nd whatever the
-        // device zone is.
+        // device zone is — this is the no-early-retirement direction, distinct
+        // from `isInRotationAsOfRespectsTheDeviceTimeZone` below, which pins the
+        // day boundary itself at an instant where UTC and the device disagree.
         var utc = Calendar(identifier: .gregorian)
         utc.timeZone = TimeZone(identifier: "UTC")!
         let eveningUTC = utc.date(from: DateComponents(year: 2026, month: 6, day: 22, hour: 19))!
@@ -86,15 +87,17 @@ struct AlbumInfoRotationTests {
         #expect(rotation.isInRotation(asOf: eveningUTC, timeZone: TimeZone(identifier: "America/Los_Angeles")!))
     }
 
-    @Test func killDateRendersZeroPaddedSoTheCompareStaysChronological() throws {
-        // The lexicographic compare is only equivalent to a chronological one
-        // while both sides are fixed-width, and this type's side is *rendered*
-        // rather than taken verbatim off the wire — so padding is a live
-        // property of the round-trip, not a given. A sub-1000 kill year is the
-        // case that catches a regression: padded, "0999-01-01" < "2026-06-22"
-        // (out of rotation); unpadded, "999-01-01" > "2026-06-22" would flip it
-        // to in-rotation.
+    @Test func aZeroPaddedLowKillYearStaysChronological() throws {
+        // The lexicographic compare is equivalent to a chronological one only
+        // while both sides are fixed-width. The kill date is now taken verbatim,
+        // so padding is the server's to get right rather than something this
+        // type could regress — but `localDay` still *renders* the other side, and
+        // `calendarDay` still has to accept a padded low year rather than
+        // rejecting it as malformed. Padded, "0999-01-01" < "2026-06-22" (out of
+        // rotation); an unpadded "999-01-01" would sort above and flip it to in.
         #expect(try makeRotation(bin: "H", killDate: "0999-01-01").isInRotation(localDay: "2026-06-22") == false)
+        // The shape check must not mistake a valid low year for garbage.
+        #expect(RotationPredicate.calendarDay(from: "0999-01-01") == "0999-01-01")
     }
 
     @Test func isInRotationAsOfRespectsTheDeviceTimeZone() throws {
@@ -180,15 +183,21 @@ struct AlbumInfoRotationTests {
         (nil as String?, nil as String?),
         (nil, "2027-01-01"),
         ("", nil),
+        // Unreadable kill dates — the behavior new in #95, and the case the
+        // matrix previously omitted. Both types must fail closed identically.
+        ("H", "not-a-date"),
+        ("H", ""),
+        ("H", "2026-6-2"),
     ])
     func agreesWithCatalogRowOnTheSameRotationState(bin: String?, killDate: String?) throws {
-        // Both types now delegate to RotationPredicate, so this can no longer
-        // fail by the rule diverging — it guards the *plumbing* instead: that
-        // this type feeds the shared rule the same bin and the same day
-        // CatalogRow does, across the raw, empty, and unrecognized bins and both
-        // sides of the kill-date boundary.
+        // Both types delegate to RotationPredicate, so this can no longer fail by
+        // the rule diverging — it guards the *plumbing* instead: that each type
+        // feeds the shared rule the same bin and the same day, across the raw,
+        // empty, and unrecognized bins, both sides of the kill-date boundary, and
+        // a kill date neither can read. Both sides are built through their own
+        // decoders so each applies its own normalization rather than the test's.
         let rotation = try makeRotation(bin: bin, killDate: killDate)
-        let row = makeRow(bin: bin?.isEmpty == true ? nil : bin, killDate: killDate)
+        let row = try makeRow(bin: bin, killDate: killDate)
         #expect(rotation.isInRotation(localDay: "2026-06-22") == row.isInRotation(localDay: "2026-06-22"))
     }
 }
