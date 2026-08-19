@@ -576,6 +576,76 @@ struct LoginViewModelTests {
         await viewModel.resendCode()
         #expect(spy.reportCount == 1)  // unchanged -- rate limiting is not a defect
     }
+
+    // MARK: - Issue #106 review Fix 6: the pending-JWT window
+
+    /// A transient `GET /auth/token` failure right after a successful
+    /// password sign-in leaves `auth.state` in the issue-#53 pending window
+    /// rather than `lastError` -- `reportIfDefect()` alone has nothing to
+    /// read, so this outcome would otherwise be reported nowhere, silently
+    /// contradicting the PR's own capture-site table.
+    @Test func submitReportsAPendingJWTWindowAfterATransientTokenFailure() async throws {
+        let session = StubRequestSession()
+        let auth = makeAuth(session: session)
+        let spy = SpyErrorReporter()
+        let viewModel = LoginViewModel(auth: auth, reporter: spy)
+        viewModel.identifier = "juana"
+        viewModel.password = "hunter2"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, headers: Self.signInSuccessHeaders))
+        session.enqueue(StubRequestSession.Stub(statusCode: 503, body: Data(#"{"error":"boom"}"#.utf8)))
+
+        await viewModel.submit()
+
+        #expect(auth.state == .signedIn(payload: nil))
+        #expect(auth.lastError == nil)  // the pending window is not an AuthError
+        #expect(spy.reportCount == 1)
+        #expect(spy.reports.first?.context == "LoginViewModel.pendingJWT")
+    }
+
+    /// Same shape, over the code-sign-in leg.
+    @Test func submitCodeReportsAPendingJWTWindowAfterATransientTokenFailure() async throws {
+        let session = StubRequestSession()
+        let auth = makeAuth(session: session)
+        let spy = SpyErrorReporter()
+        let viewModel = LoginViewModel(auth: auth, reporter: spy)
+        viewModel.identifier = "juana@wxyc.org"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success":true}"#.utf8)))
+        await viewModel.requestCode()
+        viewModel.code = "123456"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, headers: Self.signInSuccessHeaders))
+        session.enqueue(StubRequestSession.Stub(statusCode: 503, body: Data(#"{"error":"boom"}"#.utf8)))
+
+        await viewModel.submitCode()
+
+        #expect(auth.state == .signedIn(payload: nil))
+        #expect(auth.lastError == nil)
+        #expect(spy.reportCount == 1)
+        #expect(spy.reports.first?.context == "LoginViewModel.pendingJWT")
+    }
+
+    /// A fully successful sign-in (both legs land) reports nothing -- the
+    /// pending-window report must not fire on the ordinary path.
+    @Test func submitDoesNotReportAPendingJWTWindowOnAFullSuccess() async throws {
+        let session = StubRequestSession()
+        let auth = makeAuth(session: session)
+        let spy = SpyErrorReporter()
+        let viewModel = LoginViewModel(auth: auth, reporter: spy)
+        viewModel.identifier = "juana"
+        viewModel.password = "hunter2"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, headers: Self.signInSuccessHeaders))
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+
+        await viewModel.submit()
+
+        #expect(spy.reportCount == 0)
+    }
 }
 
 /// Pins `LoginViewModel.shouldReport(_:)` — the total switch over every
