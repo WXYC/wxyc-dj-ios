@@ -17,7 +17,11 @@ import WXYCAPI
 @MainActor
 @Observable
 final class LoginViewModel {
-    var username: String = ""
+    /// The DJ's login identifier: a username **or** an email address, matching
+    /// the single field dj.wxyc.org offers. `AuthService` routes the two to
+    /// different better-auth endpoints (issue #97); nothing here needs to know
+    /// which, beyond handing over a trimmed value.
+    var identifier: String = ""
     var password: String = ""
 
     private let auth: AuthService
@@ -27,16 +31,16 @@ final class LoginViewModel {
     }
 
     var canSubmit: Bool {
-        !username.isEmpty && !password.isEmpty && auth.state != .signingIn
+        !identifier.isEmpty && !password.isEmpty && auth.state != .signingIn
     }
 
     func submit() async {
         guard canSubmit else { return }
-        // Trim whitespace on username only — keyboards (and password managers)
-        // routinely emit a trailing space on autofill and the server would
-        // 401. Password intentionally untrimmed; whitespace in a password is
-        // significant.
-        let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        await auth.signIn(username: trimmed, password: password)
+        // Trim whitespace on the identifier only — keyboards (and password
+        // managers) routinely emit a trailing space on autofill and the server
+        // would 401. Password intentionally untrimmed; whitespace in a password
+        // is significant.
+        let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        await auth.signIn(identifier: trimmed, password: password)
     }
 }

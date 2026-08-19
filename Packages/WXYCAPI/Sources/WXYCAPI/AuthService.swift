@@ -2,11 +2,13 @@
 //  AuthService.swift
 //  WXYCAPI
 //
-//  Owns the better-auth session lifecycle for a single signed-in DJ: takes
-//  username + password, calls /auth/sign-in/username (with the bearer
-//  plugin's `set-auth-token` header capture), exchanges the session for a
-//  short-lived JWT via /auth/token, and refreshes the JWT before it expires.
-//  All state is gated to the MainActor so SwiftUI views can observe directly.
+//  Owns the better-auth session lifecycle for a single signed-in DJ: takes an
+//  identifier + password, calls whichever sign-in route the identifier belongs
+//  to (`SignInIdentifier` picks /auth/sign-in/email or /auth/sign-in/username,
+//  issue #97) with the bearer plugin's `set-auth-token` header capture,
+//  exchanges the session for a short-lived JWT via /auth/token, and refreshes
+//  the JWT before it expires. All state is gated to the MainActor so SwiftUI
+//  views can observe directly.
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -24,7 +26,7 @@ public enum AuthError: Error, Sendable, Equatable {
 
     public var localizedMessage: String {
         switch self {
-        case .invalidCredentials: "Invalid username or password."
+        case .invalidCredentials: "Incorrect username or email, or password."
         case .network(let m): "Network error: \(m)"
         case .missingSessionToken: "Sign-in did not return a session token."
         case .serverFailure(let s, let m): "Server error (\(s))\(m.map { ": \($0)" } ?? "")."
@@ -173,7 +175,14 @@ public final class AuthService {
         }
     }
 
-    public func signIn(username: String, password: String) async {
+    /// Sign a DJ in with the credentials they use on dj.wxyc.org.
+    ///
+    /// - Parameters:
+    ///   - identifier: A username **or** an email address, as the one login
+    ///     field accepts — ``SignInIdentifier`` routes it to the better-auth
+    ///     endpoint that can accept it (issue #97). Expected pre-trimmed.
+    ///   - password: Passed through verbatim; whitespace is significant.
+    public func signIn(identifier: String, password: String) async {
         state = .signingIn
         lastError = nil
 
@@ -189,7 +198,7 @@ public final class AuthService {
         // no session to keep, so roll back and stop before the JWT exchange.
         let token: String
         do {
-            token = try await performSignIn(username: username, password: password)
+            token = try await performSignIn(identifier: identifier, password: password)
             try storage.save(token, for: .sessionToken)
             sessionToken = token
             sessionEpoch &+= 1  // a new generation, so a stale refresh of any prior session can't clobber it (issue #66)
@@ -339,13 +348,19 @@ public final class AuthService {
         }
     }
 
-    private func performSignIn(username: String, password: String) async throws -> String {
-        let url = configuration.authBaseURL.appending(path: "sign-in/username")
+    private func performSignIn(identifier rawIdentifier: String, password: String) async throws -> String {
+        // One field, two better-auth routes: an email posted to the username
+        // route is rejected on shape alone (422 "Username is invalid") before
+        // any credential check, so the identifier decides both the path and the
+        // body key. Everything after this — the `set-auth-token` capture, the
+        // JWT exchange, the issue-#53/#66 state machine — is route-agnostic.
+        let identifier = SignInIdentifier(rawIdentifier)
+        let url = configuration.authBaseURL.appending(path: identifier.path)
         var request = URLRequest(url: url, timeoutInterval: configuration.timeout)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.httpBody = try JSONCoders.encoder.encode(SignInRequest(username: username, password: password))
+        request.httpBody = try identifier.encodedBody(password: password)
 
         let (data, response) = try await send(request)
         guard let http = response as? HTTPURLResponse else {

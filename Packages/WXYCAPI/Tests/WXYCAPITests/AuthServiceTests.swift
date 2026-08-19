@@ -56,7 +56,7 @@ struct AuthServiceTests {
             body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
         ))
 
-        await service.signIn(username: "dj", password: "pw")
+        await service.signIn(identifier: "dj", password: "pw")
 
         guard case let .signedIn(payload) = service.state else {
             Issue.record("expected signedIn, got \(service.state)")
@@ -84,7 +84,7 @@ struct AuthServiceTests {
             statusCode: 200,
             body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
         ))
-        await service.signIn(username: "dj", password: "pw")
+        await service.signIn(identifier: "dj", password: "pw")
         #expect(service.isSignedIn == true)  // .signedIn
 
         await service.signOut()
@@ -111,10 +111,98 @@ struct AuthServiceTests {
             body: Data(#"{"message":"nope"}"#.utf8)
         ))
 
-        await service.signIn(username: "dj", password: "wrong")
+        await service.signIn(identifier: "dj", password: "wrong")
 
         #expect(service.state == .signedOut)
         #expect(service.lastError == .invalidCredentials)
+        #expect(try storage.load(.sessionToken) == nil)
+    }
+
+    // MARK: - Identifier routing (issue #97)
+
+    @Test func emailIdentifierSignsInThroughTheEmailRoute() async throws {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-abc"],
+            body: Data("{}".utf8)
+        ))
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+
+        await service.signIn(identifier: "juana@wxyc.org", password: "pw")
+
+        // Before #97 this identifier never got as far as a credential check:
+        // better-auth's username plugin rejected the `@` on shape alone with a
+        // 422, so the DJ saw "Username is invalid" no matter the password.
+        let signInRequest = try #require(session.recordedRequests.first)
+        #expect(signInRequest.url?.path == "/auth/sign-in/email")
+        let body = try #require(signInRequest.httpBody)
+        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: String])
+        #expect(json == ["email": "juana@wxyc.org", "password": "pw"])
+
+        // The rest of the handshake is the shared one: the bearer plugin emits
+        // `set-auth-token` on this route too, so the JWT exchange and the
+        // issue-#53 state machine behave exactly as on the username path.
+        guard case let .signedIn(payload) = service.state else {
+            Issue.record("expected signedIn, got \(service.state)")
+            return
+        }
+        #expect(payload?.role == "dj")
+        #expect(try storage.load(.sessionToken) == "session-abc")
+    }
+
+    @Test func usernameIdentifierKeepsTheUsernameRouteUnchanged() async throws {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-abc"],
+            body: Data("{}".utf8)
+        ))
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+
+        await service.signIn(identifier: "juana", password: "pw")
+
+        // Asserted on the wire, not at the type level: #97's contract is that a
+        // username sign-in is byte-for-byte what it was, so a future refactor
+        // that quietly re-keys this body has to fail here.
+        let signInRequest = try #require(session.recordedRequests.first)
+        #expect(signInRequest.url?.path == "/auth/sign-in/username")
+        let body = try #require(signInRequest.httpBody)
+        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: String])
+        #expect(json == ["username": "juana", "password": "pw"])
+        #expect(service.isSignedIn)
+    }
+
+    @Test func malformedEmailSurfacesTheServerMessage() async throws {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        // What better-auth's /sign-in/email answers for an identifier that
+        // fails its `z.email()` check — the payoff of routing on `@` rather
+        // than on a full email regex, which would have sent this to the
+        // username endpoint for a misleading "Username is invalid" instead.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 400,
+            body: Data(#"{"message":"Invalid email"}"#.utf8)
+        ))
+
+        await service.signIn(identifier: "juana@wxyc", password: "pw")
+
+        #expect(service.state == .signedOut)
+        #expect(service.lastError == .serverFailure(status: 400, message: "Invalid email"))
         #expect(try storage.load(.sessionToken) == nil)
     }
 
@@ -141,7 +229,7 @@ struct AuthServiceTests {
         // Leg 2: JWT exchange returns 401 — dead session, terminal.
         session.enqueue(StubRequestSession.Stub(statusCode: 401, body: Data()))
 
-        await service.signIn(username: "dj", password: "pw")
+        await service.signIn(identifier: "dj", password: "pw")
 
         #expect(service.state == .signedOut)
         #expect(service.lastError == .notSignedIn)
@@ -174,7 +262,7 @@ struct AuthServiceTests {
             body: Data("not json".utf8)
         ))
 
-        await service.signIn(username: "dj", password: "pw")
+        await service.signIn(identifier: "dj", password: "pw")
 
         // Pending: signed in with no payload yet.
         #expect(service.state == .signedIn(payload: nil))
@@ -201,7 +289,7 @@ struct AuthServiceTests {
         ))
         session.enqueue(StubRequestSession.Stub(statusCode: 503, body: Data()))
 
-        await service.signIn(username: "dj", password: "pw")
+        await service.signIn(identifier: "dj", password: "pw")
 
         #expect(service.state == .signedIn(payload: nil))
         #expect(service.lastError == nil)
@@ -224,7 +312,7 @@ struct AuthServiceTests {
             body: Data("{}".utf8)
         ))
 
-        await service.signIn(username: "dj", password: "pw")
+        await service.signIn(identifier: "dj", password: "pw")
 
         #expect(service.state == .signedIn(payload: nil))
         #expect(service.lastError == nil)
@@ -245,7 +333,7 @@ struct AuthServiceTests {
             body: Data("{}".utf8)
         ))
         session.enqueue(StubRequestSession.Stub(statusCode: 503, body: Data()))
-        await service.signIn(username: "dj", password: "pw")
+        await service.signIn(identifier: "dj", password: "pw")
         #expect(service.state == .signedIn(payload: nil))
         let requestsBeforeRetry = session.recordedRequests.count
 
@@ -277,7 +365,7 @@ struct AuthServiceTests {
             body: Data("{}".utf8)
         ))
         session.enqueue(StubRequestSession.Stub(statusCode: 503, body: Data()))
-        await service.signIn(username: "dj", password: "pw")
+        await service.signIn(identifier: "dj", password: "pw")
         #expect(service.state == .signedIn(payload: nil))
 
         // The lazy retry returns 401 — dead session.
@@ -311,7 +399,7 @@ struct AuthServiceTests {
             statusCode: 200,
             body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
         ))
-        await service.signIn(username: "dj", password: "pw")
+        await service.signIn(identifier: "dj", password: "pw")
         guard case let .signedIn(payload) = service.state, payload != nil else {
             Issue.record("expected a payload-bearing signedIn, got \(service.state)")
             return
@@ -346,7 +434,7 @@ struct AuthServiceTests {
             body: Data("{}".utf8)
         ))
         session.enqueue(StubRequestSession.Stub(statusCode: 503, body: Data()))
-        await service.signIn(username: "dj", password: "pw")
+        await service.signIn(identifier: "dj", password: "pw")
         #expect(service.state == .signedIn(payload: nil))
 
         // The lazy retry hits another 503 — still transient, still no demotion.
@@ -399,7 +487,7 @@ struct AuthServiceTests {
         await session.waitForGatedArrival()
 
         // While the stale refresh is suspended, the DJ re-signs-in to session-2.
-        await service.signIn(username: "dj", password: "pw")
+        await service.signIn(identifier: "dj", password: "pw")
         #expect(service.isSignedIn)
         #expect(try storage.load(.sessionToken) == "session-2")
 
@@ -712,7 +800,7 @@ struct AuthServiceTests {
             body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
         ))
         let first = AuthService(configuration: Self.config, storage: storage, session: session)
-        await first.signIn(username: "dj", password: "pw")
+        await first.signIn(identifier: "dj", password: "pw")
         #expect(first.isSignedIn)
         #expect((try storage.load(.payload)) != nil)
         #expect((try storage.load(.lastValidatedAt)) != nil)
@@ -757,7 +845,7 @@ struct AuthServiceTests {
             body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
         ))
         let first = AuthService(configuration: Self.config, storage: storage, session: session)
-        await first.signIn(username: "dj", password: "pw")
+        await first.signIn(identifier: "dj", password: "pw")
 
         // Backdate the anchor just past the window.
         let stale = Date().addingTimeInterval(-(OfflineSessionPolicy.defaultWindow + 60))
@@ -858,7 +946,7 @@ struct AuthServiceTests {
             body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
         ))
         let before = Date().timeIntervalSince1970
-        await service.signIn(username: "dj", password: "pw")
+        await service.signIn(identifier: "dj", password: "pw")
 
         let t1raw = try #require((try storage.load(.lastValidatedAt)))
         let t1 = try #require(TimeInterval(t1raw))
@@ -905,7 +993,7 @@ struct AuthServiceTests {
             body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
         ))
         let service = AuthService(configuration: Self.config, storage: storage, session: session)
-        await service.signIn(username: "dj-a", password: "pw")
+        await service.signIn(identifier: "dj-a", password: "pw")
         #expect((try storage.load(.payload)) != nil)
         #expect((try storage.load(.lastValidatedAt)) != nil)
 
@@ -916,7 +1004,7 @@ struct AuthServiceTests {
             headers: ["set-auth-token": "session-B"],
             body: Data("{}".utf8)
         ))
-        await service.signIn(username: "dj-b", password: "pw")
+        await service.signIn(identifier: "dj-b", password: "pw")
 
         // B's session token is live, but A's anchors must be gone — not lingering.
         #expect(try storage.load(.sessionToken) == "session-B")
@@ -942,7 +1030,7 @@ struct AuthServiceTests {
             statusCode: 200,
             body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
         ))
-        await service.signIn(username: "dj", password: "pw")
+        await service.signIn(identifier: "dj", password: "pw")
         #expect((try storage.load(.jwt)) != nil)
         #expect((try storage.load(.payload)) != nil)
 
@@ -1062,7 +1150,7 @@ struct AuthServiceTests {
         )
 
         session.enqueue(failure: URLError(.notConnectedToInternet))
-        await service.signIn(username: "dj", password: "pw")
+        await service.signIn(identifier: "dj", password: "pw")
 
         #expect(recorder.values == [false])
         #expect(service.state == .signedOut)

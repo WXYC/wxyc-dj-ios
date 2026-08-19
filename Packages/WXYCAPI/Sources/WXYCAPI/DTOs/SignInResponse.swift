@@ -2,13 +2,14 @@
 //  SignInResponse.swift
 //  WXYCAPI
 //
-//  Wire shapes for better-auth's username sign-in and JWT exchange endpoints.
+//  Wire shapes for better-auth's username/email sign-in and JWT exchange
+//  endpoints.
 //
-//  SignInRequest / JWTResponse are deliberately kept hand-authored, not
-//  generated (issue #75): the better-auth sign-in surface
-//  (`/auth/sign-in/username`, `GET /auth/token`) is not in api.yaml at all —
-//  only `/auth/device/*` (5 of api.yaml's 62 paths) is modeled there. There
-//  is no schema to generate from.
+//  SignInRequest / EmailSignInRequest / JWTResponse are deliberately kept
+//  hand-authored, not generated (issue #75): the better-auth sign-in surface
+//  (`/auth/sign-in/username`, `/auth/sign-in/email`, `GET /auth/token`) is not
+//  in api.yaml at all — only `/auth/device/*` (5 of api.yaml's 62 paths) is
+//  modeled there. There is no schema to generate from.
 //
 //  AddToBinRequest is also kept hand-authored, but not for the reason an
 //  earlier version of this comment gave (that api.yaml's `AddToBinRequest`
@@ -37,6 +38,22 @@ public struct SignInRequest: Codable, Sendable {
 
     public init(username: String, password: String) {
         self.username = username
+        self.password = password
+    }
+}
+
+/// Body for better-auth's `/auth/sign-in/email`, the route an email-shaped
+/// identifier takes (issue #97). Structurally a twin of ``SignInRequest`` but
+/// keyed `email`, which is the whole point: better-auth reads `ctx.body.email`
+/// there and `ctx.body.username` on the other route, so one type per route
+/// keeps the body from ever being posted to the endpoint that can't read it.
+/// ``SignInIdentifier`` picks between them.
+public struct EmailSignInRequest: Codable, Sendable {
+    public let email: String
+    public let password: String
+
+    public init(email: String, password: String) {
+        self.email = email
         self.password = password
     }
 }
