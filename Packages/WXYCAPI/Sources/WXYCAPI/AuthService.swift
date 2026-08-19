@@ -20,6 +20,25 @@ import Observation
 public enum AuthError: Error, Sendable, Equatable {
     case invalidCredentials
     case network(message: String)
+    /// A connectivity-class transport failure (no route to the server, DNS,
+    /// timeout, captive portal, a deliberate cancellation — see
+    /// ``ConnectivityErrorClassification``) at one of the two flatten sites
+    /// that used to fold every non-`AuthError` throw into ``network(message:)``
+    /// unconditionally: `completeSignIn(establishing:)`'s leg-1 catch-all, and
+    /// `recordingFailure(_:)`'s catch-all (`sendLoginCode`/`resendLoginCode`).
+    ///
+    /// Being offline is a supported mode — the app has an on-device catalog
+    /// clone and falls back to it (issues #58/#81) — and is never worth
+    /// reporting to crash telemetry, unlike a genuine transport defect. The
+    /// two "Non-HTTP response" throws (`postJSON`, `refreshJWT`) deliberately
+    /// stay ``network(message:)``: a response that reaches the HTTP layer
+    /// without a status code is a bug, not evidence of being offline.
+    ///
+    /// Carries the same message ``network(message:)`` would have, so
+    /// ``localizedMessage`` renders byte-for-byte what the DJ saw before this
+    /// split existed — the split changes only which *case* a caller pattern
+    /// matches on to decide whether to report, never what's shown on screen.
+    case offline(message: String)
     case missingSessionToken
     case serverFailure(status: Int, message: String?)
     /// The server understood the request and refused it for a stated reason the
@@ -53,6 +72,7 @@ public enum AuthError: Error, Sendable, Equatable {
         switch self {
         case .invalidCredentials: "Incorrect username or email, or password."
         case .network(let m): "Network error: \(m)"
+        case .offline(let m): "Network error: \(m)"
         case .missingSessionToken: "Sign-in did not return a session token."
         case .serverFailure(let s, let m): "Server error (\(s))\(m.map { ": \($0)" } ?? "")."
         // Empty-guarded rather than a bare `map`, so a `{"message": ""}` body
@@ -264,7 +284,7 @@ public final class AuthService {
             return
         } catch {
             clearLocalSession()
-            lastError = .network(message: error.localizedDescription)
+            lastError = Self.classifyTransportFailure(error)
             state = .signedOut
             return
         }
@@ -358,15 +378,31 @@ public final class AuthService {
     ///
     /// The non-session legs still `throw` — their caller is right there and can
     /// react — but they report through the same field `signIn` does, so the UI
-    /// reads exactly one error surface. The `AuthError`-else-`.network` mapping
+    /// reads exactly one error surface. The `AuthError`-else-classify mapping
     /// mirrors `completeSignIn`'s leg 1.
     private func recordingFailure<T>(_ work: () async throws -> T) async throws -> T {
         do {
             return try await work()
         } catch {
-            lastError = (error as? AuthError) ?? .network(message: error.localizedDescription)
+            lastError = (error as? AuthError) ?? Self.classifyTransportFailure(error)
             throw error
         }
+    }
+
+    /// The classification shared by both transport catch-all flatten sites
+    /// (`completeSignIn`'s leg 1, `recordingFailure`): a connectivity-class
+    /// `URLError` — being offline, a supported mode never worth reporting —
+    /// becomes ``AuthError/offline(message:)``; everything else is a genuine
+    /// transport defect and stays ``AuthError/network(message:)``. One home
+    /// for this so the two sites can't quietly diverge on what counts as
+    /// "offline" (see ``AuthError/offline(message:)``'s doc comment for why
+    /// the "Non-HTTP response" throws are deliberately NOT routed through
+    /// this — they never reach this function at all, since they already
+    /// construct `.network` directly).
+    private static func classifyTransportFailure(_ error: Error) -> AuthError {
+        ConnectivityErrorClassification.isConnectivityFailure(error)
+            ? .offline(message: error.localizedDescription)
+            : .network(message: error.localizedDescription)
     }
 
     /// Resolve a username to its verification address.

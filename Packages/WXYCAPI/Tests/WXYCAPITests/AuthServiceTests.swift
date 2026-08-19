@@ -1274,4 +1274,76 @@ struct AuthServiceTests {
         // lands `.signedOut`.
         #expect(service.state == .signedOut)
     }
+
+    // MARK: - Transport classification (issue #106)
+
+    /// A `RequestSession` whose response is not an `HTTPURLResponse`,
+    /// exercising `postJSON`'s "Non-HTTP response" guard — which must stay
+    /// `.network`, never `.offline`, per the issue-#106 split: a response
+    /// that reaches the HTTP layer without a status code is a client-side
+    /// defect, not evidence of being offline.
+    private struct NonHTTPResponseSession: RequestSession {
+        func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+            (Data(), URLResponse(url: request.url!, mimeType: nil, expectedContentLength: 0, textEncodingName: nil))
+        }
+    }
+
+    @Test func signInConnectivityTransportFailureFlattensToOffline() async throws {
+        // completeSignIn's leg-1 catch-all: a connectivity-class URLError
+        // thrown before any response arrives must classify as `.offline`, not
+        // the pre-#106 blanket `.network` — being offline is a supported mode
+        // (the on-device catalog clone, issues #58/#81), never a defect worth
+        // reporting.
+        let session = StubRequestSession()
+        let service = AuthService(configuration: Self.config, storage: InMemoryTokenStorage(), session: session)
+        session.enqueue(failure: URLError(.notConnectedToInternet))
+
+        await service.signIn(identifier: "dj", password: "pw")
+
+        guard case .offline = service.lastError else {
+            Issue.record("expected .offline, got \(String(describing: service.lastError))")
+            return
+        }
+        #expect(service.state == .signedOut)
+        // Same user-facing wording `.network` always rendered — the split
+        // changes only which case a caller matches on, not what's on screen.
+        #expect(service.lastError?.localizedMessage.hasPrefix("Network error:") == true)
+    }
+
+    @Test func signInNonConnectivityTransportFailureStaysNetwork() async throws {
+        // The complement: a non-URLError (or a resource-level URLError, per
+        // ConnectivityErrorClassification) transport throw at the same
+        // flatten site is a genuine defect and must stay `.network`.
+        let session = StubRequestSession()
+        let service = AuthService(configuration: Self.config, storage: InMemoryTokenStorage(), session: session)
+        session.enqueue(failure: CocoaError(.fileReadCorruptFile))
+
+        await service.signIn(identifier: "dj", password: "pw")
+
+        guard case .network = service.lastError else {
+            Issue.record("expected .network, got \(String(describing: service.lastError))")
+            return
+        }
+        #expect(service.state == .signedOut)
+    }
+
+    @Test func signInWithNonHTTPResponseStaysNetworkNotOffline() async throws {
+        // postJSON's own "Non-HTTP response" throw already constructs
+        // `AuthError.network` directly, so it reaches completeSignIn's
+        // `catch let error as AuthError` arm — never the generic catch-all
+        // this issue changes — and must remain `.network` untouched.
+        let service = AuthService(
+            configuration: Self.config,
+            storage: InMemoryTokenStorage(),
+            session: NonHTTPResponseSession()
+        )
+
+        await service.signIn(identifier: "dj", password: "pw")
+
+        guard case .network = service.lastError else {
+            Issue.record("expected .network, got \(String(describing: service.lastError))")
+            return
+        }
+        #expect(service.state == .signedOut)
+    }
 }
