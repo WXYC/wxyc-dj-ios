@@ -641,8 +641,36 @@ struct AlbumDetailView: View {
         } catch {
             let message = (error as? APIError)?.localizedMessage ?? error.localizedDescription
             detailLog.error("library/info failed for album \(albumId): \(message, privacy: .public); falling back to catalog clone")
+            // Unlike the metadata leg below, `/library/info` is the shelf
+            // source of truth, not best-effort enrichment — every failure
+            // here degrades a core feature, so every failure is reported
+            // (issue #106).
+            deps.errorReporter.report(error, context: "AlbumDetailView.loadInfo")
             infoFailed = true
             return nil
+        }
+    }
+
+    /// Whether a failed `/proxy/metadata/album` (LML) fetch names a defect
+    /// worth reporting (issue #106), as opposed to an expected enrichment
+    /// gap. LML is best-effort — a 404 (no LML match) or a 429 (rate limit),
+    /// both `APIError.http`, are routine and stay `os_log`-only, same as
+    /// `.unauthorized`/`.notSignedIn`/`.network`. A `.decoding` failure is
+    /// different in kind: it means this app's own parsing broke against a
+    /// real payload, the systematic-failure class this whole effort exists
+    /// to surface.
+    ///
+    /// A **total switch** on purpose, mirroring `AuthError.caseName` and
+    /// `APIError.caseName` — a future `APIError` case lands here as a
+    /// compile-time decision, not a silent miss. `static` + pure so it's
+    /// unit-testable without driving the view's network calls (see
+    /// `AlbumDetailFallbackTests`).
+    static func shouldReportMetadataFailure(_ error: APIError) -> Bool {
+        switch error {
+        case .decoding:
+            return true
+        case .unauthorized, .notSignedIn, .http, .network:
+            return false
         }
     }
 
@@ -667,6 +695,9 @@ struct AlbumDetailView: View {
         } catch let error as APIError {
             metadataLog.error("metadata fetch failed: \(error.localizedMessage, privacy: .public)")
             metadataError = error.localizedMessage
+            if Self.shouldReportMetadataFailure(error) {
+                deps.errorReporter.report(error, context: "AlbumDetailView.loadMetadata")
+            }
             return nil
         } catch {
             metadataLog.error("metadata fetch failed: \(error.localizedDescription, privacy: .public)")

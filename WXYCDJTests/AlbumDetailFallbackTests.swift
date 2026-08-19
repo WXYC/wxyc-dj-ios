@@ -226,3 +226,34 @@ struct AlbumDetailFallbackTests {
             metadataLabel: "Drag City", catalogLabel: nil, infoLoaded: true))
     }
 }
+
+/// Issue #106: `AlbumDetailView.shouldReportMetadataFailure(_:)` is the pure
+/// report/skip decision `loadMetadata`'s catch arm applies. `AlbumDetailView`
+/// is a `View` struct with no view-hosting test harness in this repo (every
+/// other `AlbumDetail*Tests` suite exercises a pure static helper for exactly
+/// this reason), so this is what stands in for driving `loadMetadata` end to
+/// end over a stubbed `APIClient`.
+@Suite("AlbumDetail metadata-failure reporting")
+struct AlbumDetailMetadataReportingTests {
+    @Test("a 404 -- no LML match -- is an expected enrichment gap, not reported")
+    func notFoundIsNotReported() {
+        #expect(!AlbumDetailView.shouldReportMetadataFailure(.http(status: 404, message: nil)))
+    }
+
+    @Test("a 429 rate limit is an expected enrichment gap, not reported")
+    func rateLimitIsNotReported() {
+        #expect(!AlbumDetailView.shouldReportMetadataFailure(.http(status: 429, message: "Too Many Requests")))
+    }
+
+    @Test("a decode failure is our own parsing breaking, and is reported")
+    func decodingFailureIsReported() {
+        #expect(AlbumDetailView.shouldReportMetadataFailure(.decoding(detail: "type mismatch at releaseYear")))
+    }
+
+    @Test("unauthorized/notSignedIn/network are not reported")
+    func transportAndAuthFailuresAreNotReported() {
+        #expect(!AlbumDetailView.shouldReportMetadataFailure(.unauthorized))
+        #expect(!AlbumDetailView.shouldReportMetadataFailure(.notSignedIn))
+        #expect(!AlbumDetailView.shouldReportMetadataFailure(.network("offline")))
+    }
+}
