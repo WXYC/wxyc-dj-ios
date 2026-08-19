@@ -287,6 +287,15 @@ final class AppDependencies {
             // reported (issue #106).
             catalogLog.debug("Catalog refresh skipped: not signed in")
             success = true
+        } catch APIError.offline {
+            // Being offline is a supported mode (issues #58/#81), never a
+            // defect (issue #106 review Fix 1) — the app has an on-device
+            // catalog clone behind it. Unlike the `.notSignedIn` skip above,
+            // a refresh really was attempted and genuinely failed to reach
+            // the server, so `success` stays `false` exactly as the generic
+            // catch below would set it; only the report is skipped.
+            catalogLog.debug("Catalog refresh failed: offline")
+            success = false
         } catch {
             catalogLog.error("Catalog refresh failed: \(Self.catalogErrorDetail(error), privacy: .public)")
             // A Core Spotlight batch rejection (CSIndexErrorDomain -1001) or a
@@ -367,6 +376,12 @@ final class AppDependencies {
         } catch APIError.notSignedIn {
             // Same expected-state carve-out as refreshCatalog() (issue #106).
             catalogLog.debug("Background catalog poll skipped: not signed in")
+        } catch APIError.offline {
+            // Same offline carve-out as refreshCatalog() (issue #106 review
+            // Fix 1) — a background poll running into a dead network on a
+            // system schedule is exactly the spam `enableCaptureFailedRequests
+            // = false` exists to prevent.
+            catalogLog.debug("Background catalog poll skipped: offline")
         } catch {
             catalogLog.error("Background catalog poll failed: \(Self.catalogErrorDetail(error), privacy: .public)")
             errorReporter.report(error, context: "AppDependencies.handleBackgroundPoll")

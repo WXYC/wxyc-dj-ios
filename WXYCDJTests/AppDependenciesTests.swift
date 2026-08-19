@@ -332,4 +332,45 @@ struct RefreshCatalogReportingTests {
 
         #expect(spy.reportCount == 0)
     }
+
+    /// Issue #106 review Fix 1: being offline is a supported mode, not a
+    /// defect — an offline DJ must not generate a Sentry event on every
+    /// launch/scene-`.active` refresh. A signed-in client whose transport
+    /// throws a connectivity-class `URLError` is the shape `APIClient.fire(_:)`
+    /// now classifies as `.offline` rather than `.network`.
+    private static func makeOfflineService() async throws -> CatalogRefreshService {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let auth = AuthService(configuration: config, storage: storage, session: session)
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await auth.restoreSession()
+        session.enqueue(failure: URLError(.notConnectedToInternet))
+        let client = APIClient(configuration: config, session: session, authService: auth)
+        return CatalogRefreshService(client: client, store: NullCatalogStore(), makeIndexer: { NullCatalogIndexer() })
+    }
+
+    @Test func offlineFailureDuringRefreshDoesNotReport() async throws {
+        let spy = SpyErrorReporter()
+        let service = try await Self.makeOfflineService()
+        let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, reporter: spy)
+
+        let success = await deps.refreshCatalog()
+
+        #expect(success == false)
+        #expect(spy.reportCount == 0)
+    }
+
+    @Test func offlineFailureDuringBackgroundPollDoesNotReport() async throws {
+        let spy = SpyErrorReporter()
+        let service = try await Self.makeOfflineService()
+        let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, reporter: spy)
+
+        await deps.handleBackgroundPoll()
+
+        #expect(spy.reportCount == 0)
+    }
 }

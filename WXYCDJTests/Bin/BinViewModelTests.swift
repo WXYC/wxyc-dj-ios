@@ -97,6 +97,21 @@ struct BinViewModelTests {
         #expect(spy.reports.first?.context == "BinViewModel.refresh")
     }
 
+    /// Issue #106 review Fix 1: being offline is a supported mode, never a
+    /// defect — the bin already falls back to its offline snapshot (issue
+    /// #60) exactly as designed, so an offline refresh must not generate a
+    /// Sentry event.
+    @Test func refreshOfflineFailureDoesNotReportToErrorReporter() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let spy = SpyErrorReporter()
+        let viewModel = BinViewModel(api: client, errorReporter: spy)
+
+        session.enqueue(failure: URLError(.notConnectedToInternet))
+        await viewModel.refresh()
+
+        #expect(spy.reportCount == 0)
+    }
+
     @Test func removeSuccessDropsRowAndLeavesNoError() async throws {
         let (viewModel, _, target) = try await Self.removeFirstAfterRefresh()
 
