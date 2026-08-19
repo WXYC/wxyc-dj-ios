@@ -11,7 +11,12 @@ xcuserdata/
 *.xcworkspace/xcuserdata/
 *.xcodeproj/xcuserdata/
 *.xcodeproj/project.xcworkspace/xcuserdata/
-*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+# Matching the directory itself (no trailing /*) excludes the directory, and a
+# bare negation below it is a no-op -- git never descends into an excluded
+# directory to find what to un-ignore. Matching contents instead lets the
+# Package.resolved negation below actually take effect.
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/*
+!WXYCDJ.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 
 # Swift Package Manager
 .build/
