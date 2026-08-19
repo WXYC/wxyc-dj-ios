@@ -40,16 +40,12 @@ public enum AuthError: Error, Sendable, Equatable {
         case .network(let m): "Network error: \(m)"
         case .missingSessionToken: "Sign-in did not return a session token."
         case .serverFailure(let s, let m): "Server error (\(s))\(m.map { ": \($0)" } ?? "")."
-        case .rejected(let m): Self.sentence(m) ?? "Sign-in was rejected."
+        // Empty-guarded rather than a bare `map`, so a `{"message": ""}` body
+        // renders the fallback instead of a lone ".". No period-doubling guard:
+        // better-auth's messages arrive unpunctuated, so it would be dead code.
+        case .rejected(let m): m.flatMap { $0.isEmpty ? nil : "\($0)." } ?? "Sign-in was rejected."
         case .notSignedIn: "You are signed out."
         }
-    }
-
-    /// better-auth's messages arrive unpunctuated ("Invalid email"); render one
-    /// as a sentence without doubling a period it already carries.
-    private static func sentence(_ message: String?) -> String? {
-        guard let message, !message.isEmpty else { return nil }
-        return message.hasSuffix(".") ? message : "\(message)."
     }
 }
 
@@ -418,12 +414,18 @@ public final class AuthService {
             // "wrong password": a malformed email, an unverified address, a
             // rejected origin. Surface its message rather than asserting a
             // credential failure the DJ would try to fix by retyping.
-            let message = (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data))?.message
-            throw AuthError.rejected(message: message)
+            throw AuthError.rejected(message: Self.serverMessage(in: data))
         default:
-            let message = (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data))?.message
-            throw AuthError.serverFailure(status: http.statusCode, message: message)
+            throw AuthError.serverFailure(status: http.statusCode, message: Self.serverMessage(in: data))
         }
+    }
+
+    /// The `message` out of a non-2xx body, or `nil` if it isn't shaped like one.
+    /// Mirrors ``APIClient/httpError(status:body:)``'s reason for existing: keep
+    /// the "what does an error body look like" decision in one place, so a second
+    /// message key or a decode fallback is a single edit rather than one per arm.
+    private static func serverMessage(in data: Data) -> String? {
+        (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data))?.message
     }
 
     private func refreshJWT() async throws -> JWTPayload {

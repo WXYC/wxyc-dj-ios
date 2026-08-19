@@ -69,11 +69,24 @@ struct LoginViewModelTests {
         #expect(viewModel.canSubmit == true)
     }
 
-    @Test func submitTrimsIdentifierWhitespaceButPreservesPassword() async throws {
+    /// The view model's whole job on submit: trim the identifier, leave the
+    /// password alone, forward. Driven with both credential kinds because the
+    /// field takes either since issue #97 — the routing itself is `AuthService`'s
+    /// business (and pinned there), so this asserts only that whichever kind the
+    /// DJ typed arrives trimmed and intact on the route it belongs to.
+    @Test(arguments: [
+        ("  juana \n", "/auth/sign-in/username", "username", "juana"),
+        (" juana@wxyc.org ", "/auth/sign-in/email", "email", "juana@wxyc.org"),
+    ])
+    func submitTrimsTheIdentifierButPreservesThePassword(
+        typed: String,
+        expectedPath: String,
+        expectedKey: String,
+        expectedIdentifier: String
+    ) async throws {
         let session = StubRequestSession()
-        let auth = makeAuth(session: session)
-        let viewModel = LoginViewModel(auth: auth)
-        viewModel.identifier = "  juana \n"
+        let viewModel = LoginViewModel(auth: makeAuth(session: session))
+        viewModel.identifier = typed
         viewModel.password = "  hunter2 "
 
         session.enqueue(StubRequestSession.Stub(statusCode: 200, headers: Self.signInSuccessHeaders))
@@ -85,37 +98,11 @@ struct LoginViewModelTests {
         await viewModel.submit()
 
         let signInRequest = try #require(session.recordedRequests.first)
+        #expect(signInRequest.url?.path == expectedPath)
         let body = try #require(signInRequest.httpBody)
         let payload = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
-        #expect(payload["username"] as? String == "juana")
+        #expect(payload[expectedKey] as? String == expectedIdentifier)
         #expect(payload["password"] as? String == "  hunter2 ")
-    }
-
-    @Test func submitForwardsAnEmailIdentifierToTheEmailRoute() async throws {
-        // The field takes either credential (issue #97). The view model doesn't
-        // choose between them — it hands over a trimmed value and AuthService
-        // routes it — so this pins the half the DJ actually touches: an email
-        // typed here survives trimming and lands on /sign-in/email, which is
-        // where it has to land to get past better-auth's username validator.
-        let session = StubRequestSession()
-        let viewModel = LoginViewModel(auth: makeAuth(session: session))
-        viewModel.identifier = " juana@wxyc.org "
-        viewModel.password = "hunter2"
-
-        session.enqueue(StubRequestSession.Stub(statusCode: 200, headers: Self.signInSuccessHeaders))
-        session.enqueue(StubRequestSession.Stub(
-            statusCode: 200,
-            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
-        ))
-
-        await viewModel.submit()
-
-        let signInRequest = try #require(session.recordedRequests.first)
-        #expect(signInRequest.url?.path == "/auth/sign-in/email")
-        let body = try #require(signInRequest.httpBody)
-        let payload = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
-        #expect(payload["email"] as? String == "juana@wxyc.org")
-        #expect(payload["username"] == nil)
     }
 
     @Test func submitWithEmptyFieldsIsNoOp() async {
