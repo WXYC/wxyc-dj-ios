@@ -120,35 +120,53 @@ struct AuthServiceTests {
 
     // MARK: - Identifier routing (issue #97)
 
-    @Test func emailIdentifierSignsInThroughTheEmailRoute() async throws {
-        let session = StubRequestSession()
-        let storage = InMemoryTokenStorage()
-        let service = AuthService(configuration: Self.config, storage: storage, session: session)
-
+    /// Script the two-leg sign-in handshake: a `set-auth-token`-bearing sign-in
+    /// response, then the `/auth/token` JWT exchange. Both legs succeed.
+    private static func enqueueSignInHandshake(
+        on session: StubRequestSession,
+        sessionToken: String = "session-abc"
+    ) {
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200,
-            headers: ["set-auth-token": "session-abc"],
+            headers: ["set-auth-token": sessionToken],
             body: Data("{}".utf8)
         ))
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200,
             body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
         ))
+    }
 
-        await service.signIn(identifier: "juana@wxyc.org", password: "pw")
+    /// The route table, asserted **on the wire** rather than at the type level:
+    /// #97's contract is that an email reaches an endpoint that can accept it
+    /// (before #97 the username plugin rejected the `@` on shape alone with a
+    /// 422, so no password could work) *and* that a username sign-in stays
+    /// byte-for-byte what it was. A refactor that quietly re-keys either body
+    /// has to fail here. The rest of the handshake is shared — the bearer plugin
+    /// emits `set-auth-token` on both routes, so the JWT exchange and the
+    /// issue-#53 state machine behave identically either way.
+    @Test(arguments: [
+        ("juana", "/auth/sign-in/username", "username"),
+        ("juana@wxyc.org", "/auth/sign-in/email", "email"),
+    ])
+    func signInRoutesTheIdentifierToTheEndpointThatAcceptsIt(
+        identifier: String,
+        expectedPath: String,
+        expectedKey: String
+    ) async throws {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+        Self.enqueueSignInHandshake(on: session)
 
-        // Before #97 this identifier never got as far as a credential check:
-        // better-auth's username plugin rejected the `@` on shape alone with a
-        // 422, so the DJ saw "Username is invalid" no matter the password.
+        await service.signIn(identifier: identifier, password: "pw")
+
         let signInRequest = try #require(session.recordedRequests.first)
-        #expect(signInRequest.url?.path == "/auth/sign-in/email")
+        #expect(signInRequest.url?.path == expectedPath)
         let body = try #require(signInRequest.httpBody)
         let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: String])
-        #expect(json == ["email": "juana@wxyc.org", "password": "pw"])
+        #expect(json == [expectedKey: identifier, "password": "pw"])
 
-        // The rest of the handshake is the shared one: the bearer plugin emits
-        // `set-auth-token` on this route too, so the JWT exchange and the
-        // issue-#53 state machine behave exactly as on the username path.
         guard case let .signedIn(payload) = service.state else {
             Issue.record("expected signedIn, got \(service.state)")
             return
@@ -157,117 +175,62 @@ struct AuthServiceTests {
         #expect(try storage.load(.sessionToken) == "session-abc")
     }
 
-    @Test func usernameIdentifierKeepsTheUsernameRouteUnchanged() async throws {
-        let session = StubRequestSession()
-        let storage = InMemoryTokenStorage()
-        let service = AuthService(configuration: Self.config, storage: storage, session: session)
-
-        session.enqueue(StubRequestSession.Stub(
-            statusCode: 200,
-            headers: ["set-auth-token": "session-abc"],
-            body: Data("{}".utf8)
-        ))
-        session.enqueue(StubRequestSession.Stub(
-            statusCode: 200,
-            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
-        ))
-
-        await service.signIn(identifier: "juana", password: "pw")
-
-        // Asserted on the wire, not at the type level: #97's contract is that a
-        // username sign-in is byte-for-byte what it was, so a future refactor
-        // that quietly re-keys this body has to fail here.
-        let signInRequest = try #require(session.recordedRequests.first)
-        #expect(signInRequest.url?.path == "/auth/sign-in/username")
-        let body = try #require(signInRequest.httpBody)
-        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: String])
-        #expect(json == ["username": "juana", "password": "pw"])
-        #expect(service.isSignedIn)
-    }
-
-    @Test(arguments: [
-        ("juana", "/auth/sign-in/username"),
-        ("juana@wxyc.org", "/auth/sign-in/email"),
-    ])
-    func signInNeverCarriesACookie(identifier: String, expectedPath: String) async throws {
+    /// This client is bearer-only, and better-auth's `bearer()` after-hook ADDS
+    /// `set-auth-token` without removing the `Set-Cookie` it rides alongside — so
+    /// a default `URLSession` stores the session cookie and replays it on the
+    /// next sign-in. That is fatal: better-auth registers `originCheckMiddleware`
+    /// globally on every non-GET, and it enforces the Origin header only when a
+    /// cookie is present, so a cookie-bearing sign-in from a native client (which
+    /// sends none) is refused with `403 MISSING_OR_NULL_ORIGIN` before any
+    /// credential check. Verified against production on BOTH routes. Suppressing
+    /// cookie handling keeps the jar empty in both directions, so the request can
+    /// never acquire the header that arms that middleware.
+    ///
+    /// Both identifiers are exercised because the suppression must not be a
+    /// property of one route; the route/body assertions themselves live in
+    /// ``signInRoutesTheIdentifierToTheEndpointThatAcceptsIt``.
+    @Test(arguments: ["juana", "juana@wxyc.org"])
+    func signInNeverCarriesACookie(identifier: String) async throws {
         let session = StubRequestSession()
         let service = AuthService(configuration: Self.config, storage: InMemoryTokenStorage(), session: session)
-
-        session.enqueue(StubRequestSession.Stub(
-            statusCode: 200,
-            headers: ["set-auth-token": "session-abc"],
-            body: Data("{}".utf8)
-        ))
-        session.enqueue(StubRequestSession.Stub(
-            statusCode: 200,
-            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
-        ))
+        Self.enqueueSignInHandshake(on: session)
 
         await service.signIn(identifier: identifier, password: "pw")
 
-        // This client is bearer-only, and better-auth's `bearer()` after-hook
-        // ADDS `set-auth-token` without removing the `Set-Cookie` it rides
-        // alongside — so a default `URLSession` stores the session cookie and
-        // replays it on the next sign-in. That is fatal: better-auth registers
-        // `originCheckMiddleware` globally on every non-GET, and it enforces the
-        // Origin header only when a cookie is present, so a cookie-bearing
-        // sign-in from a native client (which sends no Origin) is refused with
-        // `403 MISSING_OR_NULL_ORIGIN` before any credential check. Verified
-        // against production on BOTH routes. Suppressing cookie handling keeps
-        // the jar empty in both directions, so the request can never acquire the
-        // header that arms that middleware.
-        let signInRequest = try #require(session.recordedRequests.first)
-        #expect(signInRequest.url?.path == expectedPath)
-        #expect(signInRequest.httpShouldHandleCookies == false)
+        #expect(session.recordedRequests.first?.httpShouldHandleCookies == false)
         // The JWT exchange rides the same transport and gets the same treatment.
         #expect(session.recordedRequests.last?.httpShouldHandleCookies == false)
     }
 
-    @Test func forbiddenSurfacesItsReasonInsteadOfBlamingTheCredentials() async throws {
+    /// A 4xx that names a reason which is *not* "wrong password" surfaces that
+    /// reason verbatim. `403` is the un-onboarded DJ (Backend-Service sets
+    /// `requireEmailVerification: true`) — folding it into `.invalidCredentials`
+    /// would have them retyping a correct password forever, and it is what hid
+    /// the origin-middleware 403 above. `400` is better-auth's `z.email()` verdict
+    /// on a typo'd address — the payoff of routing on `@` rather than a full email
+    /// regex, which would have sent it to the username endpoint for a misleading
+    /// "Username is invalid". Neither renders behind a "Server error (4xx):"
+    /// prefix; the DJ mistyped, or their account needs attention — not a backend
+    /// fault. Both stay terminal, leaving nothing stored.
+    @Test(arguments: [
+        (403, "Email not verified", "juana@wxyc.org"),
+        (400, "Invalid email", "juana@wxyc"),
+    ])
+    func aNamedRefusalSurfacesItsOwnReason(status: Int, message: String, identifier: String) async throws {
         let session = StubRequestSession()
         let storage = InMemoryTokenStorage()
         let service = AuthService(configuration: Self.config, storage: storage, session: session)
 
-        // Backend-Service sets `requireEmailVerification: true`, so an
-        // un-onboarded DJ gets a 403 whose message names the real problem.
-        // Folding that into `.invalidCredentials` would have them retyping a
-        // correct password forever — and it is what would have hidden a 403
-        // from the origin middleware above.
         session.enqueue(StubRequestSession.Stub(
-            statusCode: 403,
-            body: Data(#"{"message":"Email not verified"}"#.utf8)
+            statusCode: status,
+            body: Data(#"{"message":"\#(message)"}"#.utf8)
         ))
 
-        await service.signIn(identifier: "juana@wxyc.org", password: "pw")
+        await service.signIn(identifier: identifier, password: "pw")
 
         #expect(service.state == .signedOut)
-        #expect(service.lastError == .rejected(message: "Email not verified"))
-        #expect(service.lastError?.localizedMessage == "Email not verified.")
-        // Still terminal: nothing is left behind by a refused sign-in.
-        #expect(try storage.load(.sessionToken) == nil)
-    }
-
-    @Test func malformedEmailSurfacesTheServerMessage() async throws {
-        let session = StubRequestSession()
-        let storage = InMemoryTokenStorage()
-        let service = AuthService(configuration: Self.config, storage: storage, session: session)
-
-        // What better-auth's /sign-in/email answers for an identifier that
-        // fails its `z.email()` check — the payoff of routing on `@` rather
-        // than on a full email regex, which would have sent this to the
-        // username endpoint for a misleading "Username is invalid" instead.
-        session.enqueue(StubRequestSession.Stub(
-            statusCode: 400,
-            body: Data(#"{"message":"Invalid email"}"#.utf8)
-        ))
-
-        await service.signIn(identifier: "juana@wxyc", password: "pw")
-
-        #expect(service.state == .signedOut)
-        #expect(service.lastError == .rejected(message: "Invalid email"))
-        // Rendered verbatim, not behind a "Server error (400):" prefix — the DJ
-        // mistyped their address; that is not a backend fault.
-        #expect(service.lastError?.localizedMessage == "Invalid email.")
+        #expect(service.lastError == .rejected(message: message))
+        #expect(service.lastError?.localizedMessage == "\(message).")
         #expect(try storage.load(.sessionToken) == nil)
     }
 

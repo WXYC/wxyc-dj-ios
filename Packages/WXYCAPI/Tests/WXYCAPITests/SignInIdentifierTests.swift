@@ -48,37 +48,38 @@ struct SignInIdentifierTests {
         #expect(SignInIdentifier(raw) == expected)
     }
 
-    @Test func usernameRouteIsUnchangedFromBeforeIssue97() throws {
-        let identifier = SignInIdentifier("juana")
+    /// The path and the body key are the pair that must never drift apart —
+    /// better-auth reads `ctx.body.username` on one route and `ctx.body.email` on
+    /// the other, so a body posted to the wrong endpoint is unreadable. Asserting
+    /// them from one table keeps a third route from arriving as a third copy.
+    /// The username row is also the pre-#97 regression pin: that request is
+    /// byte-for-byte what it always was.
+    @Test(arguments: [
+        ("juana", "sign-in/username", ["username": "juana", "password": "hunter2"]),
+        ("juana@wxyc.org", "sign-in/email", ["email": "juana@wxyc.org", "password": "hunter2"]),
+    ])
+    func routeCarriesTheBodyKeyItsEndpointReads(
+        raw: String,
+        expectedPath: String,
+        expectedBody: [String: String]
+    ) throws {
+        let identifier = SignInIdentifier(raw)
 
-        #expect(identifier.path == "sign-in/username")
+        #expect(identifier.path == expectedPath)
 
         let body = try identifier.encodedBody(password: "hunter2")
         let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: String])
-        #expect(json == ["username": "juana", "password": "hunter2"])
+        #expect(json == expectedBody)
     }
 
-    @Test func emailRouteCarriesAnEmailKey() throws {
-        let identifier = SignInIdentifier("juana@wxyc.org")
-
-        #expect(identifier.path == "sign-in/email")
-
-        let body = try identifier.encodedBody(password: "hunter2")
-        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: String])
-        // `email`, never `username` — better-auth's /sign-in/email reads
-        // ctx.body.email and would 400 on a body keyed the other way.
-        #expect(json == ["email": "juana@wxyc.org", "password": "hunter2"])
-    }
-
-    @Test func passwordIsPassedThroughUntouchedOnBothRoutes() throws {
-        // The identifier is trimmed upstream (LoginViewModel); the password is
-        // deliberately not, and nothing on this path may normalize it either.
+    /// The identifier is trimmed upstream (`LoginViewModel`); the password is
+    /// deliberately not, and nothing on this path may normalize it either.
+    @Test(arguments: ["juana", "juana@wxyc.org"])
+    func passwordIsPassedThroughUntouched(raw: String) throws {
         let password = "  hunter2 \n"
 
-        for raw in ["juana", "juana@wxyc.org"] {
-            let body = try SignInIdentifier(raw).encodedBody(password: password)
-            let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: String])
-            #expect(json["password"] == password)
-        }
+        let body = try SignInIdentifier(raw).encodedBody(password: password)
+        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: String])
+        #expect(json["password"] == password)
     }
 }
