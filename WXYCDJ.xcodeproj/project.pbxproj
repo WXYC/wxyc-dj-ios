@@ -24,9 +24,12 @@
 		4971C44699E28C3483D4F264 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7745B51EB2BF815A8B960F3F /* AppDelegate.swift */; };
 		574EDEABD3333936B2530863 /* TelemetryBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = D890BC53FC78B18923CE1021 /* TelemetryBootstrap.swift */; };
 		5890F98AB60C5BF3043C386F /* AppDependenciesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08B568981D92EC8060CDFD01 /* AppDependenciesTests.swift */; };
+		5DF131914FF3F0B2596F60F2 /* TelemetryPrivacyScrub.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A6CC0B5FA47B02017226FA9 /* TelemetryPrivacyScrub.swift */; };
+		72DDD3B5A5B2A91A4EF71A16 /* ErrorReporting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CA746C19327B79EE365C2E3 /* ErrorReporting.swift */; };
 		753572DD46DEE31D8A3F2CDB /* SearchResultRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ECD186BFE3631C6C27416AE /* SearchResultRow.swift */; };
 		759C5888FC7CF1D709B5F953 /* WXYCDJApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D62BB1A222E85317724557C /* WXYCDJApp.swift */; };
 		75C46202B5A836CB31D649FE /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3C3F1A8A8E2B9449C84894 /* RootView.swift */; };
+		7C11010D9FB09DAA10462645 /* SentryErrorReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59035BBED9A73C38FDBC78BE /* SentryErrorReporter.swift */; };
 		87657943589225BAA0E65A7B /* StubRequestSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85944AD2D64ED468BE70FB80 /* StubRequestSession.swift */; };
 		8BAB76DFE51CBFC74EEF967B /* AlbumDetailFallbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF8B854E5058AB00D7FC28B /* AlbumDetailFallbackTests.swift */; };
 		8ED39D937F51F188FB3C700E /* View+AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = D317ED7B8718828E57375589 /* View+AppEnvironment.swift */; };
@@ -38,6 +41,7 @@
 		B427ABFA72D740CDC87D0B35 /* SpotlightClientStateToleranceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54E53B2B0DF8CCAB1C3786E0 /* SpotlightClientStateToleranceTests.swift */; };
 		B88B5FB6257A51CEA2F298C4 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = CAE4859575FEA3C453FB3BBD /* Sentry */; };
 		B90C6447D3F4DC7F4B4A4DC1 /* TrackMatchBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30DE4EC11A66379C3F9D35AE /* TrackMatchBadge.swift */; };
+		B94E9B3D6BB30F1879565A75 /* BuildEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8214FB30FB9D316CE34EAA61 /* BuildEnvironment.swift */; };
 		C03AB4DC4B72F41F6135A84C /* SearchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD38B1719410E4392D6E05CB /* SearchViewModel.swift */; };
 		CE480C510E594A1E231129FC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C9FA5B67202EDF0E87ADC86A /* Assets.xcassets */; };
 		D2381394B0DA8CEF7A189AB7 /* AlbumDetailArtworkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6B324303A15FD85AB7D1AA2 /* AlbumDetailArtworkTests.swift */; };
@@ -71,6 +75,7 @@
 		01796789400F09B47AE5C41C /* WXYCAPIModels */ = {isa = PBXFileReference; lastKnownFileType = folder; name = WXYCAPIModels; path = Packages/WXYCAPIModels; sourceTree = SOURCE_ROOT; };
 		08B568981D92EC8060CDFD01 /* AppDependenciesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDependenciesTests.swift; sourceTree = "<group>"; };
 		0D7C2891032C948BCCAB8104 /* WXYCDJ.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = WXYCDJ.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1CA746C19327B79EE365C2E3 /* ErrorReporting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorReporting.swift; sourceTree = "<group>"; };
 		1CDF9B4F952EF3F5844740EC /* OfflineBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineBanner.swift; sourceTree = "<group>"; };
 		1FD0E661440B5825AA5F5B40 /* RouterDeepLinkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouterDeepLinkTests.swift; sourceTree = "<group>"; };
 		21E636FEAF9C268D4455F6BF /* AlbumRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumRoute.swift; sourceTree = "<group>"; };
@@ -82,11 +87,14 @@
 		51B5512AA3CE4A98785BFE44 /* CatalogBackgroundTasks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogBackgroundTasks.swift; sourceTree = "<group>"; };
 		54E53B2B0DF8CCAB1C3786E0 /* SpotlightClientStateToleranceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotlightClientStateToleranceTests.swift; sourceTree = "<group>"; };
 		56A9F5B3F64702BFFAE2B4B5 /* WXYCDJ.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = WXYCDJ.entitlements; sourceTree = "<group>"; };
+		59035BBED9A73C38FDBC78BE /* SentryErrorReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentryErrorReporter.swift; sourceTree = "<group>"; };
 		6225BA88FCDBB74E198F0388 /* AppDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDependencies.swift; sourceTree = "<group>"; };
 		6AC54CD81B8E16E4B0754D16 /* BinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BinView.swift; sourceTree = "<group>"; };
 		6ECD186BFE3631C6C27416AE /* SearchResultRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResultRow.swift; sourceTree = "<group>"; };
 		7745B51EB2BF815A8B960F3F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		7A6CC0B5FA47B02017226FA9 /* TelemetryPrivacyScrub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryPrivacyScrub.swift; sourceTree = "<group>"; };
 		8037CAA3BF1777EA3F2B050C /* SignedInClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignedInClient.swift; sourceTree = "<group>"; };
+		8214FB30FB9D316CE34EAA61 /* BuildEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildEnvironment.swift; sourceTree = "<group>"; };
 		85944AD2D64ED468BE70FB80 /* StubRequestSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubRequestSession.swift; sourceTree = "<group>"; };
 		8E5BB2C6A6D78D45FBE8B7E8 /* AlbumRouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumRouteTests.swift; sourceTree = "<group>"; };
 		919B7DF6ECD14279DA5ED0D2 /* LoginViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginViewModelTests.swift; sourceTree = "<group>"; };
@@ -301,7 +309,11 @@
 		F51DF8C7AEA83F3B49BB870C /* Telemetry */ = {
 			isa = PBXGroup;
 			children = (
+				8214FB30FB9D316CE34EAA61 /* BuildEnvironment.swift */,
+				1CA746C19327B79EE365C2E3 /* ErrorReporting.swift */,
+				59035BBED9A73C38FDBC78BE /* SentryErrorReporter.swift */,
 				D890BC53FC78B18923CE1021 /* TelemetryBootstrap.swift */,
+				7A6CC0B5FA47B02017226FA9 /* TelemetryPrivacyScrub.swift */,
 			);
 			path = Telemetry;
 			sourceTree = "<group>";
@@ -442,8 +454,10 @@
 				AAF320BD598E531F6EBA5954 /* AppDependencies.swift in Sources */,
 				3701CA6BAB4578B4A26EAF5D /* BinView.swift in Sources */,
 				FE6E7984C8732020BBCB4850 /* BinViewModel.swift in Sources */,
+				B94E9B3D6BB30F1879565A75 /* BuildEnvironment.swift in Sources */,
 				F4BB3A668B1D9AFFF6997A14 /* CatalogBackgroundTasks.swift in Sources */,
 				ABA5F662B7377F106722B223 /* DeepLinkAlbumCover.swift in Sources */,
+				72DDD3B5A5B2A91A4EF71A16 /* ErrorReporting.swift in Sources */,
 				1D47643DA06B8BB7123F9AF0 /* LoginView.swift in Sources */,
 				EE55F522C6025321F2064FEF /* LoginViewModel.swift in Sources */,
 				33D06D6A22AA7D12BE080CA8 /* MainView.swift in Sources */,
@@ -455,8 +469,10 @@
 				753572DD46DEE31D8A3F2CDB /* SearchResultRow.swift in Sources */,
 				0DD716BEB42AB99DC6908CE7 /* SearchView.swift in Sources */,
 				C03AB4DC4B72F41F6135A84C /* SearchViewModel.swift in Sources */,
+				7C11010D9FB09DAA10462645 /* SentryErrorReporter.swift in Sources */,
 				093ED6295B6CD7D54A4EB979 /* SignInControls.swift in Sources */,
 				574EDEABD3333936B2530863 /* TelemetryBootstrap.swift in Sources */,
+				5DF131914FF3F0B2596F60F2 /* TelemetryPrivacyScrub.swift in Sources */,
 				B90C6447D3F4DC7F4B4A4DC1 /* TrackMatchBadge.swift in Sources */,
 				8ED39D937F51F188FB3C700E /* View+AppEnvironment.swift in Sources */,
 				759C5888FC7CF1D709B5F953 /* WXYCDJApp.swift in Sources */,
