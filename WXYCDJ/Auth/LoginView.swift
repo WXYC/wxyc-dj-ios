@@ -4,7 +4,7 @@
 //
 //  Sign-in screen. Leads with the mailed one-time code — one identifier field
 //  and "Send login code" — and keeps the password form a tap away. Delegates
-//  to LoginViewModel; surfaces failures inline, one per stage.
+//  to LoginViewModel; surfaces failures inline via its coalesced error.
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -74,12 +74,12 @@ struct LoginView: View {
                 Text("We'll send a 6-digit code to your registered email.")
             }
 
-            // `sendLoginCode` never touches `auth.lastError` — it establishes no
-            // session — so this stage renders the view model's own error and
-            // nothing else.
-            if let sendError = viewModel.sendError {
+            // Coalesced, not stage-specific: this is also where a DJ lands when
+            // `currentJWT`'s 401 demotion bounces them out mid-shift, and that
+            // sets `auth.lastError` rather than `sendError`.
+            if let error = viewModel.displayedError {
                 Section {
-                    Text(sendError)
+                    Text(error)
                         .foregroundStyle(.red)
                 }
             }
@@ -131,9 +131,9 @@ struct LoginView: View {
                 Text("dj.wxyc.org credentials")
             }
 
-            if let error = auth.lastError {
+            if let error = viewModel.displayedError {
                 Section {
-                    Text(error.localizedMessage)
+                    Text(error)
                         .foregroundStyle(.red)
                 }
             }

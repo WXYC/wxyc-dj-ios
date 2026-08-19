@@ -44,12 +44,13 @@ struct OTPCodeView: View {
                 Text("Sent to \(displayTarget). It expires in 5 minutes.")
             }
 
-            // This stage renders `auth.lastError` — a failed verify — where the
-            // identifier stage renders the view model's own `sendError`. One per
-            // stage, so the two can never appear together.
-            if let error = auth.lastError {
+            // Coalesced deliberately. Rendering only `auth.lastError` here
+            // swallowed every resend failure — and worse, made the error already
+            // on screen disappear, since `sendLoginCode` clears `lastError` on
+            // entry while its own failure lands in `sendError`.
+            if let error = viewModel.displayedError {
                 Section {
-                    Text(error.localizedMessage)
+                    Text(error)
                         .foregroundStyle(.red)
                 }
             }

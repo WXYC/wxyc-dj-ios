@@ -28,7 +28,7 @@ import Testing
 struct LoginViewModelTests {
     private static let signInSuccessHeaders = ["set-auth-token": "session-abc"]
 
-    private func makeAuth(session: StubRequestSession) -> AuthService {
+    private func makeAuth(session: any RequestSession) -> AuthService {
         AuthService(
             configuration: .localDevelopment,
             storage: InMemoryTokenStorage(),
@@ -225,15 +225,18 @@ struct LoginViewModelTests {
         #expect(viewModel.canSubmitCode == true)
     }
 
-    /// The resend cooldown is measured on a monotonic clock the test drives, so
-    /// nothing here sleeps. 30s sits inside better-auth's 3-per-60s allowance.
-    @Test func resendIsGatedUntilTheCooldownElapses() async throws {
+    /// The cooldown must actually *reopen* on screen. It is observable state
+    /// flipped by a task, not a clock read: SwiftUI re-renders on mutation, and
+    /// time passing is not one — an earlier clock-based version left the button
+    /// latched disabled until some unrelated edit happened to invalidate the
+    /// view, which is worst right after `TOO_MANY_ATTEMPTS` tells the DJ to
+    /// "Request a new code".
+    @Test func theResendWindowClosesThenReopensOnItsOwn() async throws {
         let session = StubRequestSession()
-        let clock = ManualClock()
+        let sleeper = ManualSleeper()
         let viewModel = LoginViewModel(
             auth: makeAuth(session: session),
-            resendCooldown: .seconds(30),
-            now: { clock.now }
+            sleep: { await sleeper.sleep($0) }
         )
         viewModel.identifier = "juana@wxyc.org"
         session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success":true}"#.utf8)))
@@ -242,16 +245,125 @@ struct LoginViewModelTests {
         await viewModel.requestCode()
         #expect(viewModel.canResendCode == false)
 
-        clock.advance(by: .seconds(29))
-        #expect(viewModel.canResendCode == false)
-
-        clock.advance(by: .seconds(1))
+        sleeper.elapse()
+        await waitUntil { viewModel.canResendCode }
         #expect(viewModel.canResendCode == true)
 
-        // And a resend actually re-requests.
         session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success":true}"#.utf8)))
         await viewModel.resendCode()
         #expect(session.recordedRequests.count == 2)
+    }
+
+    /// A failed resend must be visible, and must not blank the screen.
+    ///
+    /// The failure mode this pins: the DJ mistypes a code, sees "That code isn't
+    /// right.", taps "Send a new code", and the send 429s. `sendLoginCode` clears
+    /// `auth.lastError` on entry and the failure lands in `sendError` — so a view
+    /// rendering only `auth.lastError` shows the existing error *disappearing*
+    /// and nothing taking its place.
+    @Test func afailedResendReplacesTheErrorOnScreenRatherThanErasingIt() async throws {
+        let session = StubRequestSession()
+        let auth = makeAuth(session: session)
+        let sleeper = ManualSleeper()
+        let viewModel = LoginViewModel(auth: auth, sleep: { await sleeper.sleep($0) })
+        viewModel.identifier = "juana@wxyc.org"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success":true}"#.utf8)))
+        await viewModel.requestCode()
+
+        // A wrong code first.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 400,
+            body: Data(#"{"message":"Invalid OTP","code":"INVALID_OTP"}"#.utf8)
+        ))
+        viewModel.code = "000000"
+        await viewModel.submitCode()
+        #expect(viewModel.displayedError == "That code isn't right. Check it and try again.")
+
+        // Then a resend that is rate-limited.
+        sleeper.elapse()
+        await waitUntil { viewModel.canResendCode }
+        session.enqueue(StubRequestSession.Stub(statusCode: 429, body: Data(#"{"error":"Too many requests"}"#.utf8)))
+        await viewModel.resendCode()
+
+        #expect(auth.lastError == nil)  // cleared by sendLoginCode's entry...
+        #expect(viewModel.displayedError == "Too many attempts. Wait a few minutes and try again.")
+    }
+
+    /// Backing out to the identifier stage must not refill the budget. The
+    /// cooldown protects a **per-IP** allowance the control room shares, so
+    /// "Send login code → Use a different account → Send login code" would
+    /// otherwise loop unlimited sends straight past it.
+    @Test func changingIdentifierDoesNotBypassTheCooldown() async throws {
+        let session = StubRequestSession()
+        let sleeper = ManualSleeper()
+        let viewModel = LoginViewModel(auth: makeAuth(session: session), sleep: { await sleeper.sleep($0) })
+        viewModel.identifier = "juana@wxyc.org"
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success":true}"#.utf8)))
+        await viewModel.requestCode()
+
+        viewModel.changeIdentifier()
+        viewModel.identifier = "jessica@wxyc.org"
+
+        #expect(viewModel.stage == .identifier)
+        #expect(viewModel.canRequestCode == false)  // still inside the window
+
+        await viewModel.requestCode()
+        #expect(session.recordedRequests.count == 1)  // guarded, no second send
+    }
+
+    /// Verifying must not race an in-flight resend. Backend-Service configures
+    /// no `resendStrategy`, so a resend mints a *fresh* OTP and overwrites the
+    /// stored verification value — submitting the first mail's code mid-resend
+    /// comes back `INVALID_OTP` for a code the DJ read correctly, and spends one
+    /// of the 5 allowed attempts doing it.
+    @Test func signInIsBlockedWhileAResendIsInFlight() async throws {
+        let session = StubRequestSession()
+        let sleeper = ManualSleeper()
+        let viewModel = LoginViewModel(auth: makeAuth(session: session), sleep: { await sleeper.sleep($0) })
+        viewModel.identifier = "juana@wxyc.org"
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success":true}"#.utf8)))
+        await viewModel.requestCode()
+        viewModel.code = "123456"
+        #expect(viewModel.canSubmitCode == true)
+
+        sleeper.elapse()
+        await waitUntil { viewModel.canResendCode }
+
+        // Park the resend mid-flight and check the gate closed.
+        let blocking = BlockingRequestSession()
+        let blockedViewModel = LoginViewModel(auth: makeAuth(session: blocking), sleep: { await sleeper.sleep($0) })
+        blockedViewModel.identifier = "juana@wxyc.org"
+        let inFlight = Task { await blockedViewModel.requestCode() }
+        await blocking.waitForFirstRequest()
+        blockedViewModel.code = "123456"
+
+        #expect(blockedViewModel.isSendingCode == true)
+        #expect(blockedViewModel.canSubmitCode == false)
+
+        inFlight.cancel()
+        _ = await inFlight.value
+    }
+
+    /// The identifier stage is now the *first* screen a bounced-out DJ sees, so
+    /// it has to render `auth.lastError` too. `currentJWT`'s 401 demotion sets
+    /// `.notSignedIn` on its way to swapping `MainView` for `LoginView`; a stage
+    /// rendering only `sendError` would greet a mid-shift revocation in silence.
+    @Test func theFirstStageStillExplainsASessionThatDiedElsewhere() async throws {
+        let session = StubRequestSession()
+        let auth = makeAuth(session: session)
+        let viewModel = LoginViewModel(auth: auth)
+
+        // A sign-in failure is the reachable way to set lastError from a test;
+        // the 401 demotion sets the same field by the same route.
+        session.enqueue(StubRequestSession.Stub(statusCode: 401, body: Data("{}".utf8)))
+        viewModel.identifier = "juana"
+        viewModel.password = "wrong"
+        await viewModel.submit()
+
+        #expect(viewModel.stage == .identifier)
+        #expect(viewModel.displayedError == auth.lastError?.localizedMessage)
+        #expect(viewModel.displayedError != nil)
     }
 
     /// The defect this guards: `auth.lastError` is cleared only when a sign-in
@@ -324,17 +436,88 @@ struct LoginViewModelTests {
     }
 }
 
-/// A hand-driven monotonic clock, so the resend-cooldown test asserts an
-/// elapsed interval without sleeping for it. `ContinuousClock.Instant` rather
-/// than `Date` because the cooldown measures elapsed time — the same reason
-/// `ConnectivityMonitor` injects its probe clock this way.
-private final class ManualClock: @unchecked Sendable {
-    private let lock = OSAllocatedUnfairLock<ContinuousClock.Instant>(initialState: ContinuousClock.now)
+/// RequestSession that parks the first request until the task is cancelled, so
+/// a test can observe view-model state while a send is genuinely in flight.
+private final class BlockingRequestSession: RequestSession, @unchecked Sendable {
+    private struct State {
+        var recorded: [URLRequest] = []
+        var waiter: CheckedContinuation<Void, Never>?
+    }
 
-    var now: ContinuousClock.Instant { lock.withLock { $0 } }
+    private let state = OSAllocatedUnfairLock<State>(initialState: State())
 
-    func advance(by duration: Duration) {
-        lock.withLock { $0 = $0.advanced(by: duration) }
+    func waitForFirstRequest() async {
+        await withCheckedContinuation { continuation in
+            let resumeNow = state.withLock { state -> Bool in
+                if !state.recorded.isEmpty { return true }
+                state.waiter = continuation
+                return false
+            }
+            if resumeNow { continuation.resume() }
+        }
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let waiter = state.withLock { state -> CheckedContinuation<Void, Never>? in
+            state.recorded.append(request)
+            let waiter = state.waiter
+            state.waiter = nil
+            return waiter
+        }
+        waiter?.resume()
+        try await Task.sleep(for: .seconds(60))
+        throw CancellationError()
+    }
+}
+
+/// A hand-driven stand-in for `Task.sleep`, so the resend-cooldown tests assert
+/// the window opening and closing without waiting 30 real seconds.
+///
+/// `elapse()` is tolerant of ordering — if it lands before the view model's task
+/// reaches the sleep, the release is latched — so a test never depends on
+/// winning a race with the task it just started.
+private final class ManualSleeper: @unchecked Sendable {
+    private struct State {
+        var waiter: CheckedContinuation<Void, Never>?
+        var latched = false
+    }
+
+    private let lock = OSAllocatedUnfairLock<State>(initialState: State())
+
+    func sleep(_ duration: Duration) async {
+        await withCheckedContinuation { continuation in
+            let resumeNow = lock.withLock { state -> Bool in
+                if state.latched {
+                    state.latched = false
+                    return true
+                }
+                state.waiter = continuation
+                return false
+            }
+            if resumeNow { continuation.resume() }
+        }
+    }
+
+    /// Let the pending cooldown finish.
+    func elapse() {
+        let waiter = lock.withLock { state -> CheckedContinuation<Void, Never>? in
+            if let waiter = state.waiter {
+                state.waiter = nil
+                return waiter
+            }
+            state.latched = true
+            return nil
+        }
+        waiter?.resume()
+    }
+}
+
+/// Spin the main actor until `condition` holds, so a test can observe state a
+/// detached-in-time task sets without sleeping.
+@MainActor
+private func waitUntil(_ condition: () -> Bool) async {
+    for _ in 0..<1_000 where !condition() {
+        await Task.yield()
     }
 }
 
