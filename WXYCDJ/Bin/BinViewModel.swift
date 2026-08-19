@@ -40,6 +40,11 @@ final class BinViewModel {
     /// `nil` when the SQLite store couldn't be opened — the view model then
     /// behaves exactly as before (online-only).
     private let binStore: (any BinStore)?
+    /// The app's error-reporting seam (issue #106). Defaults to
+    /// ``NoOpErrorReporter`` so every existing test construction site keeps
+    /// compiling unchanged and never fires a real Sentry event; `BinView`
+    /// passes `deps.errorReporter` explicitly.
+    private let errorReporter: any ErrorReporter
     /// True once `entries` reflects an *authoritative* bin — a persisted snapshot
     /// (even an empty one) or a successful server load — as opposed to "not loaded
     /// yet". This is what consumes the store's never-written-`nil` vs written-
@@ -48,9 +53,10 @@ final class BinViewModel {
     /// empty tray rather than regressing to "Couldn't load bin".
     private var hasLoadedBin = false
 
-    init(api: APIClient, binStore: (any BinStore)? = nil) {
+    init(api: APIClient, binStore: (any BinStore)? = nil, errorReporter: any ErrorReporter = NoOpErrorReporter()) {
         self.api = api
         self.binStore = binStore
+        self.errorReporter = errorReporter
     }
 
     /// Cold-launch step: populate `entries` from the persisted snapshot **before**
@@ -87,8 +93,10 @@ final class BinViewModel {
             // Persist the fresh server truth for the next offline launch.
             await persistSnapshot(after: "refresh")
         } catch let error as APIError {
+            errorReporter.report(error, context: "BinViewModel.refresh")
             handleRefreshFailure(error.localizedMessage)
         } catch {
+            errorReporter.report(error, context: "BinViewModel.refresh")
             handleRefreshFailure(error.localizedDescription)
         }
     }
@@ -112,6 +120,7 @@ final class BinViewModel {
             try await binStore?.saveSnapshot(entries)
         } catch {
             binLog.error("Bin snapshot save after \(operation, privacy: .public) failed: \(error.localizedDescription, privacy: .public). Offline bin may be stale.")
+            errorReporter.report(error, context: "BinViewModel.persistSnapshot")
         }
     }
 

@@ -83,6 +83,20 @@ struct BinViewModelTests {
         #expect(viewModel.entries.isEmpty)
     }
 
+    /// Issue #106: the load-failure arm reports. `GET /djs/bin` failing is a
+    /// silent field defect otherwise — the DJ just sees "Couldn't load bin".
+    @Test func refreshFailureReportsToErrorReporter() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let spy = SpyErrorReporter()
+        let viewModel = BinViewModel(api: client, errorReporter: spy)
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 500, body: Data(#"{"error":"boom"}"#.utf8)))
+        await viewModel.refresh()
+
+        #expect(spy.reportCount == 1)
+        #expect(spy.reports.first?.context == "BinViewModel.refresh")
+    }
+
     @Test func removeSuccessDropsRowAndLeavesNoError() async throws {
         let (viewModel, _, target) = try await Self.removeFirstAfterRefresh()
 
@@ -111,6 +125,26 @@ struct BinViewModelTests {
         #expect(viewModel.removeError == nil)
         #expect(viewModel.entries.count == 1)
         #expect(viewModel.state == .loaded)
+    }
+
+    /// Issue #106: the snapshot-save-failure arm reports, even though it's
+    /// best-effort on screen (no `removeError`, no `.error` state) — a
+    /// silently-stale offline bin is otherwise invisible.
+    @Test func refreshSnapshotSaveFailureReportsToErrorReporter() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let spy = SpyErrorReporter()
+        let store = SpyBinStore(throwOnSave: true)
+        let viewModel = BinViewModel(api: client, binStore: store, errorReporter: spy)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.binResponseJSON.utf8)
+        ))
+        await viewModel.refresh()
+
+        #expect(viewModel.state == .loaded)  // the network refresh itself succeeded
+        #expect(spy.reportCount == 1)
+        #expect(spy.reports.first?.context == "BinViewModel.persistSnapshot")
     }
 
     @Test func removeFailurePreservesEntriesAndPopulatesRemoveError() async throws {

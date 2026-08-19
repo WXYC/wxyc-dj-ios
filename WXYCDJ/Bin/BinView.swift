@@ -37,7 +37,7 @@ struct BinView: View {
         .navigationTitle("My Bin")
         .onAppear {
             if viewModel == nil {
-                let vm = BinViewModel(api: deps.api, binStore: deps.binStore)
+                let vm = BinViewModel(api: deps.api, binStore: deps.binStore, errorReporter: deps.errorReporter)
                 viewModel = vm
                 // Load the persisted snapshot first (instant offline render),
                 // then top up from the network. (issue #60)
