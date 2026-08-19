@@ -250,10 +250,27 @@ struct AlbumDetailMetadataReportingTests {
         #expect(AlbumDetailView.shouldReportMetadataFailure(.decoding(detail: "type mismatch at releaseYear")))
     }
 
-    @Test("unauthorized/notSignedIn/network are not reported")
-    func transportAndAuthFailuresAreNotReported() {
+    @Test("unauthorized/notSignedIn are not reported")
+    func authFailuresAreNotReported() {
         #expect(!AlbumDetailView.shouldReportMetadataFailure(.unauthorized))
         #expect(!AlbumDetailView.shouldReportMetadataFailure(.notSignedIn))
-        #expect(!AlbumDetailView.shouldReportMetadataFailure(.network("offline")))
+    }
+
+    /// Issue #106 review Fix 2: being offline is a supported mode on both
+    /// the `loadInfo` and `loadMetadata` legs, and they must agree on it —
+    /// this is the metadata-leg half of that agreement.
+    @Test("offline is a supported mode on both legs, never reported")
+    func offlineIsNotReported() {
+        #expect(!AlbumDetailView.shouldReportMetadataFailure(.offline(message: "offline")))
+    }
+
+    /// A genuine transport defect -- not connectivity, which is `.offline`
+    /// now -- is reported on both legs (issue #106 review Fix 2): before the
+    /// `.offline` split, `.network` was the "probably just offline" catch-all
+    /// this leg withheld; that reasoning stopped applying once `.offline`
+    /// took over that meaning on its own.
+    @Test("a genuine network defect is reported")
+    func networkFailureIsReported() {
+        #expect(AlbumDetailView.shouldReportMetadataFailure(.network("Non-HTTP response")))
     }
 }

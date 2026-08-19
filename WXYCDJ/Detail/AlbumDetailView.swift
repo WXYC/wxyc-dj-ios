@@ -644,8 +644,21 @@ struct AlbumDetailView: View {
             // Unlike the metadata leg below, `/library/info` is the shelf
             // source of truth, not best-effort enrichment — every failure
             // here degrades a core feature, so every failure is reported
-            // (issue #106).
-            deps.errorReporter.report(error, context: "AlbumDetailView.loadInfo")
+            // (issue #106) EXCEPT `.offline`. Being offline is a supported
+            // mode on this leg exactly as it is on `loadMetadata`'s below
+            // (issues #58/#81) — the two legs may legitimately differ on
+            // `.http` (a 404/429 is routine LML noise but a fatal shelf-data
+            // failure here), but they must not differ on `.offline`. This is
+            // also what `.task { await loadAll() }`'s cancellation now
+            // classifies as (issue #106 review Fix 1/2): SwiftUI cancels the
+            // in-flight request when a DJ backs out of this screen before
+            // `/library/info` returns, and that routine navigation must not
+            // file a Sentry event.
+            if case APIError.offline = error {
+                // no-op: expected, not a defect.
+            } else {
+                deps.errorReporter.report(error, context: "AlbumDetailView.loadInfo")
+            }
             infoFailed = true
             return nil
         }
@@ -655,10 +668,28 @@ struct AlbumDetailView: View {
     /// worth reporting (issue #106), as opposed to an expected enrichment
     /// gap. LML is best-effort — a 404 (no LML match) or a 429 (rate limit),
     /// both `APIError.http`, are routine and stay `os_log`-only, same as
-    /// `.unauthorized`/`.notSignedIn`/`.network`. A `.decoding` failure is
-    /// different in kind: it means this app's own parsing broke against a
-    /// real payload, the systematic-failure class this whole effort exists
-    /// to surface.
+    /// `.unauthorized`/`.notSignedIn`.
+    ///
+    /// **`.offline` is never reported by either this leg or `loadInfo`
+    /// (issue #106 review Fix 2).** Being offline (issues #58/#81) is a
+    /// supported mode on both legs, and they must agree on that even though
+    /// they legitimately differ on `.http` — a 404/429 is routine LML
+    /// enrichment noise, but a fatal shelf-data failure for `loadInfo`.
+    ///
+    /// **`.network` is now reported on both legs too**, which is a
+    /// deliberate reconciliation, not an oversight left over from before the
+    /// `.offline` split existed: now that a genuine connectivity failure is
+    /// its own case, a `.network` reaching either leg means something else —
+    /// a malformed request URL or a "Non-HTTP response" bug — exactly the
+    /// class of our-own-defect this whole effort exists to surface, on
+    /// either leg. Before this split `loadMetadata` withheld `.network`
+    /// because it was the catch-all "probably just offline" bucket; that
+    /// reasoning no longer applies once `.offline` carries that meaning on
+    /// its own.
+    ///
+    /// A `.decoding` failure is different in kind from all of the above: it
+    /// means this app's own parsing broke against a real payload, the
+    /// systematic-failure class this whole effort exists to surface.
     ///
     /// A **total switch** on purpose, mirroring `AuthError.caseName` and
     /// `APIError.caseName` — a future `APIError` case lands here as a
@@ -667,9 +698,9 @@ struct AlbumDetailView: View {
     /// `AlbumDetailFallbackTests`).
     static func shouldReportMetadataFailure(_ error: APIError) -> Bool {
         switch error {
-        case .decoding:
+        case .decoding, .network:
             return true
-        case .unauthorized, .notSignedIn, .http, .network:
+        case .unauthorized, .notSignedIn, .http, .offline:
             return false
         }
     }
