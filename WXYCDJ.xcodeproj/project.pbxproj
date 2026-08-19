@@ -10,6 +10,7 @@
 		03F3E3A822BE477EA3B592F2 /* BinViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2AF8E1527B384853905A17C /* BinViewModelTests.swift */; };
 		0842289CBA7AB50CF069C892 /* ConnectivityWiringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38E61706048E1E49FD89944 /* ConnectivityWiringTests.swift */; };
 		08E228FB46EFDFE100855DC3 /* SearchViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F34A2AEC7805A7689F66950F /* SearchViewModelTests.swift */; };
+		093ED6295B6CD7D54A4EB979 /* SignInControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFD157573B6C34E811716A49 /* SignInControls.swift */; };
 		0DD716BEB42AB99DC6908CE7 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF0AE695EDC8A02507316E1C /* SearchView.swift */; };
 		1D47643DA06B8BB7123F9AF0 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC410E2BE2974E5F936F2570 /* LoginView.swift */; };
 		206AE6A2C11520297BE28845 /* Fixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C17E03F68F1EE553DDECF35 /* Fixtures.swift */; };
@@ -110,6 +111,7 @@
 		F9B94507CE6ED66434689ECD /* Router.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Router.swift; sourceTree = "<group>"; };
 		FBF8B854E5058AB00D7FC28B /* AlbumDetailFallbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumDetailFallbackTests.swift; sourceTree = "<group>"; };
 		FEDCD4C382216044EF71AA87 /* TrackMatchBadgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackMatchBadgeTests.swift; sourceTree = "<group>"; };
+		FFD157573B6C34E811716A49 /* SignInControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInControls.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -158,6 +160,7 @@
 				BC410E2BE2974E5F936F2570 /* LoginView.swift */,
 				0062FB8AD63F74D7FE9C64A7 /* LoginViewModel.swift */,
 				F78BDE657ADF5BF9E9C273AB /* OTPCodeView.swift */,
+				FFD157573B6C34E811716A49 /* SignInControls.swift */,
 			);
 			path = Auth;
 			sourceTree = "<group>";
@@ -437,6 +440,7 @@
 				753572DD46DEE31D8A3F2CDB /* SearchResultRow.swift in Sources */,
 				0DD716BEB42AB99DC6908CE7 /* SearchView.swift in Sources */,
 				C03AB4DC4B72F41F6135A84C /* SearchViewModel.swift in Sources */,
+				093ED6295B6CD7D54A4EB979 /* SignInControls.swift in Sources */,
 				B90C6447D3F4DC7F4B4A4DC1 /* TrackMatchBadge.swift in Sources */,
 				8ED39D937F51F188FB3C700E /* View+AppEnvironment.swift in Sources */,
 				759C5888FC7CF1D709B5F953 /* WXYCDJApp.swift in Sources */,

@@ -95,6 +95,9 @@ struct SignInIdentifierTests {
     /// can catch their own typo, since `disableSignUp: true` means the send step
     /// reports success for an address that matches no account.
     ///
+    /// The `nil` is the *fact*, not the copy: the wording shown in its place
+    /// belongs to whichever surface renders it, not to this package.
+    ///
     /// Pinned here rather than only at the view-model layer because this type is
     /// what decides it — the same one-pin-per-layer split `49c0a36` established.
     @Test(arguments: [
@@ -104,10 +107,10 @@ struct SignInIdentifierTests {
         // sees the mistake, since nothing downstream can report it.
         ("juana@wxyc", "juana@wxyc"),
         // Usernames resolve to an address the DJ never typed — withheld.
-        ("juana", "your registered email"),
-        ("dj_chuquimamani", "your registered email"),
+        ("juana", nil),
+        ("dj_chuquimamani", nil),
     ])
-    func onlyATypedEmailIsEverDisplayed(raw: String, expected: String) {
-        #expect(SignInIdentifier(raw).displayTarget == expected)
+    func onlyATypedEmailIsEverDisclosed(raw: String, expected: String?) {
+        #expect(SignInIdentifier(raw).typedEmail == expected)
     }
 }

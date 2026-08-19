@@ -16,10 +16,17 @@ struct OTPCodeView: View {
     @Environment(AuthService.self) private var auth
     let viewModel: LoginViewModel
 
-    /// What the DJ is told the code went to — **never** an address resolved
-    /// from a username. `LoginCodeDestination` splits this from the address the
-    /// verify call is keyed on precisely so this view cannot render the latter.
-    let displayTarget: String
+    /// Where the code went. Only `typedEmail` is renderable — it is `nil` in
+    /// exactly the case where showing the address would disclose one the DJ never
+    /// typed, and this view supplies the wording for that case.
+    let destination: LoginCodeDestination
+
+    /// The `nil` case's copy lives here, in the layer that renders it, rather
+    /// than in `WXYCAPI` — a second surface (a QR confirmation, a macOS target)
+    /// can word it differently without editing the networking package.
+    private var displayTarget: String {
+        destination.typedEmail ?? "your registered email"
+    }
 
     @FocusState private var codeFocused: Bool
 
@@ -44,31 +51,14 @@ struct OTPCodeView: View {
                 Text("Sent to \(displayTarget). It expires in 5 minutes.")
             }
 
-            // Coalesced deliberately. Rendering only `auth.lastError` here
-            // swallowed every resend failure — and worse, made the error already
-            // on screen disappear, since `sendLoginCode` clears `lastError` on
-            // entry while its own failure lands in `sendError`.
-            if let error = viewModel.displayedError {
-                Section {
-                    Text(error)
-                        .foregroundStyle(.red)
-                }
-            }
+            SignInErrorSection(message: viewModel.displayedError)
 
             Section {
-                Button {
-                    Task { await viewModel.submitCode() }
-                } label: {
-                    if case .signingIn = auth.state {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                    } else {
-                        Text("Sign In")
-                            .frame(maxWidth: .infinity)
-                            .bold()
-                    }
-                }
-                .disabled(!viewModel.canSubmitCode)
+                PrimaryActionButton(
+                    title: "Sign In",
+                    isBusy: auth.state == .signingIn,
+                    isEnabled: viewModel.canSubmitCode
+                ) { await viewModel.submitCode() }
 
                 Button("Send a new code") {
                     Task { await viewModel.resendCode() }
