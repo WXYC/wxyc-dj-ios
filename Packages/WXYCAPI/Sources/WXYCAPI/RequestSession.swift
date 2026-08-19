@@ -2,8 +2,9 @@
 //  RequestSession.swift
 //  WXYCAPI
 //
-//  Tiny protocol over URLSession so APIClient and AuthService are testable
-//  without booting a real network stack.
+//  Tiny protocol over URLSession so this package's request-issuing types are
+//  testable without booting a real network stack, plus CookielessSession —
+//  the one owner of the package's no-cookie policy.
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -19,13 +20,15 @@ extension URLSession: RequestSession {}
 
 /// Decorates any `RequestSession` so every request that passes through it never
 /// sends or stores a cookie, no matter which session actually performs the
-/// fetch. Each of this package's three `RequestSession` consumers —
-/// `AuthService`, `APIClient`, `DiskThumbnailProvider` — wraps its injected
-/// session with this at `init`, so the policy has one implementation instead of
-/// being a property each request-issuing function has to remember to apply
-/// itself (issue #99, closing a gap #98 left: `DiskThumbnailProvider` had been
-/// added as a third `RequestSession` consumer over `URLSession.shared` with
-/// cookie handling left at its default).
+/// fetch. Every `RequestSession` consumer in this package wraps its injected
+/// session with this at `init` — and, crucially, *stores it as a
+/// `CookielessSession`* rather than as an `any RequestSession`, so assigning the
+/// raw injected session doesn't compile. The wrap is what the stored property's
+/// type demands, not something each consumer has to remember (issue #99, closing
+/// a gap #98 left open: the policy then lived as a per-request flag two
+/// transport functions each set, so a third consumer was added over
+/// `URLSession.shared` with cookie handling at its default and nothing caught
+/// it).
 ///
 /// This client authenticates with a bearer token and never wants a cookie jar,
 /// and an unwanted one is actively fatal here. better-auth's `bearer()`
@@ -42,6 +45,16 @@ extension URLSession: RequestSession {}
 /// the middleware never arms. It also keeps the session off disk outside the
 /// Keychain, which `clearLocalSession()` can't reach — issue #52's leave-no-trace
 /// contract.
+///
+/// **Scope: requests this package issues.** SwiftUI's `AsyncImage`, which the app
+/// layer uses to render the same `artwork_url` covers `DiskThumbnailProvider`
+/// fetches, loads through its own internal loader on `URLSession.shared` and is
+/// not a `RequestSession` consumer, so nothing here covers it. That is latent for
+/// the same reason the thumbnail path was — those URLs resolve to CDN hosts
+/// today, not a WXYC host — but if cover art is ever proxied through
+/// `api.wxyc.org`, denying the jar process-wide (`HTTPCookieStorage.shared
+/// .cookieAcceptPolicy = .never` at launch) is the only thing that would cover
+/// it. Don't read "one home" as an app-wide guarantee.
 struct CookielessSession: RequestSession {
     private let base: any RequestSession
 

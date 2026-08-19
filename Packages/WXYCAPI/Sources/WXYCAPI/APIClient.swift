@@ -49,7 +49,10 @@ public enum CatalogFetchResult: Equatable, Sendable {
 
 public final class APIClient: Sendable {
     private let configuration: WXYCAPIConfiguration
-    private let session: any RequestSession
+    /// Deliberately typed as the decorator, not `any RequestSession`: it makes
+    /// `self.session = session` fail to compile, so the no-cookie policy can't be
+    /// dropped by a consumer that copies this shape (issue #99).
+    private let session: CookielessSession
     private let authService: AuthService
     /// Reports each request's transport result to the connectivity layer (#56):
     /// `true` when the server answered (any HTTP status — we reached it), `false`

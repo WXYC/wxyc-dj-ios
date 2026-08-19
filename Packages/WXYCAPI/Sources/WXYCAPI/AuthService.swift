@@ -103,7 +103,10 @@ public final class AuthService {
 
     private let configuration: WXYCAPIConfiguration
     private let storage: any TokenStorage
-    private let session: any RequestSession
+    /// Deliberately typed as the decorator, not `any RequestSession`: it makes
+    /// `self.session = session` fail to compile, so the no-cookie policy can't be
+    /// dropped by a consumer that copies this shape (issue #99).
+    private let session: CookielessSession
 
     /// Reports each auth-transport result to the connectivity layer (issue #71),
     /// mirroring ``APIClient``'s `onOutcome`: `true` when the server answered (any
@@ -478,9 +481,10 @@ public final class AuthService {
 
     /// POST a JSON body to an auth-service path and hand back the raw response.
     ///
-    /// Shares ``send(_:)`` — and therefore the cookie suppression (issue #99) and
-    /// the issue-#71 connectivity hook — with every other request this service
-    /// makes. That sharing is the point: both OTP legs are non-GET better-auth
+    /// Shares ``send(_:)`` — and therefore the issue-#71 connectivity hook, and
+    /// the ``CookielessSession`` that `send` issues over (issue #99) — with every
+    /// other request this service makes. That sharing is the point: both OTP legs
+    /// are non-GET better-auth
     /// routes, so both sit under the global `originCheckMiddleware` that a
     /// lingering cookie arms, and a hand-rolled `URLRequest` here would silently
     /// opt out of the fix `b5ea02d` landed.
