@@ -378,6 +378,84 @@ struct APIClientTests {
         }
     }
 
+    // MARK: - Decoding error detail narrowing (issue #106)
+
+    /// `JSONCoders.decoder`'s custom date strategy builds a `DecodingError
+    /// .dataCorrupted` whose `Context.debugDescription` is
+    /// `"Unrecognized date format: \(raw)"` -- `raw` being verbatim server
+    /// response content. Before the #106 narrowing, `describe(_:)`
+    /// interpolated that debugDescription directly into
+    /// `APIError.decoding(detail:)`, making it a live channel for whatever
+    /// the server sent. The sentinel stands in for something sensitive that
+    /// must never survive into the reported detail -- only the case kind and
+    /// the coding-key path may.
+    @Test func decodingDetailDropsServerContentFromADataCorruptedDate() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"[{"id":100,"album_title":"DOGA","artist_name":"Juana Molina","add_date":"SECRET_PAYLOAD"}]"#.utf8)
+        ))
+
+        do {
+            _ = try await client.searchLibrary(artist: "Juana", title: nil)
+            Issue.record("expected a decoding failure")
+        } catch APIError.decoding(let detail) {
+            #expect(!detail.contains("SECRET_PAYLOAD"))
+            #expect(detail.contains("data corrupted"))
+            #expect(detail.contains("add_date"))
+        }
+    }
+
+    /// The `.typeMismatch` arm interpolated `Context.debugDescription` too --
+    /// Foundation's own wording ("Expected to decode Int but found a string
+    /// instead"), not server content -- but the narrowing drops it
+    /// regardless: the formatter is code-derived by construction, not
+    /// "server content only", so a future arm can't reintroduce the same
+    /// hazard by reasoning "this debugDescription is safe."
+    @Test func decodingDetailDropsDebugDescriptionFromATypeMismatch() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"[{"id":"not-an-int","album_title":"DOGA","artist_name":"Juana Molina"}]"#.utf8)
+        ))
+
+        do {
+            _ = try await client.searchLibrary(artist: "Juana", title: nil)
+            Issue.record("expected a decoding failure")
+        } catch APIError.decoding(let detail) {
+            #expect(!detail.contains("Expected to decode"))
+            #expect(detail.contains("type mismatch"))
+            #expect(detail.contains("id"))
+        }
+    }
+
+    /// `.keyNotFound` never carried `debugDescription` even before the
+    /// narrowing -- pinned here so the case-kind + coding-path shape is
+    /// covered for all three data-bearing cases, not just the two that
+    /// changed.
+    @Test func decodingDetailReportsTheMissingKeyAndPath() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        // artist_name is required; omitting it triggers .keyNotFound.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"[{"id":100,"album_title":"DOGA"}]"#.utf8)
+        ))
+
+        do {
+            _ = try await client.searchLibrary(artist: "Juana", title: nil)
+            Issue.record("expected a decoding failure")
+        } catch APIError.decoding(let detail) {
+            #expect(detail.contains("artist_name"))
+        }
+    }
+
+    // Note: DecodingError has exactly four cases today (keyNotFound,
+    // typeMismatch, valueNotFound, dataCorrupted), all handled explicitly
+    // above -- there is no way to construct a fifth through normal decoding,
+    // so the `@unknown default:` arm's constant string isn't reachable from
+    // a test. It's covered by inspection instead: see the doc comment on
+    // `APIClient.describe(_:)`.
+
     @Test func catalogServerErrorSurfacesAsHTTPError() async throws {
         let (client, _, session) = try await Self.makeSignedInClient()
         session.enqueue(StubRequestSession.Stub(
