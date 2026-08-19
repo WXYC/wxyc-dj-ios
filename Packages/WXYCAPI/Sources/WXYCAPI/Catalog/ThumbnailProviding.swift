@@ -54,7 +54,7 @@ public actor DiskThumbnailProvider: ThumbnailProviding {
         maxPixelDimension: Int = ThumbnailDownscaler.defaultMaxPixelDimension
     ) {
         self.directory = directory
-        self.session = session
+        self.session = CookielessSession(session)
         self.maxPixelDimension = maxPixelDimension
         // Best-effort: ensure the cache dir exists so writes don't fail on first use.
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

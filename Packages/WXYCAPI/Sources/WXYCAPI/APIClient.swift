@@ -65,7 +65,7 @@ public final class APIClient: Sendable {
         onOutcome: (@Sendable (Bool) -> Void)? = nil
     ) {
         self.configuration = configuration
-        self.session = session
+        self.session = CookielessSession(session)
         self.authService = authService
         self.onOutcome = onOutcome
     }
@@ -323,14 +323,6 @@ public final class APIClient: Sendable {
     }
 
     private func fire(_ request: URLRequest) async throws -> (Data, URLResponse) {
-        var request = request
-        // Bearer-only, same as `AuthService.send`: every request here already
-        // carries `Authorization: Bearer <jwt>`, so a cookie jar adds nothing
-        // and costs something. See the full argument there — in short, a stored
-        // better-auth session cookie arms better-auth's global origin check and
-        // gets the *next sign-in* refused with a 403, and it parks a session
-        // credential on disk where `clearLocalSession()` can't reach it.
-        request.httpShouldHandleCookies = false
         do {
             let result = try await session.data(for: request)
             // The server answered (any status code) — we reached it, so the
