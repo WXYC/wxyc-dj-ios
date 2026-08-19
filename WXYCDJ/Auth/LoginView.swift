@@ -2,8 +2,9 @@
 //  LoginView.swift
 //  WXYCDJ
 //
-//  Username + password sign-in form. Delegates the call to LoginViewModel;
-//  surfaces any AuthError inline.
+//  Sign-in form: one identifier field (username or email, as dj.wxyc.org
+//  accepts) plus a password. Delegates the call to LoginViewModel; surfaces
+//  any AuthError inline.
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -17,7 +18,7 @@ struct LoginView: View {
     @State private var viewModel: LoginViewModel?
     @FocusState private var focusedField: Field?
 
-    private enum Field { case username, password }
+    private enum Field { case identifier, password }
 
     var body: some View {
         NavigationStack {
@@ -42,12 +43,18 @@ struct LoginView: View {
         @Bindable var viewModel = viewModel
         Form {
             Section {
-                TextField("Username", text: $viewModel.username)
+                // One field for either credential, as dj.wxyc.org has: an
+                // email routes to a different better-auth endpoint than a
+                // username (issue #97), but that is AuthService's business.
+                // The email keyboard puts `@` and `.` on the primary layer and
+                // serves a username just as well.
+                TextField("Username or email", text: $viewModel.identifier)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .textContentType(.username)
+                    .keyboardType(.emailAddress)
                     .submitLabel(.next)
-                    .focused($focusedField, equals: .username)
+                    .focused($focusedField, equals: .identifier)
                     .onSubmit { focusedField = .password }
                 SecureField("Password", text: $viewModel.password)
                     .textContentType(.password)

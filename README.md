@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/WXYC/wxyc-dj-ios/actions/workflows/ci.yml/badge.svg)](https://github.com/WXYC/wxyc-dj-ios/actions/workflows/ci.yml)
 
-A small SwiftUI app for WXYC DJs. Log in with dj.wxyc.org credentials, search the WXYC library with live results, view a release's full metadata (catalog row + LML enrichment — release year, label, genres, styles, tracklist, streaming links, Discogs and Wikipedia URLs), and add/remove items from your personal **bin** (the per-DJ favorites collection Backend-Service exposes at `/djs/bin`).
+A small SwiftUI app for WXYC DJs. Log in with dj.wxyc.org credentials (username or email, as the site takes either), search the WXYC library with live results, view a release's full metadata (catalog row + LML enrichment — release year, label, genres, styles, tracklist, streaming links, Discogs and Wikipedia URLs), and add/remove items from your personal **bin** (the per-DJ favorites collection Backend-Service exposes at `/djs/bin`).
 
 This is a focused tool. It deliberately does **not** ship: flowsheet integration, playback, rotation (H/M/L/S) editing, push notifications, or the second LML call for artist bio/tokens. Those can come later — see the v2 list at the bottom.
 
@@ -74,7 +74,7 @@ All endpoints live in Backend-Service (`apps/backend/routes/`) except the auth s
 
 | Use | Method | Path | Auth |
 | --- | --- | --- | --- |
-| Sign in | POST | `/auth/sign-in/username` | none |
+| Sign in | POST | `/auth/sign-in/username` or `/auth/sign-in/email` | none |
 | Exchange session for JWT | GET | `/auth/token` | session bearer |
 | Sign out | POST | `/auth/sign-out` | session bearer |
 | Search library | GET | `/library/?artist_name=&album_title=&n=` | JWT |
