@@ -227,6 +227,58 @@ final class LoginViewModel {
         reporter.report(error, context: "LoginViewModel")
     }
 
+    /// A synthetic error reported when a sign-in leg completes in the
+    /// issue-#53 pending window — `.signedIn(payload: nil)`, a transient
+    /// JWT-exchange failure (e.g. a `503` from `GET /auth/token`) that
+    /// leaves the DJ signed in with no JWT until a lazy re-mint.
+    ///
+    /// Not an `AuthError` case: `AuthService` deliberately doesn't treat this
+    /// as an error — it's a documented "session established, JWT pending"
+    /// state, so `lastError` stays whatever it was cleared to at the start of
+    /// `signIn` (`nil`, if leg 1 succeeded). `reportIfDefect()` therefore has
+    /// nothing to read for this outcome. This type exists only because
+    /// `ErrorReporter.report` requires `any Error`, and the pending window
+    /// still needs *something* to report — see ``reportPendingJWTIfNeeded()``.
+    private struct PendingJWTAfterSignIn: Error {}
+
+    /// Whether `state` is the issue-#53 "session established, JWT pending"
+    /// window. Doesn't need its own case-exhaustiveness guard the way
+    /// `shouldReport(_:)` does — `AuthService.State` isn't a package-level
+    /// total-switch surface this PR's privacy contract governs, and this
+    /// predicate only ever asks one specific question of it.
+    nonisolated static func isPendingJWTWindow(_ state: AuthService.State) -> Bool {
+        if case .signedIn(payload: nil) = state { return true }
+        return false
+    }
+
+    /// Report a pending-JWT window left by the sign-in leg that just settled.
+    ///
+    /// Issue #106 review Fix 6: the PR's own capture-site table lists
+    /// `.serverFailure` as a reported sign-in outcome, but a `.serverFailure`
+    /// on the JWT leg specifically doesn't reach `lastError` at all — leg 2
+    /// of `completeSignIn(establishing:)` deliberately treats a transient
+    /// failure there as "keep the session, enter the pending window," not an
+    /// error (see `AuthError.offline(message:)`'s neighbor doc comment on
+    /// that method). Without this, that outcome was reported nowhere,
+    /// silently contradicting the PR's own claim.
+    ///
+    /// Needs no package change: `.signedIn(payload: nil)` is already public
+    /// and already documented as meaning exactly this, so observing
+    /// `auth.state` after `submit()`/`submitCode()` settle is sufficient.
+    /// The specific status (503 vs. a transport failure) is lost — `AuthService`
+    /// doesn't preserve it past the pending-window transition either — but
+    /// "sign-in completed with the JWT leg unresolved" is the signal actually
+    /// worth having, and it costs no new seam in `WXYCAPI`.
+    ///
+    /// Only `submit()`/`submitCode()` call this: `requestCode()`/`resendCode()`
+    /// never touch `state` (no session exists yet at that point), so checking
+    /// it there would risk reporting a stale pending window left by an
+    /// unrelated, earlier sign-in rather than this call's own outcome.
+    private func reportPendingJWTIfNeeded() {
+        guard Self.isPendingJWTWindow(auth.state) else { return }
+        reporter.report(PendingJWTAfterSignIn(), context: "LoginViewModel.pendingJWT")
+    }
+
     // MARK: - Actions
 
     /// Ask for a code and advance to the entry step. Stays on `.identifier` if
@@ -292,6 +344,7 @@ final class LoginViewModel {
         guard canSubmitCode, case let .awaitingCode(destination) = stage else { return }
         await auth.signIn(email: destination.email, otp: code)
         reportIfDefect()
+        reportPendingJWTIfNeeded()
     }
 
     func submit() async {
@@ -302,6 +355,7 @@ final class LoginViewModel {
         // is significant.
         await auth.signIn(identifier: trimmedIdentifier, password: password)
         reportIfDefect()
+        reportPendingJWTIfNeeded()
     }
 
     // MARK: - Stage changes
