@@ -33,3 +33,10 @@ Packages/*/.build/
 
 # Local development worktrees (see the org CLAUDE.md git workflow)
 .worktrees/
+
+# Sentry CLI config (contains an auth token) -- see scripts/upload-debug-symbols.sh
+.sentryclirc
+
+# Tools a future release-pipeline installer might vendor into the checkout
+# (sentry-cli, etc). Binaries, per-machine, reinstalled on demand.
+.ci-tools/
