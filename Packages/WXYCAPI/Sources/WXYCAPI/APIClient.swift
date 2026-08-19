@@ -232,18 +232,43 @@ public final class APIClient: Sendable {
         }
     }
 
+    /// Renders a `DecodingError` into the string `APIError.decoding(detail:)`
+    /// carries — the one deliberate exception to this package's "never
+    /// report server-sent text" privacy contract (issue #106), because a
+    /// systematic decode failure in the field is exactly the class of defect
+    /// this whole effort exists to surface. The exception only holds because
+    /// this formatter is narrowed to **code-derived facts alone**: the
+    /// `DecodingError` case kind and the coding-key path, never
+    /// `Context.debugDescription`.
+    ///
+    /// `debugDescription` is not incidental noise here — it is a live
+    /// channel for verbatim server response content.
+    /// `JSONCoders.decoder`'s custom date strategy builds exactly one as
+    /// `"Unrecognized date format: \(raw)"`, where `raw` is the untouched
+    /// wire string that failed to parse; the pre-#106 version of this
+    /// formatter interpolated that string directly into every `.typeMismatch`
+    /// and `.dataCorrupted` arm. Dropping it is what makes the "keep the
+    /// detail" exception in the privacy contract honest rather than a loophole.
+    ///
+    /// The `@unknown default:` arm is the one a test cannot construct —
+    /// `DecodingError` has exactly four cases today, all handled above — but
+    /// it must still be a **constant**, not `String(describing: error)`:
+    /// `String(describing:)` on a `DecodingError` embeds the same
+    /// `Context.debugDescription` this whole function exists to drop, so a
+    /// future fifth case reaching this arm would silently reopen the channel
+    /// through the one branch a test can't exercise to catch it.
     private static func describe(_ error: DecodingError) -> String {
         switch error {
         case .keyNotFound(let key, let ctx):
             return "missing key '\(key.stringValue)' at \(pathString(ctx.codingPath))"
         case .typeMismatch(_, let ctx):
-            return "type mismatch at \(pathString(ctx.codingPath)): \(ctx.debugDescription)"
+            return "type mismatch at \(pathString(ctx.codingPath))"
         case .valueNotFound(_, let ctx):
             return "null at \(pathString(ctx.codingPath)) (expected non-null)"
         case .dataCorrupted(let ctx):
-            return "data corrupted at \(pathString(ctx.codingPath)): \(ctx.debugDescription)"
+            return "data corrupted at \(pathString(ctx.codingPath))"
         @unknown default:
-            return String(describing: error)
+            return "unrecognized decoding error"
         }
     }
 
