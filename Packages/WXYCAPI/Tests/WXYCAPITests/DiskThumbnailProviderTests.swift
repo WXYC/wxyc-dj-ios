@@ -57,6 +57,12 @@ struct DiskThumbnailProviderTests {
             #expect(max(size.width, size.height) <= 256)
             // Exactly one fetch.
             #expect(session.recordedRequests.count == 1)
+            // Issue #99: DiskThumbnailProvider defaults to URLSession.shared, the
+            // same process-wide session AuthService's cookie-bearing auth traffic
+            // would use — so a thumbnail fetch must not send or store a cookie
+            // either, or a future host change (art proxied through api.wxyc.org)
+            // starts filling the jar that later breaks sign-in.
+            #expect(session.recordedRequests.first?.httpShouldHandleCookies == false)
         }
     }
 
