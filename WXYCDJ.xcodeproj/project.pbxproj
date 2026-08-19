@@ -30,6 +30,7 @@
 		8ED39D937F51F188FB3C700E /* View+AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = D317ED7B8718828E57375589 /* View+AppEnvironment.swift */; };
 		9EC8B78671B1FC2CBB6A7F5B /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = C119CEEC9E20EE8783822BD5 /* AppIcon.icon */; };
 		A8D1D090E2B450A27FFD508F /* WXYCAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 89D30A6942DD94B4BDD547A2 /* WXYCAPI */; };
+		A9039E349C7D9F641D53A252 /* OTPCodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F78BDE657ADF5BF9E9C273AB /* OTPCodeView.swift */; };
 		AAF320BD598E531F6EBA5954 /* AppDependencies.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6225BA88FCDBB74E198F0388 /* AppDependencies.swift */; };
 		ABA5F662B7377F106722B223 /* DeepLinkAlbumCover.swift in Sources */ = {isa = PBXBuildFile; fileRef = E85422FA59D8966C8BE74197 /* DeepLinkAlbumCover.swift */; };
 		B427ABFA72D740CDC87D0B35 /* SpotlightClientStateToleranceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54E53B2B0DF8CCAB1C3786E0 /* SpotlightClientStateToleranceTests.swift */; };
@@ -105,6 +106,7 @@
 		E85422FA59D8966C8BE74197 /* DeepLinkAlbumCover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLinkAlbumCover.swift; sourceTree = "<group>"; };
 		ED3C3F1A8A8E2B9449C84894 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		F34A2AEC7805A7689F66950F /* SearchViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchViewModelTests.swift; sourceTree = "<group>"; };
+		F78BDE657ADF5BF9E9C273AB /* OTPCodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OTPCodeView.swift; sourceTree = "<group>"; };
 		F9B94507CE6ED66434689ECD /* Router.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Router.swift; sourceTree = "<group>"; };
 		FBF8B854E5058AB00D7FC28B /* AlbumDetailFallbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumDetailFallbackTests.swift; sourceTree = "<group>"; };
 		FEDCD4C382216044EF71AA87 /* TrackMatchBadgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackMatchBadgeTests.swift; sourceTree = "<group>"; };
@@ -155,6 +157,7 @@
 			children = (
 				BC410E2BE2974E5F936F2570 /* LoginView.swift */,
 				0062FB8AD63F74D7FE9C64A7 /* LoginViewModel.swift */,
+				F78BDE657ADF5BF9E9C273AB /* OTPCodeView.swift */,
 			);
 			path = Auth;
 			sourceTree = "<group>";
@@ -426,6 +429,7 @@
 				1D47643DA06B8BB7123F9AF0 /* LoginView.swift in Sources */,
 				EE55F522C6025321F2064FEF /* LoginViewModel.swift in Sources */,
 				33D06D6A22AA7D12BE080CA8 /* MainView.swift in Sources */,
+				A9039E349C7D9F641D53A252 /* OTPCodeView.swift in Sources */,
 				28F187742AAC9A2BCA5E895D /* OfflineBanner.swift in Sources */,
 				75C46202B5A836CB31D649FE /* RootView.swift in Sources */,
 				F68D603AF4F27C7C2129BC96 /* Router.swift in Sources */,
