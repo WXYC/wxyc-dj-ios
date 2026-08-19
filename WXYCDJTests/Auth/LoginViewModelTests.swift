@@ -47,6 +47,19 @@ struct LoginViewModelTests {
         #expect(viewModel.canSubmit == false)
     }
 
+    @Test func canSubmitFalseWhenIdentifierIsOnlyWhitespace() {
+        // submit() trims, so a whitespace-only identifier would post an empty
+        // one and come back "Incorrect username or email, or password" — a
+        // credential verdict on a field the DJ never filled in. Gate on the
+        // trimmed value so the button stays disabled instead.
+        let session = StubRequestSession()
+        let viewModel = LoginViewModel(auth: makeAuth(session: session))
+        viewModel.identifier = "   \n "
+        viewModel.password = "hunter2"
+
+        #expect(viewModel.canSubmit == false)
+    }
+
     @Test func canSubmitTrueWhenBothFieldsPopulated() {
         let session = StubRequestSession()
         let viewModel = LoginViewModel(auth: makeAuth(session: session))

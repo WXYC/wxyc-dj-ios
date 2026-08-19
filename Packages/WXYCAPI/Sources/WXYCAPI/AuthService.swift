@@ -22,6 +22,16 @@ public enum AuthError: Error, Sendable, Equatable {
     case network(message: String)
     case missingSessionToken
     case serverFailure(status: Int, message: String?)
+    /// The server understood the request and refused it for a stated reason the
+    /// DJ can act on — a malformed email (`400 INVALID_EMAIL`), an unverified
+    /// address (`403 EMAIL_NOT_VERIFIED`, since Backend-Service sets
+    /// `requireEmailVerification: true`). Distinct from ``invalidCredentials``,
+    /// which asserts the username/password pair was wrong: folding these into it
+    /// would have a DJ retyping a correct password against a problem retyping
+    /// can't fix. Distinct from ``serverFailure`` too, because that renders
+    /// behind a "Server error (4xx)" prefix, reading as a backend fault for
+    /// something the DJ mistyped.
+    case rejected(message: String?)
     case notSignedIn
 
     public var localizedMessage: String {
@@ -30,8 +40,16 @@ public enum AuthError: Error, Sendable, Equatable {
         case .network(let m): "Network error: \(m)"
         case .missingSessionToken: "Sign-in did not return a session token."
         case .serverFailure(let s, let m): "Server error (\(s))\(m.map { ": \($0)" } ?? "")."
+        case .rejected(let m): Self.sentence(m) ?? "Sign-in was rejected."
         case .notSignedIn: "You are signed out."
         }
+    }
+
+    /// better-auth's messages arrive unpunctuated ("Invalid email"); render one
+    /// as a sentence without doubling a period it already carries.
+    private static func sentence(_ message: String?) -> String? {
+        guard let message, !message.isEmpty else { return nil }
+        return message.hasSuffix(".") ? message : "\(message)."
     }
 }
 
@@ -328,6 +346,24 @@ public final class AuthService {
     /// machine — is byte-for-byte unchanged. Pure observation: the only added
     /// effect is the `onOutcome` call.
     private func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        var request = request
+        // This client authenticates with a bearer token and never wants a cookie
+        // jar, and an unwanted one is actively fatal here. better-auth's
+        // `bearer()` after-hook ADDS `set-auth-token` without stripping the
+        // `Set-Cookie` it rides alongside, so a default `URLSession` stores the
+        // session cookie and replays it on every later request to the host —
+        // including the next sign-in. better-auth registers
+        // `originCheckMiddleware` globally on every non-GET, and it enforces the
+        // `Origin` header *only when a cookie is present*; a native client sends
+        // no Origin, so a cookie-bearing sign-in is refused with
+        // `403 MISSING_OR_NULL_ORIGIN` before any credential check. (Verified
+        // against production on both sign-in routes — this is not specific to
+        // the issue-#97 email route.) Suppressing cookie handling stops the jar
+        // filling in the first place *and* stops any pre-existing cookie from an
+        // older build being sent, so the middleware never arms. It also keeps the
+        // session off disk outside the Keychain, which `clearLocalSession()`
+        // can't reach — issue #52's leave-no-trace contract.
+        request.httpShouldHandleCookies = false
         do {
             let result = try await session.data(for: request)
             onOutcome?(true)
@@ -375,8 +411,15 @@ public final class AuthService {
                 return bodyToken
             }
             throw AuthError.missingSessionToken
-        case 401, 403:
+        case 401:
             throw AuthError.invalidCredentials
+        case 400, 403:
+            // The server refused for a reason it named, and the reason is not
+            // "wrong password": a malformed email, an unverified address, a
+            // rejected origin. Surface its message rather than asserting a
+            // credential failure the DJ would try to fix by retyping.
+            let message = (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data))?.message
+            throw AuthError.rejected(message: message)
         default:
             let message = (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data))?.message
             throw AuthError.serverFailure(status: http.statusCode, message: message)

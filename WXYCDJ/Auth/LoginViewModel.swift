@@ -30,17 +30,23 @@ final class LoginViewModel {
         self.auth = auth
     }
 
+    /// Gates on the **trimmed** identifier, matching what `submit()` actually
+    /// sends: an untrimmed check would enable Sign In for a whitespace-only
+    /// field, post an empty identifier, and return a credential verdict on a
+    /// field the DJ never filled in.
     var canSubmit: Bool {
-        !identifier.isEmpty && !password.isEmpty && auth.state != .signingIn
+        !trimmedIdentifier.isEmpty && !password.isEmpty && auth.state != .signingIn
+    }
+
+    /// Keyboards (and password managers) routinely emit a trailing space on
+    /// autofill and the server would 401. The password is deliberately *not*
+    /// trimmed; whitespace in a password is significant.
+    private var trimmedIdentifier: String {
+        identifier.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func submit() async {
         guard canSubmit else { return }
-        // Trim whitespace on the identifier only — keyboards (and password
-        // managers) routinely emit a trailing space on autofill and the server
-        // would 401. Password intentionally untrimmed; whitespace in a password
-        // is significant.
-        let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        await auth.signIn(identifier: trimmed, password: password)
+        await auth.signIn(identifier: trimmedIdentifier, password: password)
     }
 }
