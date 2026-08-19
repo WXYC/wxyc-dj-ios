@@ -85,6 +85,53 @@ public enum AuthError: Error, Sendable, Equatable {
     }
 }
 
+extension AuthError {
+    /// A case-identifying value safe to attach to a crash report — the
+    /// package-level privacy contract issue #106 exists to hold by
+    /// construction rather than by convention.
+    ///
+    /// Sentry builds `exception.value` (and `mechanism.desc`) from
+    /// `String(describing: error)` on a bridged Swift error, so handing a
+    /// reporter the raw enum would ship every associated value verbatim:
+    /// ``rejected(message:)``'s and ``serverFailure(status:message:)``'s
+    /// server-authored `message`, ``network(message:)``'s and
+    /// ``offline(message:)``'s client-side `localizedDescription` (which can
+    /// embed a hostname). `caseName` never carries a string this switch
+    /// didn't put there itself — only the case name, plus
+    /// ``serverFailure(status:message:)``'s status as a plain `Int`, never
+    /// the message beside it.
+    ///
+    /// Implemented as an exhaustive `switch` with **no `default:`** on
+    /// purpose: adding a case to `AuthError` without extending this switch is
+    /// a compile error, not a silent gap a future message-bearing case could
+    /// slip through unmapped.
+    public struct CaseName: Sendable, Equatable {
+        public let name: String
+        public let statusCode: Int?
+    }
+
+    public var caseName: CaseName {
+        switch self {
+        case .invalidCredentials:
+            CaseName(name: "invalidCredentials", statusCode: nil)
+        case .network:
+            CaseName(name: "network", statusCode: nil)
+        case .offline:
+            CaseName(name: "offline", statusCode: nil)
+        case .missingSessionToken:
+            CaseName(name: "missingSessionToken", statusCode: nil)
+        case .serverFailure(let status, _):
+            CaseName(name: "serverFailure", statusCode: status)
+        case .rejected:
+            CaseName(name: "rejected", statusCode: nil)
+        case .rateLimited:
+            CaseName(name: "rateLimited", statusCode: nil)
+        case .notSignedIn:
+            CaseName(name: "notSignedIn", statusCode: nil)
+        }
+    }
+}
+
 @MainActor
 @Observable
 public final class AuthService {
