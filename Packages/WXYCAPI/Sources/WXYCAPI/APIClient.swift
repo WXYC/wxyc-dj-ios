@@ -21,6 +21,40 @@ public enum APIError: Error, Sendable {
     case http(status: Int, message: String?)
     case decoding(detail: String)
     case network(String)
+    /// A connectivity-class transport failure (no route to the server, DNS,
+    /// timeout, captive portal, or a deliberate cancellation -- see
+    /// ``ConnectivityErrorClassification``), discovered at one of this
+    /// package's flatten sites that used to fold every non-`APIError` throw
+    /// into ``network(_:)`` unconditionally: ``APIClient/fire(_:)``'s
+    /// catch-all, and ``APIClient/currentJWT()``'s -- the lazy JWT-refresh
+    /// leg can itself fail offline one layer below `fire`, since
+    /// `AuthService.currentJWT()` rethrows a raw, unwrapped transport error
+    /// on that specific leg rather than an `AuthError` (see
+    /// `AuthService.send(_:)`), so a second discard site existed here that
+    /// mirrored `fire`'s exactly.
+    ///
+    /// Being offline is a supported mode -- the app has an on-device catalog
+    /// clone and falls back to it (issues #58/#81) -- and is never worth
+    /// reporting to crash telemetry, unlike a genuine transport defect
+    /// (issue #106). **`.cancelled` is deliberately included in the
+    /// connectivity classification, not an oversight left to work around:**
+    /// neither a genuinely offline request nor a cancelled one is a defect,
+    /// so both belong in the non-reported bucket. The debounced search in
+    /// `LibrarySearch` (issue #58) and a DJ backing out of
+    /// `AlbumDetailView` before `/library/info` returns both cancel an
+    /// in-flight request on every routine interaction -- reporting either as
+    /// a defect would be exactly the event spam `enableCaptureFailedRequests
+    /// = false` exists to prevent, just reached through cancellation instead
+    /// of a captive portal. This is this enum's peer to
+    /// ``AuthError/offline(message:)``, added because the API path had the
+    /// identical flatten-and-discard shape without the split.
+    ///
+    /// Carries the same message ``network(_:)`` would have, so
+    /// ``localizedMessage`` renders byte-for-byte what a caller saw before
+    /// this split existed -- the split changes only which *case* a caller
+    /// pattern matches on to decide whether to report, never what's shown on
+    /// screen.
+    case offline(message: String)
 
     public var localizedMessage: String {
         switch self {
@@ -29,6 +63,7 @@ public enum APIError: Error, Sendable {
         case .http(let s, let m): "Server error (\(s))\(m.map { ": \($0)" } ?? "")."
         case .decoding(let detail): "The server returned an unexpected response: \(detail)"
         case .network(let m): "Network error: \(m)"
+        case .offline(let m): "Network error: \(m)"
         }
     }
 }
@@ -37,11 +72,24 @@ extension APIError {
     /// A case-identifying value safe to attach to a crash report — mirrors
     /// ``AuthError/CaseName`` (issue #106) for this package's other error
     /// enum. `.http(status:message:)`'s server-authored `message` and
-    /// `.decoding(detail:)`'s detail (narrowed by ``APIClient/describe(_:)``
-    /// but still not safe to ship *unmapped* through a raw-enum capture) and
-    /// `.network(String)`'s client-side description are all dropped by
-    /// construction; only the case name and `.http`'s status as a plain
-    /// `Int` survive.
+    /// `.network(String)`'s / `.offline(message:)`'s client-side
+    /// description are dropped by construction; the case name, `.http`'s
+    /// status as a plain `Int`, and `.decoding(detail:)`'s narrowed `detail`
+    /// string are what survive.
+    ///
+    /// `.decoding(detail:)`'s `detail` is the **one** deliberate exception to
+    /// "never carry an associated string," and it is safe only because two
+    /// facts are load-bearing on each other. `CaseName` itself carries
+    /// nothing but whatever the case already held — the actual narrowing
+    /// happens one level up, in ``APIClient/describe(_:)``, which is
+    /// deliberately restricted to code-derived facts alone (the
+    /// `DecodingError` case kind, the coding-key path, and the expected
+    /// `Any.Type` on a type mismatch) and never `Context.debugDescription`,
+    /// a live channel for verbatim server response content. That function's
+    /// own regression tests (`APIClientTests`) pin that it can emit nothing
+    /// else. Carrying `detail` here would reopen the "never report
+    /// server-sent text" rule the moment that formatter regressed — it
+    /// stays honest only as long as that guarantee holds.
     ///
     /// Implemented as an exhaustive `switch` with **no `default:`**: adding a
     /// case to `APIError` without extending this switch is a compile error,
@@ -49,20 +97,26 @@ extension APIError {
     public struct CaseName: Sendable, Equatable {
         public let name: String
         public let statusCode: Int?
+        /// `.decoding(detail:)`'s narrowed detail string, present only for
+        /// that case — see this type's doc comment for why carrying it here
+        /// is safe. `nil` for every other case.
+        public let detail: String?
     }
 
     public var caseName: CaseName {
         switch self {
         case .unauthorized:
-            CaseName(name: "unauthorized", statusCode: nil)
+            CaseName(name: "unauthorized", statusCode: nil, detail: nil)
         case .notSignedIn:
-            CaseName(name: "notSignedIn", statusCode: nil)
+            CaseName(name: "notSignedIn", statusCode: nil, detail: nil)
         case .http(let status, _):
-            CaseName(name: "http", statusCode: status)
-        case .decoding:
-            CaseName(name: "decoding", statusCode: nil)
+            CaseName(name: "http", statusCode: status, detail: nil)
+        case .decoding(let detail):
+            CaseName(name: "decoding", statusCode: nil, detail: detail)
         case .network:
-            CaseName(name: "network", statusCode: nil)
+            CaseName(name: "network", statusCode: nil, detail: nil)
+        case .offline:
+            CaseName(name: "offline", statusCode: nil, detail: nil)
         }
     }
 }
@@ -238,8 +292,9 @@ public final class APIClient: Sendable {
     /// systematic decode failure in the field is exactly the class of defect
     /// this whole effort exists to surface. The exception only holds because
     /// this formatter is narrowed to **code-derived facts alone**: the
-    /// `DecodingError` case kind and the coding-key path, never
-    /// `Context.debugDescription`.
+    /// `DecodingError` case kind, the coding-key path, and — on
+    /// `.typeMismatch`/`.valueNotFound` — the expected `Any.Type` Foundation
+    /// itself supplies. Never `Context.debugDescription`.
     ///
     /// `debugDescription` is not incidental noise here — it is a live
     /// channel for verbatim server response content.
@@ -249,6 +304,15 @@ public final class APIClient: Sendable {
     /// formatter interpolated that string directly into every `.typeMismatch`
     /// and `.dataCorrupted` arm. Dropping it is what makes the "keep the
     /// detail" exception in the privacy contract honest rather than a loophole.
+    ///
+    /// The expected `Any.Type` on `.typeMismatch`/`.valueNotFound`, by
+    /// contrast, is safe to include: Swift derives it from the *model's*
+    /// declared property type (e.g. `Int.self`), never from the payload
+    /// bytes, so it cannot hold anything a server sent. Including it
+    /// restores most of the diagnostic power the `debugDescription` drop
+    /// cost issue #77's original triage ("Expected to decode
+    /// Dictionary<String, Any> but found an array instead") while staying
+    /// provably payload-free.
     ///
     /// The `@unknown default:` arm is the one a test cannot construct —
     /// `DecodingError` has exactly four cases today, all handled above — but
@@ -261,10 +325,10 @@ public final class APIClient: Sendable {
         switch error {
         case .keyNotFound(let key, let ctx):
             return "missing key '\(key.stringValue)' at \(pathString(ctx.codingPath))"
-        case .typeMismatch(_, let ctx):
-            return "type mismatch at \(pathString(ctx.codingPath))"
-        case .valueNotFound(_, let ctx):
-            return "null at \(pathString(ctx.codingPath)) (expected non-null)"
+        case .typeMismatch(let type, let ctx):
+            return "type mismatch at \(pathString(ctx.codingPath)): expected \(type)"
+        case .valueNotFound(let type, let ctx):
+            return "null at \(pathString(ctx.codingPath)) (expected non-null \(type))"
         case .dataCorrupted(let ctx):
             return "data corrupted at \(pathString(ctx.codingPath))"
         @unknown default:
@@ -399,17 +463,42 @@ public final class APIClient: Sendable {
             // to the local clone while the device is online, and a local search
             // issues no request, so nothing would restore the flag. Surface the
             // failure without latching the monitor.
-            throw APIError.network(error.localizedDescription)
+            //
+            // `.offline` below (not `.network`) is what keeps this routine
+            // cancellation from ever reaching crash telemetry (issue #106) —
+            // `ConnectivityErrorClassification` includes `.cancelled` in its
+            // connectivity-code set deliberately, not by omission; see
+            // ``APIError/offline(message:)``'s doc comment.
+            throw Self.classifyTransportFailure(error)
         } catch is CancellationError {
             // Same rationale for structured-concurrency cancellation surfaced as
-            // CancellationError (a RequestSession may map it that way).
-            throw APIError.network("Request cancelled")
+            // CancellationError (a RequestSession may map it that way). Not a
+            // URLError, so classifyTransportFailure can't classify it by code —
+            // but cancellation is cancellation regardless of which type carries
+            // it, so this is unconditionally `.offline`, never `.network`.
+            throw APIError.offline(message: "Request cancelled")
         } catch {
             // A thrown error from the transport means we never reached the
             // server (no network, captive portal, DNS, timeout): report offline.
             onOutcome?(false)
-            throw APIError.network(error.localizedDescription)
+            throw Self.classifyTransportFailure(error)
         }
+    }
+
+    /// The classification shared by every site in this file that discards a
+    /// raw, non-`APIError` transport error into this enum: ``fire(_:)``'s
+    /// catch-all above, and ``currentJWT()``'s below (the lazy JWT-refresh
+    /// leg `AuthService.currentJWT()` drives can itself fail offline, one
+    /// layer below `fire` — see that method's doc comment). Mirrors
+    /// `AuthService.classifyTransportFailure` (issue #106): a
+    /// connectivity-class `URLError` becomes ``APIError/offline(message:)``;
+    /// everything else is a genuine transport defect and stays
+    /// ``APIError/network(_:)``. One home so the two sites can't quietly
+    /// diverge on what counts as "offline".
+    private static func classifyTransportFailure(_ error: Error) -> APIError {
+        ConnectivityErrorClassification.isConnectivityFailure(error)
+            ? .offline(message: error.localizedDescription)
+            : .network(error.localizedDescription)
     }
 
     private func currentJWT() async throws -> String {
@@ -418,7 +507,7 @@ public final class APIClient: Sendable {
         } catch AuthError.notSignedIn {
             throw APIError.notSignedIn
         } catch {
-            throw APIError.network(error.localizedDescription)
+            throw Self.classifyTransportFailure(error)
         }
     }
 }

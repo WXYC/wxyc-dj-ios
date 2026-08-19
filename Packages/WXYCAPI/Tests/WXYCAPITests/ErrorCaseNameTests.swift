@@ -63,6 +63,7 @@ struct ErrorCaseNameTests {
         (APIError.http(status: 500, message: "SECRET_PAYLOAD"), "http", 500),
         (APIError.decoding(detail: "SECRET_PAYLOAD"), "decoding", nil),
         (APIError.network("SECRET_PAYLOAD"), "network", nil),
+        (APIError.offline(message: "SECRET_PAYLOAD"), "offline", nil),
     ] as [(APIError, String, Int?)])
     func apiErrorCaseNameMapsEveryCaseToItsExpectedNameAndStatus(
         error: APIError,
@@ -73,19 +74,40 @@ struct ErrorCaseNameTests {
         #expect(error.caseName.statusCode == expectedStatusCode)
     }
 
-    /// `.decoding(detail:)` is the deliberate carve-out elsewhere (its detail
-    /// is narrowed, not reported raw), but `caseName` itself must still drop
-    /// it -- the mapping is the one Sentry actually reports through, never
-    /// the raw enum.
+    /// `.http`'s server-authored message and `.network`'s/`.offline`'s
+    /// client-side description must never survive into `caseName.name` or
+    /// `.statusCode` -- the mapping is the one Sentry actually reports
+    /// through, never the raw enum. `.decoding(detail:)` is deliberately
+    /// excluded from this list: its narrowed `detail` string IS carried
+    /// (through `caseName.detail`, not `.name`/`.statusCode`) — see
+    /// `apiErrorCaseNameCarriesTheNarrowedDecodingDetailOnlyOnThatCase` below
+    /// for the positive assertion of exactly that.
     @Test func apiErrorCaseNameNeverCarriesTheAssociatedMessage() {
         let cases: [APIError] = [
             .http(status: 500, message: "SECRET_PAYLOAD"),
-            .decoding(detail: "SECRET_PAYLOAD"),
             .network("SECRET_PAYLOAD"),
+            .offline(message: "SECRET_PAYLOAD"),
         ]
         for error in cases {
             #expect(!error.caseName.name.contains("SECRET_PAYLOAD"))
             #expect(String(describing: error.caseName.statusCode).contains("SECRET_PAYLOAD") == false)
+            #expect(error.caseName.detail == nil)
         }
+    }
+
+    /// The positive half of the `.decoding(detail:)` exception (issue #106
+    /// review Fix 4): `caseName.detail` carries exactly the string the case
+    /// already held, and every other case's `detail` stays `nil`. Safe only
+    /// because `APIClient.describe(_:)` -- the one place that ever
+    /// constructs a `.decoding(detail:)` from a real decode failure -- is
+    /// narrowed to code-derived facts alone; see that function's own
+    /// regression tests in `APIClientTests`.
+    @Test func apiErrorCaseNameCarriesTheNarrowedDecodingDetailOnlyOnThatCase() {
+        let error = APIError.decoding(detail: "type mismatch at artist_name: expected Int")
+
+        #expect(error.caseName.detail == "type mismatch at artist_name: expected Int")
+        #expect(APIError.http(status: 500, message: nil).caseName.detail == nil)
+        #expect(APIError.network("boom").caseName.detail == nil)
+        #expect(APIError.offline(message: "boom").caseName.detail == nil)
     }
 }
