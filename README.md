@@ -74,7 +74,10 @@ All endpoints live in Backend-Service (`apps/backend/routes/`) except the auth s
 
 | Use | Method | Path | Auth |
 | --- | --- | --- | --- |
-| Sign in | POST | `/auth/sign-in/username` or `/auth/sign-in/email` | none |
+| Sign in (password) | POST | `/auth/sign-in/username` or `/auth/sign-in/email` | none |
+| Resolve a username to its email | POST | `/auth/wxyc/lookup-email` | none |
+| Mail a one-time sign-in code | POST | `/auth/email-otp/send-verification-otp` | none |
+| Sign in (one-time code) | POST | `/auth/sign-in/email-otp` | none |
 | Exchange session for JWT | GET | `/auth/token` | session bearer |
 | Sign out | POST | `/auth/sign-out` | session bearer |
 | Search library | GET | `/library/?artist_name=&album_title=&n=` | JWT |

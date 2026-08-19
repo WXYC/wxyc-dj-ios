@@ -61,6 +61,31 @@ enum SignInIdentifier: Equatable, Sendable {
         self = raw.contains("@") ? .email(raw) : .username(raw)
     }
 
+    /// What the DJ may be shown as the destination of a mailed login code
+    /// (issue #100).
+    ///
+    /// The same `@` classification answers a second question: whether the app
+    /// already knows the DJ's email, or had to *ask the server for it*.
+    /// `POST /auth/wxyc/lookup-email` resolves a username to an address — a call
+    /// Backend-Service documents as "a mild enumeration vector", accepted because
+    /// it is rate-limited and no worse than the existing sign-in leak. Rendering
+    /// its answer would take a vector bounded by request rate and put it on
+    /// screen, so a looked-up address is never displayed; only one the DJ typed
+    /// themselves is. dj-site draws the identical line in `LoginFormSwitcher.tsx`.
+    ///
+    /// This lives here, beside the routing decision, rather than in the view
+    /// model, so the `@` predicate is applied in exactly one place — the same
+    /// argument this type's doc comment makes against forking `isValidEmail`.
+    /// `AuthService.sendLoginCode` hands the result out as
+    /// ``LoginCodeDestination/displayTarget`` so the app layer renders a string
+    /// without needing to see this (internal) type at all.
+    var displayTarget: String {
+        switch self {
+        case .email(let email): email
+        case .username: "your registered email"
+        }
+    }
+
     /// Path component appended to ``WXYCAPIConfiguration/authBaseURL``.
     var path: String {
         switch self {

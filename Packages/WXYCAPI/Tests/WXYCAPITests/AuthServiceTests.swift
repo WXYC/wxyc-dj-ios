@@ -234,6 +234,37 @@ struct AuthServiceTests {
         #expect(try storage.load(.sessionToken) == nil)
     }
 
+    /// A 429 is a rate limit, not a credential failure and not a backend fault.
+    ///
+    /// This is the **password** route deliberately, even though the case arrived
+    /// with issue #100's OTP work: `establishSession` classifies status for every
+    /// credential route, so the 429 arm is shared, and pinning it only on the new
+    /// route would leave the change to the shipped one uncovered. Before #100 this
+    /// fell to `.serverFailure` and rendered "Server error (429)", which reads as
+    /// something broken server-side that the DJ can only wait out blindly.
+    ///
+    /// Reachable in ordinary use: the limiter is keyed on `X-Real-IP` at 10 per
+    /// 15 minutes, and the control room shares one egress address.
+    @Test func rateLimitedSignInSaysSoRatherThanReadingAsAServerFault() async throws {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        // The Express limiter's body is `{error: …}`, which APIErrorResponse
+        // (required `message`) can't decode — so the copy must not depend on it.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 429,
+            body: Data(#"{"error":"Too many requests, please try again later."}"#.utf8)
+        ))
+
+        await service.signIn(identifier: "juana", password: "pw")
+
+        #expect(service.state == .signedOut)
+        #expect(service.lastError == .rateLimited)
+        #expect(service.lastError?.localizedMessage == "Too many attempts. Wait a few minutes and try again.")
+        #expect(try storage.load(.sessionToken) == nil)
+    }
+
     @Test func signInWithFailedJWTExchangeLeavesNoStoredToken() async throws {
         // The two-leg handshake: /auth/sign-in/username succeeds (session token
         // issued + persisted), then /auth/token returns 401 — the session bearer

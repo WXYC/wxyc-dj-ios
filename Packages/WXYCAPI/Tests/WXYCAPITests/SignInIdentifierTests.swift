@@ -82,4 +82,32 @@ struct SignInIdentifierTests {
         let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: String])
         #expect(json["password"] == password)
     }
+
+    /// The same `@` predicate decides a second thing (issue #100): whether the
+    /// app already knows the DJ's email, or had to ask the server for it.
+    ///
+    /// A username is resolved through `POST /auth/wxyc/lookup-email`, which
+    /// Backend-Service documents as "a mild enumeration vector" it accepts
+    /// because the route is rate-limited. Displaying that answer would take a
+    /// vector bounded by request rate and put it on screen for anyone holding the
+    /// phone, so a looked-up address is never shown — only one the DJ typed. An
+    /// unresolved *email*, by contrast, is safe to echo and is the only way a DJ
+    /// can catch their own typo, since `disableSignUp: true` means the send step
+    /// reports success for an address that matches no account.
+    ///
+    /// Pinned here rather than only at the view-model layer because this type is
+    /// what decides it — the same one-pin-per-layer split `49c0a36` established.
+    @Test(arguments: [
+        ("juana@wxyc.org", "juana@wxyc.org"),
+        ("jessica.pratt@unc.edu", "jessica.pratt@unc.edu"),
+        // Typo'd but still email-shaped: echoing it back is exactly how the DJ
+        // sees the mistake, since nothing downstream can report it.
+        ("juana@wxyc", "juana@wxyc"),
+        // Usernames resolve to an address the DJ never typed — withheld.
+        ("juana", "your registered email"),
+        ("dj_chuquimamani", "your registered email"),
+    ])
+    func onlyATypedEmailIsEverDisplayed(raw: String, expected: String) {
+        #expect(SignInIdentifier(raw).displayTarget == expected)
+    }
 }
