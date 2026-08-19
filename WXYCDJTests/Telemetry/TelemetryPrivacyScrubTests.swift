@@ -70,10 +70,47 @@ struct TelemetryPrivacyScrubTests {
         #expect(scrubbed["count"] as? Int == 2)
     }
 
+    // MARK: - scrub(_:NSError) -- nested underlying errors (issue #106 review Fix 5)
+
+    /// `NSUnderlyingErrorKey` is a routine `URLError.userInfo` key URLSession
+    /// populates, and its value is itself an `NSError` -- a leaf the walk
+    /// previously passed through untouched via `default:`, then rendered
+    /// downstream by Sentry's serializer via the nested error's own
+    /// `description`, which (like the top-level curated/`URLError` case)
+    /// inlines its entire `userInfo` dictionary as free text. Same substring
+    /// channel `scrubEmbeddedURLs` exists to close, reached through a leaf
+    /// the walk didn't cover.
+    @Test func scrubDescendsIntoAnNSUnderlyingError() throws {
+        let underlying = NSError(
+            domain: NSPOSIXErrorDomain,
+            code: 61,
+            userInfo: [
+                NSURLErrorFailingURLStringErrorKey: "https://api.wxyc.org/library/search?artist=Chuquimamani-Condori",
+                NSLocalizedDescriptionKey: "Connection refused",
+            ]
+        )
+        let outer = NSError(
+            domain: NSURLErrorDomain,
+            code: URLError.Code.cannotConnectToHost.rawValue,
+            userInfo: [NSUnderlyingErrorKey: underlying]
+        )
+
+        let scrubbed = TelemetryPrivacyScrub.scrub(outer.userInfo)
+
+        let scrubbedUnderlying = try #require(scrubbed[NSUnderlyingErrorKey] as? NSError)
+        #expect(scrubbedUnderlying.domain == NSPOSIXErrorDomain)
+        #expect(scrubbedUnderlying.code == 61)
+        #expect(scrubbedUnderlying.userInfo[NSURLErrorFailingURLStringErrorKey] as? String
+                == "https://api.wxyc.org/library/search")
+        // The substring channel too: the rebuilt underlying error's own
+        // `description` must not carry the query string either.
+        #expect(!"\(scrubbedUnderlying)".contains("Chuquimamani-Condori"))
+    }
+
     // MARK: - scrubEmbeddedURLs(in:) -- the compound-description case
 
     /// The exact shape `NSError.description` renders for a `URLError`
-    /// carrying `NSErrorFailingURLStringErrorKey` -- what
+    /// carrying `NSURLErrorFailingURLStringErrorKey` -- what
     /// `exception.mechanism.desc` actually contains at capture time. The
     /// query string is a *substring* of a much larger string, which is why
     /// `scrubEmbeddedURLs` exists instead of relying on the whole-string
