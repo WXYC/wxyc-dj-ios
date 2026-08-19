@@ -350,4 +350,44 @@ struct OTPSignInTests {
         service.clearLastError()
         #expect(service.lastError == nil)
     }
+
+    // MARK: - Transport classification (issue #106)
+
+    /// `recordingFailure`'s catch-all — `sendLoginCode`/`resendLoginCode`'s
+    /// own flatten site — must draw the same offline/network split
+    /// `completeSignIn`'s leg 1 does: a connectivity-class `URLError` thrown
+    /// before any response arrives records `.offline`, and the *original*
+    /// error still rethrows untouched (recordingFailure never wraps it).
+    @Test func sendLoginCodeConnectivityTransportFailureFlattensToOffline() async throws {
+        let session = StubRequestSession()
+        let (service, _) = Self.makeService(session)
+        session.enqueue(failure: URLError(.notConnectedToInternet))
+
+        await #expect(throws: URLError.self) {
+            try await service.sendLoginCode(identifier: "juana@wxyc.org")
+        }
+
+        guard case .offline = service.lastError else {
+            Issue.record("expected .offline, got \(String(describing: service.lastError))")
+            return
+        }
+    }
+
+    /// The complement, driven through `resendLoginCode` so both callers of
+    /// `recordingFailure` are covered: a non-connectivity transport throw
+    /// stays `.network`.
+    @Test func resendLoginCodeNonConnectivityTransportFailureStaysNetwork() async throws {
+        let session = StubRequestSession()
+        let (service, _) = Self.makeService(session)
+        session.enqueue(failure: CocoaError(.fileReadCorruptFile))
+
+        await #expect(throws: CocoaError.self) {
+            try await service.resendLoginCode(to: "juana@wxyc.org")
+        }
+
+        guard case .network = service.lastError else {
+            Issue.record("expected .network, got \(String(describing: service.lastError))")
+            return
+        }
+    }
 }
