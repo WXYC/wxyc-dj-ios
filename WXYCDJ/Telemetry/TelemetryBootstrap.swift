@@ -27,24 +27,25 @@ import Sentry
 import WXYCAPI
 
 enum TelemetryBootstrap {
-    /// Placeholder DSN. The Sentry project for this app doesn't exist yet
-    /// (blocked on an org permission) -- syntactically valid so
-    /// `SentrySDK.start` doesn't reject it outright, but not a real
-    /// destination. A DSN is a publishable client identifier, not a secret,
-    /// so there's no plumbing concern in replacing it -- just don't ship
-    /// this literal.
-    // TODO(#106): replace with the real DSN once the Sentry project exists.
-    private static let placeholderDSN = "https://0000000000000000000000000000@o0.ingest.sentry.io/0"
+    /// The `wxyc-dj-ios` Sentry project (org `wxyc`).
+    ///
+    /// Hardcoded rather than plumbed through Info.plist or a remote config
+    /// because a DSN is a **publishable client identifier, not a secret** --
+    /// it authorizes writing events to one project and nothing else, and it
+    /// ships inside the app binary regardless of where it's read from, so
+    /// hiding it would buy nothing. Revisit only if key rotation becomes a
+    /// real need.
+    private static let productionDSN = "https://60002d6113d87b42210304e42bdd4d3d@o4510807758143488.ingest.us.sentry.io/4511938878111744"
 
     /// Starts the SDK with the production DSN. The sole production call
     /// site is `AppDelegate.init()`.
     static func start() {
-        start(dsn: placeholderDSN)
+        start(dsn: productionDSN)
     }
 
     /// Starts the SDK against `dsn`. Split from ``start()`` so a test can
     /// exercise this exact option set -- privacy contract, sample rates, the
-    /// scrub pipeline -- against a DSN of its own, never the placeholder
+    /// scrub pipeline -- against a DSN of its own, never the production one
     /// above. See ``debugCaptureSerializedEvent(for:dsn:breadcrumb:via:)``.
     static func start(dsn: String) {
         SentrySDK.start { options in
@@ -209,7 +210,7 @@ enum TelemetryBootstrap {
     /// - Parameters:
     ///   - error: The error to report, typically a `URLError` or a
     ///     message-bearing package error (`AuthError`/`APIError`).
-    ///   - dsn: A test DSN -- never ``placeholderDSN`` or a real one.
+    ///   - dsn: A test DSN -- never ``productionDSN`` or a real one.
     ///   - breadcrumb: Configures a `Breadcrumb` (level/category defaulted
     ///     to `.info`/`"http"`) to record before `error` is reported, so a
     ///     test can exercise the breadcrumb scrub path alongside the error
