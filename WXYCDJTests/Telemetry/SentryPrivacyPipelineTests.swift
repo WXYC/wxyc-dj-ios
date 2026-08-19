@@ -18,6 +18,18 @@
 //  package (see project.yml's Sentry package comment), so the hook's plain
 //  `[String: Any]` return is the only way to inspect a captured event here.
 //
+//  `.serialized` is load-bearing, not tidiness (issue #106 review Fix 3):
+//  every test in this suite resets and reads
+//  `TelemetryBootstrap.lastSerializedEvent`, a file-private `nonisolated
+//  (unsafe) static var`, and (re-)calls `SentrySDK.start` -- both process-
+//  wide state. Swift Testing runs tests in parallel by default, so without
+//  this trait one test's reset can null out another's in-flight capture, or
+//  a test can read back a *different* test's event and pass vacuously (a
+//  URLError assertion silently checked against an AuthError event, the
+//  privacy guarantee never actually exercised). RefreshCatalogReportingTests
+//  pins the identical requirement for its own shared spy state; this suite
+//  needs it one layer lower, inside the SDK itself.
+//
 //  Created by Jake Bromberg on 08/19/26.
 //  Copyright © 2026 WXYC. All rights reserved.
 //
@@ -27,7 +39,7 @@ import Testing
 import WXYCAPI
 @testable import WXYCDJ
 
-@Suite("Sentry privacy pipeline (end-to-end)")
+@Suite("Sentry privacy pipeline (end-to-end)", .serialized)
 struct SentryPrivacyPipelineTests {
     /// Never the placeholder production DSN, and never a real one --
     /// syntactically valid so `SentrySDK.start` accepts it, pointed at a
@@ -77,6 +89,44 @@ struct SentryPrivacyPipelineTests {
                 crumb.message = "GET \(queryURL)"
                 crumb.data = ["url": queryURL, "method": "GET"]
             }
+        ))
+
+        let strings = Self.allStrings(in: event)
+        #expect(!strings.isEmpty)
+        for string in strings {
+            #expect(!string.contains(Self.secretQueryMarker), "leaked query text in: \(string)")
+            #expect(!string.contains("?"), "leaked a query string in: \(string)")
+        }
+    }
+
+    /// Issue #106 review Fix 5: `NSUnderlyingErrorKey` is a routine
+    /// `URLError.userInfo` key URLSession populates on a nested transport
+    /// failure, and its value is itself an `NSError` -- a leaf
+    /// `TelemetryPrivacyScrub.scrub(_:Any)` didn't previously descend into.
+    /// Left alone, Sentry's serializer renders that nested error via its own
+    /// `description`, which inlines its entire `userInfo` dictionary as free
+    /// text -- the identical substring channel `scrubEmbeddedURLs` exists to
+    /// close for the top-level error, reached through a leaf the walk
+    /// missed. No prior test in this suite constructs an underlying error,
+    /// so this path was unexercised before this test existed.
+    @Test func capturedURLErrorWithNestedUnderlyingErrorLeavesNoQueryStringAnywhereInTheEvent() throws {
+        let queryURL = "https://api.wxyc.org/library/search?artist=\(Self.secretQueryMarker)"
+        let underlying = NSError(
+            domain: NSPOSIXErrorDomain,
+            code: 61,
+            userInfo: [
+                NSURLErrorFailingURLStringErrorKey: queryURL,
+                NSLocalizedDescriptionKey: "Connection refused",
+            ]
+        )
+        let error = URLError(.cannotConnectToHost, userInfo: [
+            NSUnderlyingErrorKey: underlying,
+            NSLocalizedDescriptionKey: "cannot connect to host",
+        ])
+
+        let event = try #require(TelemetryBootstrap.debugCaptureSerializedEvent(
+            for: error,
+            dsn: Self.testDSN
         ))
 
         let strings = Self.allStrings(in: event)

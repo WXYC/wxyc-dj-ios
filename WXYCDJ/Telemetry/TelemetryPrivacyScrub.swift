@@ -28,16 +28,31 @@ enum TelemetryPrivacyScrub {
 
     /// Scrubs a single leaf value from a telemetry payload -- an
     /// `NSError.userInfo` entry, a breadcrumb's `data` value, and so on.
-    /// Recurses into nested dictionaries/arrays so a caller never has to
-    /// know the payload's exact shape up front; every other type (numbers,
-    /// bools, dates, ...) passes through unchanged, since only text and URLs
-    /// can carry a query string.
+    /// Recurses into nested dictionaries/arrays **and nested `NSError`s** so
+    /// a caller never has to know the payload's exact shape up front; every
+    /// other type (numbers, bools, dates, ...) passes through unchanged,
+    /// since only text, URLs, and error objects that might carry either can
+    /// hold a query string.
+    ///
+    /// The `NSError` case (issue #106 review Fix 5) exists because
+    /// `NSUnderlyingErrorKey` is a routine `URLError.userInfo` key URLSession
+    /// populates on a nested transport failure, and its value is itself an
+    /// `NSError` -- a leaf the walk didn't previously descend into, then
+    /// rendered downstream by Sentry's serializer via the nested error's own
+    /// `description`, which (exactly like the top-level curated/`URLError`
+    /// case `scrubEmbeddedURLs` exists for) inlines its *entire* `userInfo`
+    /// dictionary as free text. Rebuilding the error with a
+    /// recursively-scrubbed `userInfo` closes that at every nesting depth,
+    /// not just one level down -- an underlying error can itself carry
+    /// another `NSUnderlyingErrorKey`.
     static func scrub(_ value: Any) -> Any {
         switch value {
         case let url as URL:
             return URLScrubbing.scrub(url)
         case let nsURL as NSURL:
             return URLScrubbing.scrub(nsURL as URL) as NSURL
+        case let nsError as NSError:
+            return scrub(nsError)
         case let string as String:
             return scrubEmbeddedURLs(in: string)
         case let dictionary as [String: Any]:
@@ -47,6 +62,16 @@ enum TelemetryPrivacyScrub {
         default:
             return value
         }
+    }
+
+    /// `scrub(_:Any)` specialized to a nested `NSError` -- rebuilds it with
+    /// the same domain and code, but with `userInfo` recursively scrubbed
+    /// through `scrub(_:[String:Any])`. See `scrub(_:Any)`'s doc comment for
+    /// why this leaf matters: it is the one Foundation-supplied shape the
+    /// walk didn't cover before, and it is exactly what `NSUnderlyingErrorKey`
+    /// carries.
+    static func scrub(_ error: NSError) -> NSError {
+        NSError(domain: error.domain, code: error.code, userInfo: scrub(error.userInfo))
     }
 
     /// `scrub(_:Any)` specialized to a whole dictionary -- the shape every
