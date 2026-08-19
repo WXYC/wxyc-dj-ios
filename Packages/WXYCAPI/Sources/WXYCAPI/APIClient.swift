@@ -33,6 +33,40 @@ public enum APIError: Error, Sendable {
     }
 }
 
+extension APIError {
+    /// A case-identifying value safe to attach to a crash report — mirrors
+    /// ``AuthError/CaseName`` (issue #106) for this package's other error
+    /// enum. `.http(status:message:)`'s server-authored `message` and
+    /// `.decoding(detail:)`'s detail (narrowed by ``APIClient/describe(_:)``
+    /// but still not safe to ship *unmapped* through a raw-enum capture) and
+    /// `.network(String)`'s client-side description are all dropped by
+    /// construction; only the case name and `.http`'s status as a plain
+    /// `Int` survive.
+    ///
+    /// Implemented as an exhaustive `switch` with **no `default:`**: adding a
+    /// case to `APIError` without extending this switch is a compile error,
+    /// not a silent gap.
+    public struct CaseName: Sendable, Equatable {
+        public let name: String
+        public let statusCode: Int?
+    }
+
+    public var caseName: CaseName {
+        switch self {
+        case .unauthorized:
+            CaseName(name: "unauthorized", statusCode: nil)
+        case .notSignedIn:
+            CaseName(name: "notSignedIn", statusCode: nil)
+        case .http(let status, _):
+            CaseName(name: "http", statusCode: status)
+        case .decoding:
+            CaseName(name: "decoding", statusCode: nil)
+        case .network:
+            CaseName(name: "network", statusCode: nil)
+        }
+    }
+}
+
 /// Outcome of a conditional `GET /library/catalog`. Either the catalog is
 /// unchanged since the supplied watermark (a cheap `304`), or the server
 /// returned the full body plus a fresh `Last-Modified` watermark to persist.
