@@ -32,36 +32,17 @@ import Foundation
 /// (issue #53) and ``APIClient`` draws for the connectivity monitor (issue #58) —
 /// same shape of judgment, different question, so the three stay separate.
 public enum ArtworkFailureClassification {
-    /// Connectivity-class `URLError` codes: the *link* failed, so the URL itself
-    /// tells us nothing and may be perfectly healthy.
-    ///
-    /// Deliberately excluded — these are `URLError`s too, but they describe the
-    /// **resource** rather than the link, so they must still retire the URL:
-    /// `.cannotDecodeContentData` / `.badServerResponse` (what a CDN's 403/404 error
-    /// page looks like by the time it reaches the image decoder — i.e. the exact
-    /// expired-signature and purged-asset cases issue #86 exists to recover from),
-    /// `.fileDoesNotExist`, `.resourceUnavailable`, `.badURL`, `.unsupportedURL`.
-    /// Classifying *every* `URLError` as transient would silently disable the
-    /// fallthrough entirely.
-    static let transientCodes: Set<URLError.Code> = [
-        .notConnectedToInternet,
-        .networkConnectionLost,
-        .timedOut,
-        .cannotConnectToHost,
-        .cannotFindHost,
-        .dnsLookupFailed,
-        .secureConnectionFailed,
-        .dataNotAllowed,
-        .internationalRoamingOff,
-        .callIsActive,
-        .cancelled,
-    ]
-
     /// `true` when `error` indicts the URL itself and the caller should stop
     /// offering it; `false` for a connectivity-class failure, which indicts only the
     /// link and leaves the URL eligible for a later attempt.
+    ///
+    /// The connectivity-class code list itself lives in
+    /// ``ConnectivityErrorClassification`` (issue #106) — `AuthService` needs
+    /// the exact same judgment for its own offline/network split, and a
+    /// second copy here would be one this file's own doc comment warns
+    /// against: free to silently drift from the first the next time either
+    /// call site's list is edited.
     public static func indictsURL(_ error: Error) -> Bool {
-        guard let urlError = error as? URLError else { return true }
-        return !transientCodes.contains(urlError.code)
+        !ConnectivityErrorClassification.isConnectivityFailure(error)
     }
 }
