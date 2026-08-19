@@ -92,9 +92,9 @@ struct APIClientTests {
         #expect(query.contains("artist_name=Juana"))
         #expect(query.contains("n=10"))
         #expect(request.value(forHTTPHeaderField: "Authorization")?.hasPrefix("Bearer ") == true)
-        // Issue #99: the cookie-suppression guarantee now lives on
-        // CookielessSession rather than a flag `fire` sets itself; pin it here so
-        // APIClient's requests keep the guarantee the move was supposed to preserve.
+        // Issue #99: this client wraps its session in `CookielessSession` (which
+        // owns the why, and is pinned in `CookielessSessionTests`). Asserted here
+        // because the wrap, not the guarantee, is what this consumer can drop.
         #expect(request.httpShouldHandleCookies == false)
     }
 

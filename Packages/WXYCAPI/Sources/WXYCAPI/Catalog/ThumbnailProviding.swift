@@ -38,7 +38,10 @@ public protocol ThumbnailProviding: Sendable {
 /// downscale / write run off the main actor.
 public actor DiskThumbnailProvider: ThumbnailProviding {
     private let directory: URL
-    private let session: any RequestSession
+    /// Deliberately typed as the decorator, not `any RequestSession`: it makes
+    /// `self.session = session` fail to compile, so the no-cookie policy can't be
+    /// dropped by a consumer that copies this shape (issue #99).
+    private let session: CookielessSession
     private let maxPixelDimension: Int
     private let fileManager = FileManager.default
     /// Upper bound on a cover response we'll decode (a real cover is at most a few
