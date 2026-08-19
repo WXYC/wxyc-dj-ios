@@ -21,9 +21,9 @@ final class LoginViewModel {
     /// Which credential the DJ is partway through presenting.
     ///
     /// An explicit stage rather than a pair of booleans, because the states are
-    /// genuinely exclusive and two of them carry data — and because the stage is
-    /// what keeps the screen's two error surfaces from ever appearing together
-    /// (see ``sendError``).
+    /// genuinely exclusive and two of them carry data. It does **not** decide
+    /// which error the screen shows — that was an earlier design and it dropped
+    /// messages in both directions; see ``displayedError``.
     enum Stage: Equatable {
         /// The default. One field; the DJ asks for a code.
         case identifier
@@ -54,39 +54,73 @@ final class LoginViewModel {
     /// flight here: the lookup, then the send.
     private(set) var isSendingCode = false
 
-    /// A failure from requesting a code, which has nowhere else to render.
+    /// A failure from requesting a code.
     ///
     /// `sendLoginCode` never sets `auth.lastError` (it drives no state), so
-    /// without this a lookup failure or a rate limit would be silent. The two
-    /// surfaces cannot collide because each belongs to a different stage:
-    /// `sendError` to `.identifier`, `auth.lastError` to `.awaitingCode` and
-    /// `.password`.
+    /// without this a lookup failure or a rate limit would be silent. Read
+    /// through ``displayedError``, never on its own — see that property for why
+    /// "each stage renders one source" was the wrong rule.
     private(set) var sendError: String?
 
-    /// When the last code was mailed, for the resend cooldown. Monotonic rather
-    /// than wall-clock: this measures an elapsed interval, and a backward clock
-    /// correction would otherwise park the anchor in the future and disable
-    /// resend until real time caught up. Same reasoning as `ConnectivityMonitor`'s
-    /// probe cooldown.
-    private var codeSentAt: ContinuousClock.Instant?
+    /// Whether the resend cooldown is currently running.
+    ///
+    /// **Observable state, not a clock read.** An earlier version computed this
+    /// as `now() - codeSentAt >= cooldown` over an injected `ContinuousClock`,
+    /// which is correct arithmetic and a broken UI: SwiftUI re-evaluates a body
+    /// when observable state changes, and the passage of time is not a mutation.
+    /// The button latched disabled and came back only if some unrelated edit
+    /// happened to invalidate the view — worst directly after
+    /// `TOO_MANY_ATTEMPTS`, whose copy says "Request a new code" while the only
+    /// button that can do so looks dead. A task that flips this flag when the
+    /// window closes is what actually re-renders.
+    private(set) var isResendOnCooldown = false
+
+    private var cooldownTask: Task<Void, Never>?
 
     private let auth: AuthService
-    private let now: @Sendable () -> ContinuousClock.Instant
     private let resendCooldown: Duration
+    private let sleep: @Sendable (Duration) async throws -> Void
 
-    /// better-auth allows 3 requests per 60s on the send route, so 30 s leaves
+    /// better-auth allows 3 sends per 60s on the send route, so 30 s leaves
     /// headroom (2/min) while still letting a DJ whose mail is slow try again
-    /// without feeling stuck.
+    /// without feeling stuck. It also protects the Express limiter's 10 per 15
+    /// minutes, which is keyed per-**IP** — a budget the control room shares.
     static let defaultResendCooldown: Duration = .seconds(30)
 
     init(
         auth: AuthService,
         resendCooldown: Duration = LoginViewModel.defaultResendCooldown,
-        now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now }
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.auth = auth
         self.resendCooldown = resendCooldown
-        self.now = now
+        self.sleep = sleep
+    }
+
+    // No `deinit` cancel: a `@MainActor` class's deinit is nonisolated and cannot
+    // touch `cooldownTask`. It doesn't need to — the task captures `self` weakly,
+    // so it retains nothing, and it is bounded by `resendCooldown` before it
+    // no-ops. The cancel that matters is the one in `startResendCooldown`, which
+    // retires a superseded window rather than letting two race.
+
+    /// The one error the screen shows, whichever source produced it.
+    ///
+    /// The rule this replaces — "each stage renders exactly one source, so they
+    /// cannot collide" — was wrong in both directions, and each direction lost a
+    /// message the DJ needed. `OTPCodeView` rendering only `auth.lastError`
+    /// swallowed every resend failure, in the worst possible way: a resend 429s,
+    /// `sendError` is set but unrendered, while `sendLoginCode`'s entry has
+    /// already cleared `lastError` — so the mistyped-code error visibly
+    /// *vanishes* and nothing replaces it. The identifier stage rendering only
+    /// `sendError` lost the other direction: `currentJWT`'s 401 demotion sets
+    /// `.notSignedIn` on its way to bouncing the DJ to this screen, so a session
+    /// revoked mid-shift arrived somewhere that said nothing at all.
+    ///
+    /// At most one is set at a time — `sendLoginCode` clears `lastError` on
+    /// entry, and every stage change clears both — so the coalesce needs no
+    /// precedence rule beyond preferring the fresher one.
+    var displayedError: String? {
+        sendError ?? auth.lastError?.localizedMessage
     }
 
     // MARK: - The code the DJ types
@@ -115,24 +149,33 @@ final class LoginViewModel {
     /// Gates on the *trimmed* identifier, matching what is actually sent — an
     /// all-whitespace field would otherwise post an empty identifier and come
     /// back as a verdict on a field the DJ never filled in.
+    ///
+    /// Also gated on the cooldown, which is not obvious: this is the button on
+    /// the *first* stage, and "Send login code → Use a different account → Send
+    /// login code" would otherwise loop unlimited sends straight past it. The
+    /// budget the cooldown protects is per-IP, so switching accounts does not
+    /// refill it — the gate has to follow the request, not the identifier.
     var canRequestCode: Bool {
-        !trimmedIdentifier.isEmpty && !isSendingCode
+        !trimmedIdentifier.isEmpty && !isSendingCode && !isResendOnCooldown
     }
 
     var canSubmit: Bool {
         !trimmedIdentifier.isEmpty && !password.isEmpty && auth.state != .signingIn
     }
 
+    /// Blocked while a send is in flight, because a resend **replaces** the
+    /// stored code rather than reusing it: Backend-Service configures no
+    /// `resendStrategy`, so `resolveOTP` mints a fresh OTP and overwrites the
+    /// verification value. Verifying the code from the first mail while the
+    /// second is being minted races that write, comes back `INVALID_OTP` for a
+    /// code the DJ read correctly, and burns one of the 5 `allowedAttempts`.
     var canSubmitCode: Bool {
-        code.count == 6 && auth.state != .signingIn
+        code.count == 6 && auth.state != .signingIn && !isSendingCode
     }
 
-    /// Whether a fresh code may be requested yet. `nil` anchor means none has
-    /// been sent in this session, so resend is open.
+    /// Whether a fresh code may be requested yet.
     var canResendCode: Bool {
-        guard !isSendingCode else { return false }
-        guard let codeSentAt else { return true }
-        return now() - codeSentAt >= resendCooldown
+        !isSendingCode && !isResendOnCooldown
     }
 
     // MARK: - Actions
@@ -147,13 +190,34 @@ final class LoginViewModel {
 
         do {
             let destination = try await auth.sendLoginCode(identifier: trimmedIdentifier)
-            codeSentAt = now()
+            startResendCooldown()
             code = ""
             stage = .awaitingCode(email: destination.email, displayTarget: destination.displayTarget)
         } catch let error as AuthError {
             sendError = error.localizedMessage
+            startResendCooldown()
         } catch {
             sendError = AuthError.network(message: error.localizedDescription).localizedMessage
+            startResendCooldown()
+        }
+    }
+
+    /// Close the resend window, and schedule the reopen that re-renders the view.
+    ///
+    /// Runs on failure as well as success, deliberately. The failure most worth
+    /// rate-limiting is the one saying we are *already* over the limit: leaving
+    /// the button live after a 429 invites the DJ to spend the rest of a shared
+    /// per-IP budget on requests that cannot succeed.
+    private func startResendCooldown() {
+        cooldownTask?.cancel()
+        isResendOnCooldown = true
+        // `weak self`: a strong capture would keep the view model alive for the
+        // whole window and make `deinit`'s cancel unreachable — the task would be
+        // holding the object whose teardown is supposed to cancel it.
+        cooldownTask = Task { [weak self, resendCooldown, sleep] in
+            try? await sleep(resendCooldown)
+            guard !Task.isCancelled else { return }
+            self?.isResendOnCooldown = false
         }
     }
 
@@ -191,6 +255,7 @@ final class LoginViewModel {
         sendError = nil
         auth.clearLastError()
         stage = next
+        // The cooldown deliberately survives a stage change — see canRequestCode.
     }
 
     func usePassword() {
