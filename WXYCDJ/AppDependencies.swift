@@ -131,6 +131,18 @@ final class AppDependencies {
                 )
             } catch {
                 catalogLog.error("Catalog store unavailable at \(catalogStoreURL.path, privacy: .public): \(error.localizedDescription, privacy: .public). Falling back to in-app-only search.")
+                // A silent-degrade path (issue #106): the DJ never sees this —
+                // catalog features just go inert — so crash reporting is the
+                // only way it's ever visible. `NSError`'s domain/code is the
+                // same identity `catalogErrorDetail` builds for the os_log
+                // line above; reused here as `.errorIdentity` rather than
+                // re-derived a second way.
+                let ns = error as NSError
+                reporter.report(
+                    error,
+                    context: "AppDependencies.init.catalogStore",
+                    extra: ["storeError": .errorIdentity(domain: ns.domain, code: ns.code)]
+                )
                 self.catalogStore = nil
                 self.catalogRefreshService = nil
             }
@@ -149,28 +161,48 @@ final class AppDependencies {
     /// Open the bin snapshot store at `url`, logging and degrading to `nil` on
     /// failure (disk unwritable) so the composition root never crashes.
     ///
-    /// `reporter` isn't read yet -- this parameter exists so a future capture
-    /// site here (a bin-store-open failure is exactly the kind of silent
-    /// field defect issue #106 exists to see) is a body edit, not a signature
-    /// change that ripples to every call site.
+    /// Reports the failure (issue #106): a bin-store-open failure is a silent
+    /// field defect exactly like the catalog-store one above — the DJ just
+    /// sees an online-only bin, with nothing on screen to say why.
     private static func openBinStore(at url: URL?, reporter: any ErrorReporter) -> (any BinStore)? {
         guard let url else { return nil }
         do {
             return try SQLiteBinStore(url: url)
         } catch {
             catalogLog.error("Bin store unavailable at \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public). Falling back to online-only bin.")
+            let ns = error as NSError
+            reporter.report(
+                error,
+                context: "AppDependencies.openBinStore",
+                extra: ["storeError": .errorIdentity(domain: ns.domain, code: ns.code)]
+            )
             return nil
         }
     }
 
-    /// Test seam: build the composition root around an injected catalog store and
-    /// no refresh service. The deep-link resolution path (``handleSpotlightTap``,
-    /// ``handleAuthChange``, ``present(albumID:)``) reads only ``catalogStore``,
-    /// so a unit test can supply a store whose `row(id:)` suspends on demand to
-    /// drive `present`'s most-recent-wins token latch across the `await` —
-    /// the one branch the sequential-await tests can't reach. `reporter` defaults
-    /// to ``NoOpErrorReporter``, same rationale as the designated initializer.
-    init(catalogStore: any CatalogStore, reporter: any ErrorReporter = NoOpErrorReporter()) {
+    /// Test seam: build the composition root around an injected catalog store,
+    /// defaulting to no refresh service. The deep-link resolution path
+    /// (``handleSpotlightTap``, ``handleAuthChange``, ``present(albumID:)``) reads
+    /// only ``catalogStore``, so a unit test can supply a store whose `row(id:)`
+    /// suspends on demand to drive `present`'s most-recent-wins token latch across
+    /// the `await` — the one branch the sequential-await tests can't reach.
+    /// `reporter` defaults to ``NoOpErrorReporter``, same rationale as the
+    /// designated initializer.
+    ///
+    /// `catalogRefreshService` is `nil` by default (unchanged from before), but
+    /// **can** be supplied — issue #106's ``refreshCatalog()``/
+    /// ``handleBackgroundPoll()`` capture-site tests need to drive a real
+    /// `CatalogRefreshService.refresh()`/`.poll()` failure (or `.notSignedIn`
+    /// skip) without touching the network via `self.api`, which this initializer
+    /// still builds from `Bundle.main` and would otherwise hit production. A test
+    /// builds its own service over a `StubRequestSession`-backed `APIClient` —
+    /// `refreshCatalog()`/`handleBackgroundPoll()` only ever call the injected
+    /// service, never `self.api` — and hands it in here.
+    init(
+        catalogStore: any CatalogStore,
+        catalogRefreshService: CatalogRefreshService? = nil,
+        reporter: any ErrorReporter = NoOpErrorReporter()
+    ) {
         self.errorReporter = reporter
         let connectivity = ConnectivityMonitor()
         self.connectivity = connectivity
@@ -179,7 +211,7 @@ final class AppDependencies {
         self.authService = authService
         self.api = api
         self.catalogStore = catalogStore
-        self.catalogRefreshService = nil
+        self.catalogRefreshService = catalogRefreshService
         self.binStore = nil
         self.librarySearch = LibrarySearch(api: api, catalogStore: catalogStore, connectivity: connectivity)
     }
@@ -250,10 +282,18 @@ final class AppDependencies {
             catalogLog.info("Catalog refresh: \(String(describing: outcome), privacy: .public)")
             success = true
         } catch APIError.notSignedIn {
+            // Expected state, not a defect: a missing/expired session is a
+            // silent skip everywhere else in this method too, so it is never
+            // reported (issue #106).
             catalogLog.debug("Catalog refresh skipped: not signed in")
             success = true
         } catch {
             catalogLog.error("Catalog refresh failed: \(Self.catalogErrorDetail(error), privacy: .public)")
+            // A Core Spotlight batch rejection (CSIndexErrorDomain -1001) or a
+            // systematic decode failure surfaces here for the first time in
+            // the field (issue #106) — the error object itself carries the
+            // domain/code `catalogErrorDetail` renders for the log line above.
+            errorReporter.report(error, context: "AppDependencies.refreshCatalog")
             success = false
         }
         // Re-derive the "last synced" line from the clone's watermark regardless
@@ -325,9 +365,11 @@ final class AppDependencies {
                 CatalogBackgroundTasks.scheduleReindex()
             }
         } catch APIError.notSignedIn {
+            // Same expected-state carve-out as refreshCatalog() (issue #106).
             catalogLog.debug("Background catalog poll skipped: not signed in")
         } catch {
             catalogLog.error("Background catalog poll failed: \(Self.catalogErrorDetail(error), privacy: .public)")
+            errorReporter.report(error, context: "AppDependencies.handleBackgroundPoll")
         }
     }
 

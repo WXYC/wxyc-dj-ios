@@ -117,6 +117,25 @@ struct AppDependenciesCatalogWiringTests {
         #expect(deps.catalogStore == nil)
         #expect(deps.catalogRefreshService == nil)
     }
+
+    /// Issue #106: a genuine open failure (not merely a `nil` URL) is a silent
+    /// field defect — the DJ just loses catalog features with nothing on
+    /// screen to say why — so it's reported. `sqlite3_open_v2` can't create a
+    /// file inside a parent directory that doesn't exist, which reliably
+    /// exercises `SQLiteCatalogStore.init`'s `catch` arm without needing to
+    /// simulate a real unwritable device.
+    @Test func storeOpenFailureReportsAndDegrades() {
+        let spy = SpyErrorReporter()
+        let badURL = FileManager.default.temporaryDirectory
+            .appending(path: "nonexistent-\(UUID().uuidString)/catalog.sqlite")
+
+        let deps = AppDependencies(catalogStoreURL: badURL, reporter: spy)
+
+        #expect(deps.catalogStore == nil)
+        #expect(deps.catalogRefreshService == nil)
+        #expect(spy.reportCount == 1)
+        #expect(spy.reports.first?.context == "AppDependencies.init.catalogStore")
+    }
 }
 
 /// The bin snapshot wiring (issue #60): where the bin SQLite store lives (its own
@@ -158,6 +177,21 @@ struct AppDependenciesBinWiringTests {
 
         #expect(deps.binStore == nil)
     }
+
+    /// The bin-store mirror of `storeOpenFailureReportsAndDegrades` above
+    /// (issue #106): the DJ just sees an online-only bin, so this is the only
+    /// way the failure is ever visible.
+    @Test func binStoreOpenFailureReportsAndDegrades() {
+        let spy = SpyErrorReporter()
+        let badURL = FileManager.default.temporaryDirectory
+            .appending(path: "nonexistent-\(UUID().uuidString)/bin.sqlite")
+
+        let deps = AppDependencies(catalogStoreURL: nil, binStoreURL: badURL, reporter: spy)
+
+        #expect(deps.binStore == nil)
+        #expect(spy.reportCount == 1)
+        #expect(spy.reports.first?.context == "AppDependencies.openBinStore")
+    }
 }
 
 /// `catalogErrorDetail` is the verbose error formatter the catalog-refresh
@@ -190,5 +224,112 @@ struct CatalogErrorDetailTests {
         #expect(detail.contains("underlying"))
         #expect(detail.contains("LowLevelDomain"))
         #expect(detail.contains("code=42"))
+    }
+}
+
+// MARK: - Issue #106: refreshCatalog() / handleBackgroundPoll() capture sites
+
+/// A `CatalogStore` that answers every query with nothing. `refreshCatalog()`'s
+/// and `handleBackgroundPoll()`'s error/`.notSignedIn` arms below are exercised
+/// entirely by the `CatalogRefreshService`'s network leg failing (or being
+/// skipped), never by store reads/writes — this exists only to satisfy the
+/// initializer, on both `AppDependencies` and `CatalogRefreshService`.
+private actor NullCatalogStore: CatalogStore {
+    func row(id: Int) async throws -> CatalogRow? { nil }
+    func count() async throws -> Int { 0 }
+    func lastModified() async throws -> String? { nil }
+    func replace(rows: [CatalogRow], lastModified: String?) async throws {}
+    func search(query: String, limit: Int) async throws -> [CatalogRow] { [] }
+}
+
+/// A `CatalogIndexing` conformer that's never actually reached in these tests
+/// (the network leg fails, or is skipped for `.notSignedIn`, before `refresh()`
+/// gets to reindexing) but has to exist to satisfy `CatalogRefreshService`'s
+/// `makeIndexer` factory.
+private actor NullCatalogIndexer: CatalogIndexing {
+    func indexedWatermark() async throws -> String? { nil }
+    func reindex(snapshot: [CatalogRow], watermark: String?) async throws -> ReindexSummary {
+        ReindexSummary(upserted: 0, removed: 0)
+    }
+    func upsert(row: CatalogRow, thumbnailData: Data?) async throws {}
+}
+
+/// Pins the issue-#106 capture sites in `AppDependencies.refreshCatalog()` and
+/// `.handleBackgroundPoll()`: a genuine failure (here, a `500` from
+/// `GET /library/catalog`) reports; the `APIError.notSignedIn` skip — an
+/// expected state (a missing/expired session), not a defect — never does.
+/// Mirrors `CatalogRefreshServiceTests.refreshAndPollWithNoSessionThrowNotSignedInAndTouchNothing`'s
+/// no-session setup for the skip case.
+@Suite("AppDependencies.refreshCatalog/handleBackgroundPoll reporting", .serialized)
+@MainActor
+struct RefreshCatalogReportingTests {
+    private static let config = WXYCAPIConfiguration.localDevelopment
+
+    /// Build a `CatalogRefreshService` whose network leg either fails (a
+    /// signed-in client queued with a `500`) or throws `.notSignedIn` (no
+    /// stored session, so `currentJWT()` fails before any request is sent).
+    private static func makeService(signedIn: Bool) async throws -> CatalogRefreshService {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let auth: AuthService
+        if signedIn {
+            try storage.save("session-abc", for: .sessionToken)
+            auth = AuthService(configuration: config, storage: storage, session: session)
+            session.enqueue(StubRequestSession.Stub(
+                statusCode: 200,
+                body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+            ))
+            await auth.restoreSession()
+            session.enqueue(StubRequestSession.Stub(statusCode: 500, body: Data(#"{"error":"boom"}"#.utf8)))
+        } else {
+            auth = AuthService(configuration: config, storage: storage, session: session)
+            await auth.restoreSession()   // no token -> .signedOut
+        }
+        let client = APIClient(configuration: config, session: session, authService: auth)
+        return CatalogRefreshService(client: client, store: NullCatalogStore(), makeIndexer: { NullCatalogIndexer() })
+    }
+
+    @Test func genuineRefreshFailureReports() async throws {
+        let spy = SpyErrorReporter()
+        let service = try await Self.makeService(signedIn: true)
+        let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, reporter: spy)
+
+        let success = await deps.refreshCatalog()
+
+        #expect(success == false)
+        #expect(spy.reportCount == 1)
+        #expect(spy.reports.first?.context == "AppDependencies.refreshCatalog")
+    }
+
+    @Test func notSignedInSkipDuringRefreshDoesNotReport() async throws {
+        let spy = SpyErrorReporter()
+        let service = try await Self.makeService(signedIn: false)
+        let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, reporter: spy)
+
+        let success = await deps.refreshCatalog()
+
+        #expect(success == true)
+        #expect(spy.reportCount == 0)
+    }
+
+    @Test func genuineBackgroundPollFailureReports() async throws {
+        let spy = SpyErrorReporter()
+        let service = try await Self.makeService(signedIn: true)
+        let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, reporter: spy)
+
+        await deps.handleBackgroundPoll()
+
+        #expect(spy.reportCount == 1)
+        #expect(spy.reports.first?.context == "AppDependencies.handleBackgroundPoll")
+    }
+
+    @Test func notSignedInSkipDuringBackgroundPollDoesNotReport() async throws {
+        let spy = SpyErrorReporter()
+        let service = try await Self.makeService(signedIn: false)
+        let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, reporter: spy)
+
+        await deps.handleBackgroundPoll()
+
+        #expect(spy.reportCount == 0)
     }
 }
