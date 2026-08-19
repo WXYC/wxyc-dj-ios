@@ -1,0 +1,59 @@
+name: Shell Script Tests
+
+# Regression suite for scripts/upload-debug-symbols.sh (issue #107), ported
+# from wxyc-ios-64's shell-script-tests.yml. Distinct from ci.yml on purpose:
+# that workflow needs Xcode + a simulator and runs the full test target. This
+# suite is a hand-rolled zsh regression test for one CI/build script and
+# needs neither -- it stubs sentry-cli entirely, so it never touches the
+# network or needs a real auth token, and the whole suite runs in under a
+# second.
+#
+# Path-filtered to just the files this test (and its subject) live in --
+# NOT the listener's blanket scripts/**, which in this repo would also
+# spend a macOS runner-minute on every unrelated edit to
+# scripts/regenerate-api-types.sh / scripts/verify-api-types.sh (already
+# gated by verify-api-types.yml). A macOS job is billed at a 10x multiplier
+# and rounded up to a whole minute, so a tight filter is what keeps a
+# codegen-script edit from paying for a check it could not have failed.
+#
+# This workflow's own path is in the filter on purpose: a self-excluding
+# workflow can be broken by an edit that never triggers it, which is the
+# exact failure class this file exists to prevent.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/upload-debug-symbols.sh"
+      - "scripts/tests/**"
+      - ".github/workflows/shell-script-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/upload-debug-symbols.sh"
+      - "scripts/tests/**"
+      - ".github/workflows/shell-script-tests.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: shell-script-tests-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  shell-script-tests:
+    # macOS, not ubuntu. Of wxyc-ios-64's three reasons for the same pin,
+    # two don't transfer here: this repo has no BSD-sed pbxproj fixtures and
+    # no other zsh-only CI scripts under test that would need zsh installed
+    # on an Ubuntu runner. The third does, in full -- the script under test
+    # only ever runs as an Xcode build phase, which only ever happens on
+    # macOS, so a macOS userland is the honest test configuration, not a
+    # simulation of one.
+    runs-on: macos-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sentry dSYM upload regression suite
+        run: zsh scripts/tests/test-upload-debug-symbols.sh
