@@ -22,6 +22,7 @@
 		3D8F02DCD60A6D7A700DDE72 /* WXYCAPIModels in Frameworks */ = {isa = PBXBuildFile; productRef = DF5D146A8EEE9CBA58AFDA6C /* WXYCAPIModels */; };
 		3EF4159CBD4FEB6E808B311D /* WXYCAPI in Frameworks */ = {isa = PBXBuildFile; productRef = D9511138D2A3FB7A0F39D282 /* WXYCAPI */; };
 		4971C44699E28C3483D4F264 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7745B51EB2BF815A8B960F3F /* AppDelegate.swift */; };
+		574EDEABD3333936B2530863 /* TelemetryBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = D890BC53FC78B18923CE1021 /* TelemetryBootstrap.swift */; };
 		5890F98AB60C5BF3043C386F /* AppDependenciesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08B568981D92EC8060CDFD01 /* AppDependenciesTests.swift */; };
 		753572DD46DEE31D8A3F2CDB /* SearchResultRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ECD186BFE3631C6C27416AE /* SearchResultRow.swift */; };
 		759C5888FC7CF1D709B5F953 /* WXYCDJApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D62BB1A222E85317724557C /* WXYCDJApp.swift */; };
@@ -35,6 +36,7 @@
 		AAF320BD598E531F6EBA5954 /* AppDependencies.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6225BA88FCDBB74E198F0388 /* AppDependencies.swift */; };
 		ABA5F662B7377F106722B223 /* DeepLinkAlbumCover.swift in Sources */ = {isa = PBXBuildFile; fileRef = E85422FA59D8966C8BE74197 /* DeepLinkAlbumCover.swift */; };
 		B427ABFA72D740CDC87D0B35 /* SpotlightClientStateToleranceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54E53B2B0DF8CCAB1C3786E0 /* SpotlightClientStateToleranceTests.swift */; };
+		B88B5FB6257A51CEA2F298C4 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = CAE4859575FEA3C453FB3BBD /* Sentry */; };
 		B90C6447D3F4DC7F4B4A4DC1 /* TrackMatchBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30DE4EC11A66379C3F9D35AE /* TrackMatchBadge.swift */; };
 		C03AB4DC4B72F41F6135A84C /* SearchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD38B1719410E4392D6E05CB /* SearchViewModel.swift */; };
 		CE480C510E594A1E231129FC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C9FA5B67202EDF0E87ADC86A /* Assets.xcassets */; };
@@ -103,6 +105,7 @@
 		CE7E76CFC35C37D73EAA0A89 /* WXYCAPI */ = {isa = PBXFileReference; lastKnownFileType = folder; name = WXYCAPI; path = Packages/WXYCAPI; sourceTree = SOURCE_ROOT; };
 		CF0AE695EDC8A02507316E1C /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
 		D317ED7B8718828E57375589 /* View+AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "View+AppEnvironment.swift"; sourceTree = "<group>"; };
+		D890BC53FC78B18923CE1021 /* TelemetryBootstrap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryBootstrap.swift; sourceTree = "<group>"; };
 		DE45EAFB43A539EC66615E15 /* AlbumDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumDetailView.swift; sourceTree = "<group>"; };
 		E85422FA59D8966C8BE74197 /* DeepLinkAlbumCover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLinkAlbumCover.swift; sourceTree = "<group>"; };
 		ED3C3F1A8A8E2B9449C84894 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
@@ -121,6 +124,7 @@
 			files = (
 				3EF4159CBD4FEB6E808B311D /* WXYCAPI in Frameworks */,
 				3598518CDC204DBB5BB14F15 /* WXYCAPIModels in Frameworks */,
+				B88B5FB6257A51CEA2F298C4 /* Sentry in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -242,6 +246,7 @@
 				E1EC06BF517B76C203321D4F /* Catalog */,
 				EA016031AECC3E5F528C5898 /* Detail */,
 				DA9E47BE7DD04FB123E92736 /* Search */,
+				F51DF8C7AEA83F3B49BB870C /* Telemetry */,
 			);
 			path = WXYCDJ;
 			sourceTree = "<group>";
@@ -293,6 +298,14 @@
 			path = Detail;
 			sourceTree = "<group>";
 		};
+		F51DF8C7AEA83F3B49BB870C /* Telemetry */ = {
+			isa = PBXGroup;
+			children = (
+				D890BC53FC78B18923CE1021 /* TelemetryBootstrap.swift */,
+			);
+			path = Telemetry;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -333,6 +346,7 @@
 			packageProductDependencies = (
 				D9511138D2A3FB7A0F39D282 /* WXYCAPI */,
 				E36547ECFBCE3DA8505F75C2 /* WXYCAPIModels */,
+				CAE4859575FEA3C453FB3BBD /* Sentry */,
 			);
 			productName = WXYCDJ;
 			productReference = 0D7C2891032C948BCCAB8104 /* WXYCDJ.app */;
@@ -367,6 +381,7 @@
 			mainGroup = B279D68E0832BC2DE14A9E5D;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				D11270CAC83A53F779B30107 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 				5503822269D010855CC6E2B3 /* XCLocalSwiftPackageReference "Packages/WXYCAPI" */,
 				B72CCFD1E77E5979D96CF235 /* XCLocalSwiftPackageReference "Packages/WXYCAPIModels" */,
 			);
@@ -441,6 +456,7 @@
 				0DD716BEB42AB99DC6908CE7 /* SearchView.swift in Sources */,
 				C03AB4DC4B72F41F6135A84C /* SearchViewModel.swift in Sources */,
 				093ED6295B6CD7D54A4EB979 /* SignInControls.swift in Sources */,
+				574EDEABD3333936B2530863 /* TelemetryBootstrap.swift in Sources */,
 				B90C6447D3F4DC7F4B4A4DC1 /* TrackMatchBadge.swift in Sources */,
 				8ED39D937F51F188FB3C700E /* View+AppEnvironment.swift in Sources */,
 				759C5888FC7CF1D709B5F953 /* WXYCDJApp.swift in Sources */,
@@ -712,10 +728,26 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		D11270CAC83A53F779B30107 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/getsentry/sentry-cocoa.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 8.58.4;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		89D30A6942DD94B4BDD547A2 /* WXYCAPI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = WXYCAPI;
+		};
+		CAE4859575FEA3C453FB3BBD /* Sentry */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D11270CAC83A53F779B30107 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
+			productName = Sentry;
 		};
 		D9511138D2A3FB7A0F39D282 /* WXYCAPI */ = {
 			isa = XCSwiftPackageProductDependency;
