@@ -70,6 +70,10 @@ final class LoginViewModel {
 
     private let auth: AuthService
     private let sleep: @Sendable (Duration) async throws -> Void
+    /// The app's error-reporting seam (issue #106). Defaults to
+    /// ``NoOpErrorReporter`` so every existing test construction site keeps
+    /// compiling unchanged; `LoginView` passes `deps.errorReporter`.
+    private let reporter: any ErrorReporter
 
     /// better-auth allows 3 sends per 60s on the send route, so 30 s leaves
     /// headroom (2/min) while still letting a DJ whose mail is slow try again
@@ -83,9 +87,11 @@ final class LoginViewModel {
     /// capture were all inert.
     init(
         auth: AuthService,
+        reporter: any ErrorReporter = NoOpErrorReporter(),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.auth = auth
+        self.reporter = reporter
         self.sleep = sleep
     }
 
@@ -164,6 +170,63 @@ final class LoginViewModel {
         !isSendingCode && !isResendOnCooldown
     }
 
+    // MARK: - Error reporting (issue #106)
+
+    /// Whether a recorded `AuthError` names a defect worth reporting to
+    /// crash/error telemetry, as opposed to an expected user-facing outcome.
+    ///
+    /// A **total switch** on purpose — the same shape as `AuthError.caseName`
+    /// and `APIError.caseName` in `WXYCAPI` — so a future case added to
+    /// `AuthError` is a compile-time decision here, not a silent miss.
+    ///
+    /// Reported (something went wrong on our end, not the DJ's):
+    /// - ``AuthError/serverFailure(status:message:)`` — the server answered
+    ///   with a status this app has no specific handling for.
+    /// - ``AuthError/missingSessionToken`` — a 2xx sign-in response carried
+    ///   neither a `set-auth-token` header nor a body token; the server's
+    ///   contract broke.
+    /// - ``AuthError/network(message:)`` — a genuine transport defect (not
+    ///   connectivity, which is split out as `.offline` at the package's
+    ///   flatten sites — see `AuthService.classifyTransportFailure`).
+    /// - ``AuthError/notSignedIn`` — a session freshly established by leg 1
+    ///   of this very sign-in was immediately rejected on the JWT exchange.
+    ///   Unlike the other places this case appears (a 401 demoting an
+    ///   *existing* session, which is a normal expiry), here it means a
+    ///   brand-new session died before the DJ ever got signed in — an
+    ///   internal inconsistency, not a credential problem.
+    ///
+    /// Never reported (expected outcomes the DJ can act on, or a supported
+    /// mode):
+    /// - ``AuthError/invalidCredentials`` — wrong username/email or password.
+    /// - ``AuthError/rateLimited`` — reachable in ordinary use (the control
+    ///   room shares an egress address), not an abuse signal.
+    /// - ``AuthError/rejected(message:)`` — the server named a reason the DJ
+    ///   can act on (malformed email, unverified address, a stale code).
+    /// - ``AuthError/offline(message:)`` — being offline is a supported mode
+    ///   (issues #58/#81), never a defect.
+    nonisolated static func shouldReport(_ error: AuthError) -> Bool {
+        switch error {
+        case .serverFailure, .missingSessionToken, .network, .notSignedIn:
+            return true
+        case .invalidCredentials, .rateLimited, .rejected, .offline:
+            return false
+        }
+    }
+
+    /// Report `auth.lastError` if it's both present and a reportable defect.
+    ///
+    /// Called after each of the four sign-in legs (`submit`, `submitCode`,
+    /// `requestCode`, `resendCode`) settles. `AuthService` clears `lastError`
+    /// at the *start* of `signIn`/`sendLoginCode`/`resendLoginCode`, so
+    /// whatever is left here once the `await` returns is this call's own
+    /// outcome — `nil` on success, never a stale value carried over from an
+    /// earlier leg. Safe to call unconditionally: a `nil` (success) is a
+    /// no-op.
+    private func reportIfDefect() {
+        guard let error = auth.lastError, Self.shouldReport(error) else { return }
+        reporter.report(error, context: "LoginViewModel")
+    }
+
     // MARK: - Actions
 
     /// Ask for a code and advance to the entry step. Stays on `.identifier` if
@@ -180,7 +243,9 @@ final class LoginViewModel {
         // reason in `lastError`.
         defer { startResendCooldown() }
 
-        guard let destination = try? await auth.sendLoginCode(identifier: trimmedIdentifier) else { return }
+        let destination = try? await auth.sendLoginCode(identifier: trimmedIdentifier)
+        reportIfDefect()
+        guard let destination else { return }
         code = ""
         stage = .awaitingCode(destination)
     }
@@ -192,6 +257,12 @@ final class LoginViewModel {
     /// have changed — the identifier field isn't even on screen by then — spending
     /// two slots of a shared per-IP budget where one would do, in exactly the
     /// moment (slow mail, expired code) a DJ taps most.
+    ///
+    /// `try?` swallows the throw here (there is no caller left to react to it),
+    /// but `reportIfDefect()` still fires — a resend that lands a
+    /// ``AuthError/serverFailure(status:message:)`` in `auth.lastError` would
+    /// otherwise be a defect that is silently swallowed rather than merely
+    /// silently *un-thrown*.
     func resendCode() async {
         guard canResendCode, case let .awaitingCode(destination) = stage else { return }
         isSendingCode = true
@@ -199,6 +270,7 @@ final class LoginViewModel {
         defer { startResendCooldown() }
 
         try? await auth.resendLoginCode(to: destination.email)
+        reportIfDefect()
     }
 
     /// Close the resend window, and schedule the reopen that re-renders the view.
@@ -219,6 +291,7 @@ final class LoginViewModel {
     func submitCode() async {
         guard canSubmitCode, case let .awaitingCode(destination) = stage else { return }
         await auth.signIn(email: destination.email, otp: code)
+        reportIfDefect()
     }
 
     func submit() async {
@@ -228,6 +301,7 @@ final class LoginViewModel {
         // would 401. Password intentionally untrimmed; whitespace in a password
         // is significant.
         await auth.signIn(identifier: trimmedIdentifier, password: password)
+        reportIfDefect()
     }
 
     // MARK: - Stage changes

@@ -15,6 +15,11 @@ import WXYCAPI
 
 struct LoginView: View {
     @Environment(AuthService.self) private var auth
+    // Issue #106: the real error reporter lives on the composition root, not
+    // AuthService — LoginViewModel needs it to report a sign-in defect
+    // (AuthService itself never throws to this layer; it only records into
+    // `lastError`, so the view model is the capture point).
+    @Environment(AppDependencies.self) private var deps
     @State private var viewModel: LoginViewModel?
     @FocusState private var focusedField: Field?
 
@@ -33,7 +38,7 @@ struct LoginView: View {
         }
         .onAppear {
             if viewModel == nil {
-                viewModel = LoginViewModel(auth: auth)
+                viewModel = LoginViewModel(auth: auth, reporter: deps.errorReporter)
             }
         }
     }
