@@ -185,6 +185,68 @@ struct AuthServiceTests {
         #expect(service.isSignedIn)
     }
 
+    @Test(arguments: [
+        ("juana", "/auth/sign-in/username"),
+        ("juana@wxyc.org", "/auth/sign-in/email"),
+    ])
+    func signInNeverCarriesACookie(identifier: String, expectedPath: String) async throws {
+        let session = StubRequestSession()
+        let service = AuthService(configuration: Self.config, storage: InMemoryTokenStorage(), session: session)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            headers: ["set-auth-token": "session-abc"],
+            body: Data("{}".utf8)
+        ))
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+
+        await service.signIn(identifier: identifier, password: "pw")
+
+        // This client is bearer-only, and better-auth's `bearer()` after-hook
+        // ADDS `set-auth-token` without removing the `Set-Cookie` it rides
+        // alongside — so a default `URLSession` stores the session cookie and
+        // replays it on the next sign-in. That is fatal: better-auth registers
+        // `originCheckMiddleware` globally on every non-GET, and it enforces the
+        // Origin header only when a cookie is present, so a cookie-bearing
+        // sign-in from a native client (which sends no Origin) is refused with
+        // `403 MISSING_OR_NULL_ORIGIN` before any credential check. Verified
+        // against production on BOTH routes. Suppressing cookie handling keeps
+        // the jar empty in both directions, so the request can never acquire the
+        // header that arms that middleware.
+        let signInRequest = try #require(session.recordedRequests.first)
+        #expect(signInRequest.url?.path == expectedPath)
+        #expect(signInRequest.httpShouldHandleCookies == false)
+        // The JWT exchange rides the same transport and gets the same treatment.
+        #expect(session.recordedRequests.last?.httpShouldHandleCookies == false)
+    }
+
+    @Test func forbiddenSurfacesItsReasonInsteadOfBlamingTheCredentials() async throws {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        // Backend-Service sets `requireEmailVerification: true`, so an
+        // un-onboarded DJ gets a 403 whose message names the real problem.
+        // Folding that into `.invalidCredentials` would have them retyping a
+        // correct password forever — and it is what would have hidden a 403
+        // from the origin middleware above.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 403,
+            body: Data(#"{"message":"Email not verified"}"#.utf8)
+        ))
+
+        await service.signIn(identifier: "juana@wxyc.org", password: "pw")
+
+        #expect(service.state == .signedOut)
+        #expect(service.lastError == .rejected(message: "Email not verified"))
+        #expect(service.lastError?.localizedMessage == "Email not verified.")
+        // Still terminal: nothing is left behind by a refused sign-in.
+        #expect(try storage.load(.sessionToken) == nil)
+    }
+
     @Test func malformedEmailSurfacesTheServerMessage() async throws {
         let session = StubRequestSession()
         let storage = InMemoryTokenStorage()
@@ -202,7 +264,10 @@ struct AuthServiceTests {
         await service.signIn(identifier: "juana@wxyc", password: "pw")
 
         #expect(service.state == .signedOut)
-        #expect(service.lastError == .serverFailure(status: 400, message: "Invalid email"))
+        #expect(service.lastError == .rejected(message: "Invalid email"))
+        // Rendered verbatim, not behind a "Server error (400):" prefix — the DJ
+        // mistyped their address; that is not a backend fault.
+        #expect(service.lastError?.localizedMessage == "Invalid email.")
         #expect(try storage.load(.sessionToken) == nil)
     }
 
