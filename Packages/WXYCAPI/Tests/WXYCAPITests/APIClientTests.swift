@@ -411,7 +411,11 @@ struct APIClientTests {
     /// instead"), not server content -- but the narrowing drops it
     /// regardless: the formatter is code-derived by construction, not
     /// "server content only", so a future arm can't reintroduce the same
-    /// hazard by reasoning "this debugDescription is safe."
+    /// hazard by reasoning "this debugDescription is safe." It DOES still
+    /// carry the expected `Any.Type` (issue #106 review Fix 4b) -- code-
+    /// derived from the model's declared property type, never from the
+    /// payload, so it restores most of what `debugDescription` gave issue
+    /// #77's original triage without reopening the channel.
     @Test func decodingDetailDropsDebugDescriptionFromATypeMismatch() async throws {
         let (client, _, session) = try await Self.makeSignedInClient()
         session.enqueue(StubRequestSession.Stub(
@@ -426,6 +430,26 @@ struct APIClientTests {
             #expect(!detail.contains("Expected to decode"))
             #expect(detail.contains("type mismatch"))
             #expect(detail.contains("id"))
+            #expect(detail.contains("expected Int"))
+        }
+    }
+
+    /// `.valueNotFound` -- a key present on the wire with an explicit `null`
+    /// against a non-optional model field -- gets the same expected-type
+    /// treatment as `.typeMismatch` (issue #106 review Fix 4b).
+    @Test func decodingDetailIncludesTheExpectedTypeOnAValueNotFound() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"[{"id":100,"album_title":null,"artist_name":"Juana Molina"}]"#.utf8)
+        ))
+
+        do {
+            _ = try await client.searchLibrary(artist: "Juana", title: nil)
+            Issue.record("expected a decoding failure")
+        } catch APIError.decoding(let detail) {
+            #expect(detail.contains("album_title"))
+            #expect(detail.contains("expected non-null String"))
         }
     }
 
@@ -455,6 +479,118 @@ struct APIClientTests {
     // so the `@unknown default:` arm's constant string isn't reachable from
     // a test. It's covered by inspection instead: see the doc comment on
     // `APIClient.describe(_:)`.
+
+    // MARK: - Offline vs. network classification (issue #106 review Fix 1)
+
+    /// A connectivity-class transport failure -- the link failed, not the
+    /// request -- flattens to `.offline` at `fire(_:)`'s catch-all, not
+    /// `.network`. This is the split the reporting sites (`AppDependencies`,
+    /// `BinViewModel`) key on to skip an offline DJ; a regression here would
+    /// silently reopen the event-spam bug those sites were fixed to close.
+    @Test func connectivityClassTransportFailureThrowsOffline() async throws {
+        let (client, session, recorder) = try await Self.makeSignedInClientWithRecorder()
+        session.enqueue(failure: URLError(.notConnectedToInternet))
+
+        do {
+            _ = try await client.searchLibrary(artist: "Juana", title: nil)
+            Issue.record("expected a thrown error")
+        } catch APIError.offline {
+            // pass
+        } catch {
+            Issue.record("expected .offline, got \(error)")
+        }
+        #expect(recorder.values == [false])
+    }
+
+    /// A resource/request-level `URLError` -- not a link failure --
+    /// deliberately stays `.network`: `ConnectivityErrorClassification`
+    /// excludes `.cannotDecodeContentData` on purpose (it's what a CDN
+    /// error page looks like by the time it reaches a decoder, not evidence
+    /// of being offline), so this is a genuine defect worth reporting.
+    @Test func nonConnectivityTransportFailureThrowsNetwork() async throws {
+        let (client, session, recorder) = try await Self.makeSignedInClientWithRecorder()
+        session.enqueue(failure: URLError(.cannotDecodeContentData))
+
+        do {
+            _ = try await client.searchLibrary(artist: "Juana", title: nil)
+            Issue.record("expected a thrown error")
+        } catch APIError.network {
+            // pass
+        } catch {
+            Issue.record("expected .network, got \(error)")
+        }
+        #expect(recorder.values == [false])
+    }
+
+    /// A cancelled request throws `.offline`, not `.network` -- a routine
+    /// navigate-away (the issue-#58 debounce, a DJ backing out of a detail
+    /// screen) must not read as a defect (issue #106 review Fix 1/2). The
+    /// pre-existing cancellation carve-out for `ConnectivityMonitor` is
+    /// unaffected: still no `onOutcome` call either way.
+    @Test func cancelledRequestThrowsOfflineWithoutTouchingConnectivity() async throws {
+        let (client, session, recorder) = try await Self.makeSignedInClientWithRecorder()
+        session.enqueue(failure: URLError(.cancelled))
+
+        do {
+            _ = try await client.searchLibrary(artist: "Juana", title: nil)
+            Issue.record("expected a thrown error")
+        } catch APIError.offline {
+            // pass
+        } catch {
+            Issue.record("expected .offline, got \(error)")
+        }
+        #expect(recorder.values.isEmpty)
+    }
+
+    /// Same rationale as above for structured-concurrency cancellation
+    /// surfaced as `CancellationError` rather than `URLError(.cancelled)` --
+    /// not itself a `URLError`, so `classifyTransportFailure` can't classify
+    /// it by code, but it is unconditionally `.offline` regardless.
+    @Test func structuredCancellationThrowsOfflineWithoutTouchingConnectivity() async throws {
+        let (client, session, recorder) = try await Self.makeSignedInClientWithRecorder()
+        session.enqueue(failure: CancellationError())
+
+        do {
+            _ = try await client.searchLibrary(artist: "Juana", title: nil)
+            Issue.record("expected a thrown error")
+        } catch APIError.offline {
+            // pass
+        } catch {
+            Issue.record("expected .offline, got \(error)")
+        }
+        #expect(recorder.values.isEmpty)
+    }
+
+    /// The second flatten site: `AuthService.currentJWT()` rethrows a raw,
+    /// unwrapped transport error (not an `AuthError`) when the lazy
+    /// JWT-refresh leg itself fails offline (see `AuthService.send(_:)`).
+    /// `APIClient.currentJWT()`'s catch-all has to classify it exactly like
+    /// `fire(_:)` does, or this second discard site reopens the same bug one
+    /// layer down -- a DJ whose cached JWT expired while offline would file
+    /// a Sentry event on every request attempt.
+    @Test func currentJWTTransportFailureDuringLazyRefreshThrowsOffline() async throws {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let auth = AuthService(configuration: Self.config, storage: storage, session: session)
+        // restoreSession()'s JWT exchange fails offline -> the issue-#53
+        // pending window (.signedIn(payload: nil)), no cached JWT yet.
+        session.enqueue(failure: URLError(.notConnectedToInternet))
+        await auth.restoreSession()
+
+        let client = APIClient(configuration: Self.config, session: session, authService: auth)
+        // The lazy JWT refresh APIClient.perform() triggers also fails offline.
+        session.enqueue(failure: URLError(.notConnectedToInternet))
+
+        do {
+            _ = try await client.searchLibrary(artist: "Juana", title: nil)
+            Issue.record("expected a thrown error")
+        } catch APIError.offline {
+            // pass
+        } catch {
+            Issue.record("expected .offline, got \(error)")
+        }
+    }
 
     @Test func catalogServerErrorSurfacesAsHTTPError() async throws {
         let (client, _, session) = try await Self.makeSignedInClient()
