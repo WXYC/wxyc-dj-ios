@@ -372,6 +372,7 @@
 				D6ACF370DB2526B65D778E04 /* Sources */,
 				B44092E4F3A8C8B10B1D016D /* Resources */,
 				22512E463A068F12F10E6069 /* Frameworks */,
+				0CA8785CCD79C95AE788911B /* Upload Debug Symbols to Sentry */,
 			);
 			buildRules = (
 			);
@@ -442,6 +443,29 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		0CA8785CCD79C95AE788911B /* Upload Debug Symbols to Sentry */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${TARGET_NAME}",
+			);
+			name = "Upload Debug Symbols to Sentry";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# The logic lives in scripts/upload-debug-symbols.sh so it can be\n# regression-tested (scripts/tests/test-upload-debug-symbols.sh)\n# rather than edited blind inside project.yml/project.pbxproj.\n#\n# alwaysOutOfDate (basedOnDependencyAnalysis: false below) is what\n# makes the phase run every build; the one input below is the\n# ordering dependency on dsymutil, not a staleness check. Don't add\n# the script itself as an input -- with dependency analysis off it\n# can't cause a run that wasn't already happening.\nexec \"${SRCROOT}/scripts/upload-debug-symbols.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		0C757058CD7B14A1D1242D1F /* Sources */ = {
@@ -524,6 +548,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = WXYCDJ/WXYCDJ.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WXYCDJ/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -633,6 +658,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = WXYCDJ/WXYCDJ.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WXYCDJ/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
