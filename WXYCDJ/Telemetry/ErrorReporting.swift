@@ -99,21 +99,36 @@ enum TelemetryValue: Sendable, Equatable {
 
 // StaticString has no built-in Equatable/Hashable conformance (it's not
 // meaningfully comparable at the type's own level -- two literals with the
-// same text aren't guaranteed pointer-identical). Compare by rendered text,
-// which is all a test needs and the only thing that could differ.
+// same text aren't guaranteed pointer-identical), which is why this can't be
+// synthesized and has to be hand-written. Compare by rendered text, which is
+// all a test needs and the only thing that could differ.
+//
+// Switches on `lhs` alone -- **not** the `(lhs, rhs)` tuple this used to
+// switch on -- and every arm's `guard case` handles "different case, not
+// equal" locally, so there is no `default:` anywhere (issue #106 review Fix
+// 7). The old tuple-switch's `default: return false` covered every
+// mismatched pair correctly today, but it also covered a fifth case's
+// self-comparison were one ever added: `(.newCase(x), .newCase(x))` falls
+// through to `default` exactly like a real mismatch, so two equal values of
+// a new case would silently compare unequal, and the only signal would be a
+// test failing somewhere else for a reason that looks unrelated. Switching
+// on `lhs` alone makes that a compile error instead -- a new case is a
+// non-exhaustive switch until this function grows an arm for it.
 extension TelemetryValue {
     static func == (lhs: TelemetryValue, rhs: TelemetryValue) -> Bool {
-        switch (lhs, rhs) {
-        case (.int(let l), .int(let r)):
+        switch lhs {
+        case .int(let l):
+            guard case .int(let r) = rhs else { return false }
             return l == r
-        case (.bool(let l), .bool(let r)):
+        case .bool(let l):
+            guard case .bool(let r) = rhs else { return false }
             return l == r
-        case (.string(let l), .string(let r)):
+        case .string(let l):
+            guard case .string(let r) = rhs else { return false }
             return "\(l)" == "\(r)"
-        case (.errorIdentity(let ld, let lc), .errorIdentity(let rd, let rc)):
+        case .errorIdentity(let ld, let lc):
+            guard case .errorIdentity(let rd, let rc) = rhs else { return false }
             return ld == rd && lc == rc
-        default:
-            return false
         }
     }
 }
