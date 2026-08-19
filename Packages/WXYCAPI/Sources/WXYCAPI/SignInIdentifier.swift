@@ -61,8 +61,7 @@ enum SignInIdentifier: Equatable, Sendable {
         self = raw.contains("@") ? .email(raw) : .username(raw)
     }
 
-    /// What the DJ may be shown as the destination of a mailed login code
-    /// (issue #100).
+    /// The DJ's own typed email, when that is what they typed (issue #100).
     ///
     /// The same `@` classification answers a second question: whether the app
     /// already knows the DJ's email, or had to *ask the server for it*.
@@ -77,12 +76,18 @@ enum SignInIdentifier: Equatable, Sendable {
     /// model, so the `@` predicate is applied in exactly one place — the same
     /// argument this type's doc comment makes against forking `isValidEmail`.
     /// `AuthService.sendLoginCode` hands the result out as
-    /// ``LoginCodeDestination/displayTarget`` so the app layer renders a string
-    /// without needing to see this (internal) type at all.
-    var displayTarget: String {
+    /// ``LoginCodeDestination/typedEmail`` so the app layer never needs to see
+    /// this (internal) type.
+    ///
+    /// Returns the *fact* — "the DJ typed this address" — rather than display
+    /// copy. An earlier version returned the literal "your registered email" for
+    /// the username case, which put a user-facing English string in the
+    /// networking package where a second surface couldn't reword it. The nil is
+    /// the same information and the wording belongs to whoever renders it.
+    var typedEmail: String? {
         switch self {
         case .email(let email): email
-        case .username: "your registered email"
+        case .username: nil
         }
     }
 

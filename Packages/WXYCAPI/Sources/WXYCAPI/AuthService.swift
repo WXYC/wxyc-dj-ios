@@ -302,25 +302,68 @@ public final class AuthService {
     /// way ``signIn(identifier:password:)`` clears it, so a stale message from an
     /// earlier attempt can't sit under a fresh one.
     ///
-    /// - Returns: The address the code went to, plus what may be shown about it
-    ///   — see ``LoginCodeDestination``, which is *not* the same string when the
-    ///   DJ typed a username.
+    /// It also **records the failure in ``lastError``** before rethrowing, so
+    /// every credential route reports errors the same way. `signIn` reports by
+    /// mutating `lastError`; having this one report only by throwing forced the
+    /// UI to keep a second error store and coalesce the two, which is a hazard
+    /// that already produced one defect (a resend failure that both went
+    /// unrendered *and* erased the message on screen, since this method clears
+    /// `lastError` on entry). One convention, one surface, one thing for the next
+    /// credential route to copy.
+    ///
+    /// - Returns: The address the code went to, plus how much of it may be shown
+    ///   — see ``LoginCodeDestination``.
     /// - Throws: ``AuthError/rejected(message:)`` when no account matches;
     ///   ``AuthError/rateLimited`` on a 429 from either leg.
     public func sendLoginCode(identifier: String) async throws -> LoginCodeDestination {
         lastError = nil
-        let classified = SignInIdentifier(identifier)
+        return try await recordingFailure {
+            let classified = SignInIdentifier(identifier)
 
-        let email: String
-        switch classified {
-        case .email(let typed):
-            email = typed
-        case .username:
-            email = try await lookUpEmail(identifier: identifier)
+            let email: String
+            switch classified {
+            case .email(let typed):
+                email = typed
+            case .username:
+                email = try await self.lookUpEmail(identifier: identifier)
+            }
+
+            try await self.sendVerificationCode(to: email)
+            return LoginCodeDestination(email: email, typedEmail: classified.typedEmail)
         }
+    }
 
-        try await sendVerificationCode(to: email)
-        return LoginCodeDestination(email: email, displayTarget: classified.displayTarget)
+    /// Mail another code to an address ``sendLoginCode(identifier:)`` already
+    /// resolved.
+    ///
+    /// Skips the lookup by construction, which is the point. Routing a resend
+    /// back through `sendLoginCode` would re-POST `/auth/wxyc/lookup-email` for a
+    /// username — an answer that cannot have changed, since the identifier field
+    /// isn't even on screen by then — and spend **two** slots of Backend-Service's
+    /// per-IP bucket where one would do, in precisely the situation (slow mail, an
+    /// expired code) where the DJ is most likely to tap again. It also keeps the
+    /// resolved address off the return path entirely, so a resend has nothing to
+    /// re-derive a display string from and cannot leak one.
+    public func resendLoginCode(to email: String) async throws {
+        lastError = nil
+        try await recordingFailure {
+            try await self.sendVerificationCode(to: email)
+        }
+    }
+
+    /// Run `work`, recording any failure in ``lastError`` before rethrowing.
+    ///
+    /// The non-session legs still `throw` — their caller is right there and can
+    /// react — but they report through the same field `signIn` does, so the UI
+    /// reads exactly one error surface. The `AuthError`-else-`.network` mapping
+    /// mirrors `completeSignIn`'s leg 1.
+    private func recordingFailure<T>(_ work: () async throws -> T) async throws -> T {
+        do {
+            return try await work()
+        } catch {
+            lastError = (error as? AuthError) ?? .network(message: error.localizedDescription)
+            throw error
+        }
     }
 
     /// Resolve a username to its verification address.
@@ -621,17 +664,7 @@ public final class AuthService {
         body: Data,
         rejectionCopy: (_ code: String?, _ message: String?) -> String? = { _, message in message }
     ) async throws -> String {
-        let url = configuration.authBaseURL.appending(path: path)
-        var request = URLRequest(url: url, timeoutInterval: configuration.timeout)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.httpBody = body
-
-        let (data, response) = try await send(request)
-        guard let http = response as? HTTPURLResponse else {
-            throw AuthError.network(message: "Non-HTTP response")
-        }
+        let (data, http) = try await postJSON(path: path, body: body)
         switch http.statusCode {
         case 200..<300:
             if let token = http.value(forHTTPHeaderField: "set-auth-token"), !token.isEmpty {
@@ -651,9 +684,8 @@ public final class AuthService {
             // rejected origin, a stale one-time code. Surface its reason rather
             // than asserting a credential failure the DJ would try to fix by
             // retyping.
-            throw AuthError.rejected(
-                message: rejectionCopy(Self.serverCode(in: data), Self.serverMessage(in: data))
-            )
+            let body = Self.serverError(in: data)
+            throw AuthError.rejected(message: rejectionCopy(body?.code, body?.message))
         default:
             throw AuthError.serverFailure(status: http.statusCode, message: Self.serverMessage(in: data))
         }
@@ -664,24 +696,22 @@ public final class AuthService {
     /// the "what does an error body look like" decision in one place, so a second
     /// message key or a decode fallback is a single edit rather than one per arm.
     private static func serverMessage(in data: Data) -> String? {
-        (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data))?.message
+        serverError(in: data)?.message
     }
 
-    /// The machine-readable `code` out of a better-auth error body, or `nil` if
-    /// it isn't shaped like one.
+    /// The decoded better-auth error body, or `nil` if this isn't one.
     ///
-    /// Sibling to ``serverMessage(in:)`` for the same reason: one place decides
-    /// what an error body looks like. Decoded as a plain `String` rather than
-    /// into an enum, so a code this app has never heard of degrades to "no
-    /// friendlier wording available" and falls back to the server's own message,
-    /// instead of throwing.
+    /// The single place that decides what an error body looks like — which is
+    /// what ``serverMessage(in:)``'s doc comment has always claimed, and what two
+    /// independent decoders quietly stopped delivering. Decoding once also means
+    /// `code` and `message` provably come from the same parse.
     ///
     /// Note this reads better-auth's `{message, code}` vocabulary. Backend-Service's
     /// own routes and the Express rate limiter answer `{error: …}`, which
     /// ``APIErrorResponse`` (required `message`) cannot decode at all — callers on
     /// those paths map by status instead of reaching for this.
-    private static func serverCode(in data: Data) -> String? {
-        (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data))?.code
+    private static func serverError(in data: Data) -> APIErrorResponse? {
+        try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data)
     }
 
     private func refreshJWT() async throws -> JWTPayload {

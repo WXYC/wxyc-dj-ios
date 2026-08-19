@@ -143,8 +143,8 @@ struct LoginViewModelTests {
         await viewModel.requestCode()
 
         // The verify call is keyed on the resolved address...
-        #expect(viewModel.stage == .awaitingCode(email: "juana@wxyc.org", displayTarget: "your registered email"))
-        #expect(viewModel.sendError == nil)
+        #expect(viewModel.stage == .awaitingCode(LoginCodeDestination(email: "juana@wxyc.org", typedEmail: nil)))
+        #expect(viewModel.displayedError == nil)
         // ...and the identifier was trimmed before it went out.
         let lookup = try #require(session.recordedRequests.first)
         let lookupBody = try #require(lookup.httpBody)
@@ -164,13 +164,14 @@ struct LoginViewModelTests {
 
         await viewModel.requestCode()
 
-        #expect(viewModel.stage == .awaitingCode(email: "juana@wxyc.org", displayTarget: "juana@wxyc.org"))
+        #expect(viewModel.stage == .awaitingCode(LoginCodeDestination(email: "juana@wxyc.org", typedEmail: "juana@wxyc.org")))
         #expect(session.recordedRequests.count == 1)  // no lookup for an email
     }
 
-    /// A failed request keeps the DJ on the identifier step with a reason. It
-    /// must land in `sendError`, not `auth.lastError` — `sendLoginCode`
-    /// establishes no session and so never sets the latter.
+    /// A failed request keeps the DJ on the identifier step with a reason.
+    /// `sendLoginCode` records it in `lastError` before rethrowing — the same
+    /// field `signIn` mutates — so the screen has one error surface rather than
+    /// two that have to be coalesced.
     @Test func afailedRequestStaysOnTheIdentifierStepWithAReason() async throws {
         let session = StubRequestSession()
         let auth = makeAuth(session: session)
@@ -181,8 +182,10 @@ struct LoginViewModelTests {
         await viewModel.requestCode()
 
         #expect(viewModel.stage == .identifier)
-        #expect(viewModel.sendError == "No account matches that username.")
-        #expect(auth.lastError == nil)
+        #expect(viewModel.displayedError == "No account matches that username.")
+        // Recorded on AuthService, not a second store: one reporting convention
+        // for every credential route.
+        #expect(auth.lastError == .rejected(message: "No account matches that username"))
         #expect(viewModel.isSendingCode == false)
     }
 
@@ -196,7 +199,7 @@ struct LoginViewModelTests {
         await viewModel.requestCode()
 
         #expect(viewModel.stage == .identifier)
-        #expect(viewModel.sendError != nil)
+        #expect(viewModel.displayedError != nil)
     }
 
     /// Non-digits are dropped and the length capped as the DJ types, so a code
@@ -258,9 +261,9 @@ struct LoginViewModelTests {
     ///
     /// The failure mode this pins: the DJ mistypes a code, sees "That code isn't
     /// right.", taps "Send a new code", and the send 429s. `sendLoginCode` clears
-    /// `auth.lastError` on entry and the failure lands in `sendError` — so a view
-    /// rendering only `auth.lastError` shows the existing error *disappearing*
-    /// and nothing taking its place.
+    /// `lastError` on entry, so if the failure did not land back in that same
+    /// field the DJ would watch the existing error *disappear* with nothing
+    /// taking its place.
     @Test func afailedResendReplacesTheErrorOnScreenRatherThanErasingIt() async throws {
         let session = StubRequestSession()
         let auth = makeAuth(session: session)
@@ -286,7 +289,6 @@ struct LoginViewModelTests {
         session.enqueue(StubRequestSession.Stub(statusCode: 429, body: Data(#"{"error":"Too many requests"}"#.utf8)))
         await viewModel.resendCode()
 
-        #expect(auth.lastError == nil)  // cleared by sendLoginCode's entry...
         #expect(viewModel.displayedError == "Too many attempts. Wait a few minutes and try again.")
     }
 
@@ -331,7 +333,7 @@ struct LoginViewModelTests {
         await waitUntil { viewModel.canResendCode }
 
         // Park the resend mid-flight and check the gate closed.
-        let blocking = BlockingRequestSession()
+        let blocking = HangingRequestSession()
         let blockedViewModel = LoginViewModel(auth: makeAuth(session: blocking), sleep: { await sleeper.sleep($0) })
         blockedViewModel.identifier = "juana@wxyc.org"
         let inFlight = Task { await blockedViewModel.requestCode() }
@@ -346,9 +348,10 @@ struct LoginViewModelTests {
     }
 
     /// The identifier stage is now the *first* screen a bounced-out DJ sees, so
-    /// it has to render `auth.lastError` too. `currentJWT`'s 401 demotion sets
-    /// `.notSignedIn` on its way to swapping `MainView` for `LoginView`; a stage
-    /// rendering only `sendError` would greet a mid-shift revocation in silence.
+    /// it has to render an error raised somewhere else entirely. `currentJWT`'s
+    /// 401 demotion sets `.notSignedIn` on its way to swapping `MainView` for
+    /// `LoginView`; a stage rendering only its own failures would greet a
+    /// mid-shift revocation in silence.
     @Test func theFirstStageStillExplainsASessionThatDiedElsewhere() async throws {
         let session = StubRequestSession()
         let auth = makeAuth(session: session)
@@ -391,7 +394,36 @@ struct LoginViewModelTests {
 
         #expect(viewModel.stage == .password)
         #expect(auth.lastError == nil)
-        #expect(viewModel.sendError == nil)
+        #expect(viewModel.displayedError == nil)
+    }
+
+    /// A resend must not re-run the username lookup. The resolved address is
+    /// already in the stage and cannot have changed — the identifier field isn't
+    /// even on screen — so re-asking would spend two slots of a per-IP budget the
+    /// control room shares, in exactly the moment a DJ taps most.
+    @Test func resendingSkipsTheLookupItAlreadyPaidFor() async throws {
+        let session = StubRequestSession()
+        let sleeper = ManualSleeper()
+        let viewModel = LoginViewModel(auth: makeAuth(session: session), sleep: { await sleeper.sleep($0) })
+        viewModel.identifier = "juana"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"email":"juana@wxyc.org"}"#.utf8)))
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success":true}"#.utf8)))
+        await viewModel.requestCode()
+        #expect(session.recordedRequests.count == 2)  // lookup + send
+
+        sleeper.elapse()
+        await waitUntil { viewModel.canResendCode }
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success":true}"#.utf8)))
+        await viewModel.resendCode()
+
+        #expect(session.recordedRequests.count == 3)  // one send, no second lookup
+        let resend = try #require(session.recordedRequests.last)
+        #expect(resend.url?.path.hasSuffix("/auth/email-otp/send-verification-otp") == true)
+        // And it still goes to the resolved address, which was never rendered.
+        let body = try #require(resend.httpBody)
+        let payload = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(payload["email"] as? String == "juana@wxyc.org")
     }
 
     /// Backing out to fix a mistyped identifier is the only recourse for a
@@ -433,40 +465,6 @@ struct LoginViewModelTests {
 
         firstSubmit.cancel()
         _ = await firstSubmit.value
-    }
-}
-
-/// RequestSession that parks the first request until the task is cancelled, so
-/// a test can observe view-model state while a send is genuinely in flight.
-private final class BlockingRequestSession: RequestSession, @unchecked Sendable {
-    private struct State {
-        var recorded: [URLRequest] = []
-        var waiter: CheckedContinuation<Void, Never>?
-    }
-
-    private let state = OSAllocatedUnfairLock<State>(initialState: State())
-
-    func waitForFirstRequest() async {
-        await withCheckedContinuation { continuation in
-            let resumeNow = state.withLock { state -> Bool in
-                if !state.recorded.isEmpty { return true }
-                state.waiter = continuation
-                return false
-            }
-            if resumeNow { continuation.resume() }
-        }
-    }
-
-    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
-        let waiter = state.withLock { state -> CheckedContinuation<Void, Never>? in
-            state.recorded.append(request)
-            let waiter = state.waiter
-            state.waiter = nil
-            return waiter
-        }
-        waiter?.resume()
-        try await Task.sleep(for: .seconds(60))
-        throw CancellationError()
     }
 }
 

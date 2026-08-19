@@ -80,26 +80,36 @@ public struct OTPSignInRequest: Codable, Sendable {
     }
 }
 
-/// Where a login code was sent, and what the DJ may be told about it.
+/// Where a login code was sent, and how much of that the DJ may be told.
 ///
 /// Two fields rather than one because they answer different questions, and
 /// conflating them would leak. `email` keys the verify call and may be an
 /// address the DJ never typed — resolved from their username by a lookup
 /// Backend-Service itself describes as "a mild enumeration vector". Echoing that
 /// back on screen would promote a rate-limited server-side vector into a
-/// displayed one, so `displayTarget` is what the UI renders: the identifier the
-/// DJ typed when it was already an email, and "your registered email" otherwise.
+/// displayed one, so only `typedEmail` is renderable, and it is `nil` in exactly
+/// the case where rendering would leak.
 ///
 /// dj-site draws the same line (`LoginFormSwitcher.tsx` shows the identifier only
-/// when `isValidEmail(identifier)`, else the same literal string).
+/// when `isValidEmail(identifier)`, else a fixed string).
+///
+/// The initializer is deliberately **not public**: a `public init` would let any
+/// caller pass the resolved address as `typedEmail` — precisely the leak this
+/// type exists to prevent — leaving the guarantee resting on
+/// ``AuthService/sendLoginCode(identifier:)`` happening to be the only
+/// constructor. Internal, the policy is unrepresentable rather than merely
+/// conventional. The app layer only ever *reads* one of these.
 public struct LoginCodeDestination: Equatable, Sendable {
     /// Keys the verify call. May be an address the DJ never typed.
     public let email: String
-    /// Safe to show. Never a looked-up address.
-    public let displayTarget: String
 
-    public init(email: String, displayTarget: String) {
+    /// The address the DJ typed, or `nil` when it was resolved from a username
+    /// and so must not be shown. Carries the fact; the wording of the `nil` case
+    /// belongs to whichever surface renders it.
+    public let typedEmail: String?
+
+    init(email: String, typedEmail: String?) {
         self.email = email
-        self.displayTarget = displayTarget
+        self.typedEmail = typedEmail
     }
 }

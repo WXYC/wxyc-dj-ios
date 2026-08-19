@@ -43,8 +43,8 @@ struct LoginView: View {
         switch viewModel.stage {
         case .identifier:
             codeRequestForm(viewModel: viewModel)
-        case .awaitingCode(_, let displayTarget):
-            OTPCodeView(viewModel: viewModel, displayTarget: displayTarget)
+        case .awaitingCode(let destination):
+            OTPCodeView(viewModel: viewModel, destination: destination)
         case .password:
             passwordForm(viewModel: viewModel)
         }
@@ -74,30 +74,14 @@ struct LoginView: View {
                 Text("We'll send a 6-digit code to your registered email.")
             }
 
-            // Coalesced, not stage-specific: this is also where a DJ lands when
-            // `currentJWT`'s 401 demotion bounces them out mid-shift, and that
-            // sets `auth.lastError` rather than `sendError`.
-            if let error = viewModel.displayedError {
-                Section {
-                    Text(error)
-                        .foregroundStyle(.red)
-                }
-            }
+            SignInErrorSection(message: viewModel.displayedError)
 
             Section {
-                Button {
-                    Task { await viewModel.requestCode() }
-                } label: {
-                    if viewModel.isSendingCode {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                    } else {
-                        Text("Send login code")
-                            .frame(maxWidth: .infinity)
-                            .bold()
-                    }
-                }
-                .disabled(!viewModel.canRequestCode)
+                PrimaryActionButton(
+                    title: "Send login code",
+                    isBusy: viewModel.isSendingCode,
+                    isEnabled: viewModel.canRequestCode
+                ) { await viewModel.requestCode() }
 
                 Button("Sign in with password instead") {
                     viewModel.usePassword()
@@ -131,27 +115,14 @@ struct LoginView: View {
                 Text("dj.wxyc.org credentials")
             }
 
-            if let error = viewModel.displayedError {
-                Section {
-                    Text(error)
-                        .foregroundStyle(.red)
-                }
-            }
+            SignInErrorSection(message: viewModel.displayedError)
 
             Section {
-                Button {
-                    Task { await viewModel.submit() }
-                } label: {
-                    if case .signingIn = auth.state {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                    } else {
-                        Text("Sign In")
-                            .frame(maxWidth: .infinity)
-                            .bold()
-                    }
-                }
-                .disabled(!viewModel.canSubmit)
+                PrimaryActionButton(
+                    title: "Sign In",
+                    isBusy: auth.state == .signingIn,
+                    isEnabled: viewModel.canSubmit
+                ) { await viewModel.submit() }
 
                 Button("Email me a code instead") {
                     viewModel.useCode()
