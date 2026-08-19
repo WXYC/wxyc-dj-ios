@@ -93,7 +93,16 @@ final class BinViewModel {
             // Persist the fresh server truth for the next offline launch.
             await persistSnapshot(after: "refresh")
         } catch let error as APIError {
-            errorReporter.report(error, context: "BinViewModel.refresh")
+            // Being offline is a supported mode (issue #106 review Fix 1) —
+            // the bin already falls back to its offline snapshot (issue #60)
+            // exactly as designed, so a failed refresh here is not new
+            // information the DJ or crash telemetry needs. Every other
+            // APIError is a genuine defect and is reported.
+            if case .offline = error {
+                // no-op
+            } else {
+                errorReporter.report(error, context: "BinViewModel.refresh")
+            }
             handleRefreshFailure(error.localizedMessage)
         } catch {
             errorReporter.report(error, context: "BinViewModel.refresh")
