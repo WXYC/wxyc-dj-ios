@@ -61,6 +61,15 @@ final class AppDependencies {
     /// chain, which is what keeps `RealSearchableIndex`'s `@unchecked Sendable` sound
     /// (no two Spotlight batches open at once). `nil` when ``catalogStore`` is.
     let catalogRefreshService: CatalogRefreshService?
+    /// The app's error-reporting seam (issue #106). Defaults to
+    /// ``NoOpErrorReporter`` on both test-facing initializers below
+    /// (``init(catalogStoreURL:binStoreURL:reporter:)`` and
+    /// ``init(catalogStore:reporter:)``) so unit tests -- including the
+    /// store-open degrade tests just below, which exercise exactly the paths
+    /// a capture site lives on -- never fire a real Sentry event. Only
+    /// ``init()``, whose sole caller is `AppDelegate`, passes a real
+    /// ``SentryErrorReporter`` explicitly.
+    let errorReporter: any ErrorReporter
     /// Cold-launch Spotlight deep-link state (issue #19 step 7), injected via
     /// `.environment` and bound to RootView's `fullScreenCover`. The resolution
     /// that turns a tapped `album.<id>` into a route lives here — on
@@ -76,7 +85,8 @@ final class AppDependencies {
     convenience init() {
         self.init(
             catalogStoreURL: Self.defaultCatalogStoreURL(),
-            binStoreURL: Self.defaultBinStoreURL()
+            binStoreURL: Self.defaultBinStoreURL(),
+            reporter: SentryErrorReporter()
         )
     }
 
@@ -85,7 +95,10 @@ final class AppDependencies {
     /// defaults point under Application Support). A `nil` URL, or a store that
     /// fails to open, leaves that feature inert. `binStoreURL` defaults to `nil`
     /// so existing catalog-only test call sites don't open a real bin store.
-    init(catalogStoreURL: URL?, binStoreURL: URL? = nil) {
+    /// `reporter` defaults to ``NoOpErrorReporter`` -- see ``errorReporter``'s
+    /// doc comment for why only ``init()`` overrides it.
+    init(catalogStoreURL: URL?, binStoreURL: URL? = nil, reporter: any ErrorReporter = NoOpErrorReporter()) {
+        self.errorReporter = reporter
         let connectivity = ConnectivityMonitor()
         self.connectivity = connectivity
         let (configuration, authService, api) = Self.makeCore(onOutcome: Self.outcomeHandler(for: connectivity))
@@ -129,13 +142,18 @@ final class AppDependencies {
         // The bin snapshot store (issue #60). Opened independently of the catalog
         // store — its own DB + actor — so an offline bin read never waits behind a
         // catalog replace. Degrades to online-only (nil) if the file can't open.
-        self.binStore = Self.openBinStore(at: binStoreURL)
+        self.binStore = Self.openBinStore(at: binStoreURL, reporter: reporter)
         self.librarySearch = LibrarySearch(api: api, catalogStore: catalogStore, connectivity: connectivity)
     }
 
     /// Open the bin snapshot store at `url`, logging and degrading to `nil` on
     /// failure (disk unwritable) so the composition root never crashes.
-    private static func openBinStore(at url: URL?) -> (any BinStore)? {
+    ///
+    /// `reporter` isn't read yet -- this parameter exists so a future capture
+    /// site here (a bin-store-open failure is exactly the kind of silent
+    /// field defect issue #106 exists to see) is a body edit, not a signature
+    /// change that ripples to every call site.
+    private static func openBinStore(at url: URL?, reporter: any ErrorReporter) -> (any BinStore)? {
         guard let url else { return nil }
         do {
             return try SQLiteBinStore(url: url)
@@ -150,8 +168,10 @@ final class AppDependencies {
     /// ``handleAuthChange``, ``present(albumID:)``) reads only ``catalogStore``,
     /// so a unit test can supply a store whose `row(id:)` suspends on demand to
     /// drive `present`'s most-recent-wins token latch across the `await` —
-    /// the one branch the sequential-await tests can't reach.
-    init(catalogStore: any CatalogStore) {
+    /// the one branch the sequential-await tests can't reach. `reporter` defaults
+    /// to ``NoOpErrorReporter``, same rationale as the designated initializer.
+    init(catalogStore: any CatalogStore, reporter: any ErrorReporter = NoOpErrorReporter()) {
+        self.errorReporter = reporter
         let connectivity = ConnectivityMonitor()
         self.connectivity = connectivity
         let (configuration, authService, api) = Self.makeCore(onOutcome: Self.outcomeHandler(for: connectivity))
