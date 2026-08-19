@@ -39,6 +39,7 @@ Packages/WXYCAPIModels/          # Vendored api.yaml codegen output (issue #75)
   contract-version.json          # Pins the wxyc-shared commit it was built from
 scripts/regenerate-api-types.sh  # Regenerate from the pin
 scripts/verify-api-types.sh      # Drift gate (also runs in CI)
+scripts/upload-debug-symbols.sh  # Uploads dSYMs to Sentry; runs as a WXYCDJ build phase (issue #107)
 project.yml                      # xcodegen spec
 ```
 
@@ -70,6 +71,19 @@ INFOPLIST_KEY_WXYCAPIBaseURL: http://localhost:8080
 ```
 
 Local Backend-Service is started from its own checkout (`cd ../Backend-Service && npm run dev`).
+
+## Debug Symbol Upload (Sentry)
+
+The "Upload Debug Symbols to Sentry" build phase runs `scripts/upload-debug-symbols.sh` on every build, on every machine — but it needs [`sentry-cli`](https://docs.sentry.io/cli/installation/) (`brew install getsentry/tools/sentry-cli`) and an auth token to do anything. Neither is required to build or run the app: without `sentry-cli`, or without a token, the phase prints a `warning:` to the build log and the build continues — this repo has no release pipeline yet, so a missing upload never fails a build, on a dev Mac or in CI (see the script's own comments for the CI/local split it does apply, and where it doesn't yet).
+
+To upload dSYMs from your machine — useful for symbolicating your own crashes in Sentry — create `.sentryclirc` at the repo root:
+
+```ini
+[auth]
+token=sntrys_your_personal_token_here
+```
+
+Get a token from Sentry's org settings (`wxyc` org, `wxyc-dj-ios` project) under **Auth Tokens**, scoped to `project:releases`. `.sentryclirc` is gitignored — it is never committed, and `sentry-cli` also honors a `~/.sentryclirc` if you'd rather keep one token for every WXYC iOS checkout. `SENTRY_AUTH_TOKEN` in the environment works too, and takes precedence over either file.
 
 ## API Surface Used
 
