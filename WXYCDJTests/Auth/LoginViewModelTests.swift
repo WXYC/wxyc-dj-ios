@@ -466,6 +466,140 @@ struct LoginViewModelTests {
         firstSubmit.cancel()
         _ = await firstSubmit.value
     }
+
+    // MARK: - Issue #106: error reporting
+
+    /// `submit()` reports a `.missingSessionToken` (a 2xx sign-in response
+    /// with neither a `set-auth-token` header nor a body token — the
+    /// server's contract broke) but not `.invalidCredentials` (a wrong
+    /// password, which the DJ can act on).
+    @Test func submitReportsServerDefectsButNotInvalidCredentials() async throws {
+        let session = StubRequestSession()
+        let auth = makeAuth(session: session)
+        let spy = SpyErrorReporter()
+        let viewModel = LoginViewModel(auth: auth, reporter: spy)
+        viewModel.identifier = "juana"
+        viewModel.password = "hunter2"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200))  // no token anywhere
+        await viewModel.submit()
+        #expect(auth.lastError == .missingSessionToken)
+        #expect(spy.reportCount == 1)
+        #expect(spy.reports.first?.context == "LoginViewModel")
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 401))
+        await viewModel.submit()
+        #expect(auth.lastError == .invalidCredentials)
+        #expect(spy.reportCount == 1)  // unchanged -- the second leg is a skip
+    }
+
+    /// Same report/skip split as `submit()`, over the code-sign-in leg.
+    @Test func submitCodeReportsServerDefectsButNotInvalidCredentials() async throws {
+        let session = StubRequestSession()
+        let auth = makeAuth(session: session)
+        let spy = SpyErrorReporter()
+        let viewModel = LoginViewModel(auth: auth, reporter: spy)
+        viewModel.identifier = "juana@wxyc.org"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success":true}"#.utf8)))
+        await viewModel.requestCode()
+        viewModel.code = "123456"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200))  // no token anywhere
+        await viewModel.submitCode()
+        #expect(auth.lastError == .missingSessionToken)
+        #expect(spy.reportCount == 1)
+        #expect(spy.reports.first?.context == "LoginViewModel")
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 401))
+        await viewModel.submitCode()
+        #expect(auth.lastError == .invalidCredentials)
+        #expect(spy.reportCount == 1)  // unchanged
+    }
+
+    /// `requestCode()` reports a `.serverFailure` but not a `.rateLimited` —
+    /// the latter is reachable in ordinary use (the control room shares an
+    /// egress address), not a defect.
+    @Test func requestCodeReportsServerFailureButNotRateLimit() async throws {
+        let session = StubRequestSession()
+        // requestCode() starts the resend cooldown unconditionally on every
+        // call (success or failure), so a second call needs the cooldown
+        // driven forward -- same pattern as the existing cooldown tests.
+        let sleeper = ManualSleeper()
+        let auth = makeAuth(session: session)
+        let spy = SpyErrorReporter()
+        let viewModel = LoginViewModel(auth: auth, reporter: spy, sleep: { await sleeper.sleep($0) })
+        viewModel.identifier = "juana@wxyc.org"  // an email skips the lookup leg
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 500, body: Data(#"{"error":"boom"}"#.utf8)))
+        await viewModel.requestCode()
+        #expect(spy.reportCount == 1)
+        #expect(spy.reports.first?.context == "LoginViewModel")
+
+        sleeper.elapse()
+        await waitUntil { viewModel.canRequestCode }
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 429, body: Data(#"{"error":"Too many requests"}"#.utf8)))
+        await viewModel.requestCode()
+        #expect(spy.reportCount == 1)  // unchanged -- rate limiting is not a defect
+    }
+
+    /// **`resendCode()` is the case this issue exists to catch.**
+    /// `try? await auth.resendLoginCode(...)` swallows the throw entirely —
+    /// there is no caller left to see it fail — but `AuthService` still lands
+    /// the failure in `lastError`, and that must still reach the reporter.
+    /// Before issue #106 this class of defect (a resend 500ing) was
+    /// invisible everywhere: not thrown, not logged, not reported.
+    @Test func resendCodeReportsServerFailureButNotRateLimit() async throws {
+        let session = StubRequestSession()
+        let sleeper = ManualSleeper()
+        let auth = makeAuth(session: session)
+        let spy = SpyErrorReporter()
+        let viewModel = LoginViewModel(auth: auth, reporter: spy, sleep: { await sleeper.sleep($0) })
+        viewModel.identifier = "juana@wxyc.org"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success":true}"#.utf8)))
+        await viewModel.requestCode()
+        sleeper.elapse()
+        await waitUntil { viewModel.canResendCode }
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 500, body: Data(#"{"error":"boom"}"#.utf8)))
+        await viewModel.resendCode()
+        // The throw never reached this call site (resendCode() doesn't
+        // rethrow), but the defect still reported.
+        #expect(spy.reportCount == 1)
+        #expect(spy.reports.first?.context == "LoginViewModel")
+
+        sleeper.elapse()
+        await waitUntil { viewModel.canResendCode }
+        session.enqueue(StubRequestSession.Stub(statusCode: 429, body: Data(#"{"error":"Too many requests"}"#.utf8)))
+        await viewModel.resendCode()
+        #expect(spy.reportCount == 1)  // unchanged -- rate limiting is not a defect
+    }
+}
+
+/// Pins `LoginViewModel.shouldReport(_:)` — the total switch over every
+/// `AuthError` case — as a standalone table, independent of driving all four
+/// sign-in legs over the network for every case. The leg-specific tests above
+/// (`LoginViewModelTests`) confirm the wiring actually calls this at each of
+/// the four call sites; this confirms the classification itself is complete
+/// and correct, so a future `AuthError` case is a compile-time decision here
+/// rather than a silent miss.
+@Suite("LoginViewModel.shouldReport")
+struct LoginViewModelShouldReportTests {
+    @Test(arguments: [
+        (AuthError.invalidCredentials, false),
+        (AuthError.network(message: "boom"), true),
+        (AuthError.offline(message: "offline"), false),
+        (AuthError.missingSessionToken, true),
+        (AuthError.serverFailure(status: 500, message: nil), true),
+        (AuthError.rejected(message: nil), false),
+        (AuthError.rateLimited, false),
+        (AuthError.notSignedIn, true),
+    ])
+    func classifiesEveryAuthErrorCase(error: AuthError, shouldReport: Bool) {
+        #expect(LoginViewModel.shouldReport(error) == shouldReport)
+    }
 }
 
 /// A hand-driven stand-in for `Task.sleep`, so the resend-cooldown tests assert
