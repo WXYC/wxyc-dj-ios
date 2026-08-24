@@ -10,6 +10,8 @@
 //  its single-flight (no two Spotlight batches at once) guarantee. Issue #106:
 //  starts Sentry before that composition root is built, so its own store-open
 //  failures (SQLite unavailable -> degraded catalog/bin features) are visible.
+//  Issue #108 starts PostHog right after -- a no-op until its project token is
+//  filled in; see TelemetryBootstrap.startAnalytics().
 //
 //  Created by Jake on 06/23/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -34,6 +36,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // AppDependencies (and its real SentryErrorReporter) before this line
         // ever ran.
         TelemetryBootstrap.start()
+        // Issue #108: gated on a real project token being filled in (see
+        // TelemetryBootstrap.startAnalytics's doc comment) -- a no-op today.
+        TelemetryBootstrap.startAnalytics()
         self.dependencies = AppDependencies()
         super.init()
     }
