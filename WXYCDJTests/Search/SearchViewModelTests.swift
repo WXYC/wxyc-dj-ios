@@ -29,14 +29,15 @@ struct SearchViewModelTests {
     private static func makeViewModel(
         _ client: APIClient,
         store: (any CatalogStore)? = nil,
-        online: Bool = true
+        online: Bool = true,
+        analytics: any Analytics = NoOpAnalytics()
     ) -> SearchViewModel {
         let search = LibrarySearch(
             api: client,
             catalogStore: store,
             connectivity: ConnectivityMonitor(initiallyOnline: online)
         )
-        return SearchViewModel(search: search, api: client)
+        return SearchViewModel(search: search, api: client, analytics: analytics)
     }
 
     @Test func emptyQueryStaysIdleAndIssuesNoRequest() async throws {
@@ -164,6 +165,70 @@ struct SearchViewModelTests {
         let body = try #require(posted.httpBody)
         let decoded = try JSONCoders.decoder.decode(AddToBinRequest.self, from: body)
         #expect(decoded.trackTitle == nil)
+    }
+
+    // MARK: - Issue #108: search analytics
+
+    @Test func settledSearchRecordsSearchPerformed() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let analytics = SpyAnalytics()
+        let viewModel = Self.makeViewModel(client, analytics: analytics)
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
+        ))
+
+        viewModel.query = "ju"
+        try await Self.waitForSettle(viewModel)
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "search_performed")
+        #expect(capture.properties["source"] == .enumString(SearchSource.server))
+        #expect(capture.properties["result_count"] == .int(1))
+        #expect(capture.properties["query_length"] == .int(2))
+    }
+
+    @Test func offlineSearchRecordsLocalSource() async throws {
+        let (client, _) = try await SignedInClient.make()
+        defer { Self.removeStore() }
+        do {
+            let store = try await Self.makeStore(rows: [Self.juanaCatalogRow])
+            let analytics = SpyAnalytics()
+            let viewModel = Self.makeViewModel(client, store: store, online: false, analytics: analytics)
+
+            viewModel.query = "ju"
+            try await Self.waitForSettle(viewModel)
+
+            let capture = try #require(analytics.captures.first)
+            #expect(capture.properties["source"] == .enumString(SearchSource.local))
+            #expect(capture.properties["result_count"] == .int(1))
+        }
+    }
+
+    /// A debounce-cancelled search — a follow-up keystroke supersedes this
+    /// one before the request settles — captures nothing (issue #108): the
+    /// DJ never saw these results, so it isn't a served search. Real
+    /// assertion, not a tautology, since `performSearch(_:)` checks
+    /// `Task.isCancelled` *after* the network/local search returns and
+    /// *before* capturing.
+    @Test func debounceCancelledSearchCapturesNothing() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let analytics = SpyAnalytics()
+        let viewModel = Self.makeViewModel(client, analytics: analytics)
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
+        ))
+
+        viewModel.query = "ju"
+        // Drop below the minimum before the debounce fires: the pending
+        // Task is cancelled outright, so it never reaches performSearch at
+        // all -- the strongest form of "captures nothing."
+        viewModel.query = "j"
+        try await Self.waitBriefly()
+
+        #expect(analytics.captures.isEmpty)
     }
 
     @Test func shorteningQueryBelowMinimumCancelsInFlightSearch() async throws {

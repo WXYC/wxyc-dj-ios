@@ -211,6 +211,70 @@ struct RouterDeepLinkTests {
         #expect(deps.router.deepLink?.id == 200)
         #expect(deps.router.pending == nil)
     }
+
+    // MARK: - Issue #108: spotlight_deeplink_opened analytics
+
+    @Test func immediateSignedInTapRecordsCloneHitAndNotParked() async throws {
+        let (deps, url) = Self.makeDeps()
+        defer { Self.cleanup(url) }
+        try await #require(deps.catalogStore).replace(rows: [Self.dogaRow()], lastModified: nil)
+        let analytics = SpyAnalytics()
+        let spiedDeps = AppDependencies(catalogStore: try #require(deps.catalogStore), analytics: analytics)
+
+        await spiedDeps.handleSpotlightTap(albumID: 100, isSignedIn: true)
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "spotlight_deeplink_opened")
+        #expect(capture.properties["clone_hit"] == .bool(true))
+        #expect(capture.properties["parked"] == .bool(false))
+    }
+
+    @Test func immediateSignedInTapCloneMissRecordsCloneHitFalse() async throws {
+        let (deps, url) = Self.makeDeps()
+        defer { Self.cleanup(url) }
+        try await #require(deps.catalogStore).replace(rows: [Self.dogaRow(id: 100)], lastModified: nil)
+        let analytics = SpyAnalytics()
+        let spiedDeps = AppDependencies(catalogStore: try #require(deps.catalogStore), analytics: analytics)
+
+        await spiedDeps.handleSpotlightTap(albumID: 999, isSignedIn: true)
+
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.properties["clone_hit"] == .bool(false))
+        #expect(capture.properties["parked"] == .bool(false))
+    }
+
+    @Test func replayedParkRecordsParkedTrue() async throws {
+        let (deps, url) = Self.makeDeps()
+        defer { Self.cleanup(url) }
+        try await #require(deps.catalogStore).replace(rows: [Self.dogaRow()], lastModified: nil)
+        let analytics = SpyAnalytics()
+        let spiedDeps = AppDependencies(catalogStore: try #require(deps.catalogStore), analytics: analytics)
+
+        await spiedDeps.handleSpotlightTap(albumID: 100, isSignedIn: false)  // parks, no event yet
+        #expect(analytics.captures.isEmpty)
+        await spiedDeps.handleAuthChange(wasSignedIn: false, isSignedIn: true)  // replays
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.properties["clone_hit"] == .bool(true))
+        #expect(capture.properties["parked"] == .bool(true))
+    }
+
+    /// Re-tapping the already-open cover early-outs before any resolve —
+    /// no new deep link actually opened, so no second event.
+    @Test func reTappingTheAlreadyOpenCoverRecordsNoSecondEvent() async throws {
+        let (deps, url) = Self.makeDeps()
+        defer { Self.cleanup(url) }
+        try await #require(deps.catalogStore).replace(rows: [Self.dogaRow()], lastModified: nil)
+        let analytics = SpyAnalytics()
+        let spiedDeps = AppDependencies(catalogStore: try #require(deps.catalogStore), analytics: analytics)
+
+        await spiedDeps.handleSpotlightTap(albumID: 100, isSignedIn: true)
+        await spiedDeps.handleSpotlightTap(albumID: 100, isSignedIn: true)
+
+        #expect(analytics.captures.count == 1)
+    }
 }
 
 /// A `CatalogStore` whose `row(id:)` records the requested id then blocks until
