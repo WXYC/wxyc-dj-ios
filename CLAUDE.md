@@ -235,4 +235,5 @@ Because recording is a **one-way door**, the failure is classified before it's r
 - `Backend-Service` — owns the API (`apps/backend/`) and auth (`apps/auth/`). See `Backend-Service/CLAUDE.md`.
 - `wxyc-shared/api.yaml` — OpenAPI 3.0 source of truth for DTOs.
 - `wxyc-ios-64` — the main WXYC iOS app; this app borrows its conventions but is a separate product.
+- `wxyc-dj-android` — the Kotlin/Compose port of this app. Shares the API contract and the invariants, not the code: the port's issues restate each invariant this repo's source comments explain, because in most cases the comment records a failure mode the code alone doesn't reveal. Worth reading its `CLAUDE.md` before changing behavior here that the two are expected to share.
 - `dj-site` — the web equivalent; reference UX for live-search behavior (350 ms debounce, ≥ 2 char min, results table with artist/title/label/catalog code).
