@@ -123,3 +123,30 @@ struct AnalyticsPrivacyFilterTests {
             .isDisjoint(with: AnalyticsPrivacyAllowlist.sdkLifecycleKeys))
     }
 }
+
+@Suite("TelemetryBootstrap.isRunningUnitTests")
+struct AnalyticsTestHostGuardTests {
+    // The guard exists because `WXYCDJTests` is a host-app bundle, so
+    // `AppDelegate.init()` -- and therefore `startAnalytics()` -- runs before
+    // any test. Without it, every CI run emits SDK lifecycle events into
+    // dj-site's production project.
+    @Test("the runner's environment marker is detected")
+    func detectsTestRunnerEnvironment() {
+        #expect(TelemetryBootstrap.isRunningUnitTests(
+            environment: ["XCTestConfigurationFilePath": "/tmp/Session.xctestconfiguration"]))
+    }
+
+    @Test("an app-launch environment is not mistaken for a test run")
+    func doesNotFalsePositiveOnAppLaunch() {
+        #expect(!TelemetryBootstrap.isRunningUnitTests(environment: [:]))
+        #expect(!TelemetryBootstrap.isRunningUnitTests(environment: ["HOME": "/var/mobile"]))
+    }
+
+    @Test("this process really is a test run, so the production start is skipped")
+    func thisProcessIsDetectedAsATestRun() {
+        // Belt-and-braces against the parameterized form above passing while
+        // the real call site reads something else: assert the live environment.
+        #expect(TelemetryBootstrap.isRunningUnitTests(
+            environment: ProcessInfo.processInfo.environment))
+    }
+}

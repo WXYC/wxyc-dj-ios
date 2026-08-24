@@ -294,7 +294,7 @@ struct RefreshCatalogReportingTests {
         let service = try await Self.makeService(signedIn: true)
         let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, reporter: spy)
 
-        let success = await deps.refreshCatalog()
+        let success = await deps.refreshCatalog(trigger: .launch)
 
         #expect(success == false)
         #expect(spy.reportCount == 1)
@@ -306,7 +306,7 @@ struct RefreshCatalogReportingTests {
         let service = try await Self.makeService(signedIn: false)
         let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, reporter: spy)
 
-        let success = await deps.refreshCatalog()
+        let success = await deps.refreshCatalog(trigger: .launch)
 
         #expect(success == true)
         #expect(spy.reportCount == 0)
@@ -358,7 +358,7 @@ struct RefreshCatalogReportingTests {
         let service = try await Self.makeOfflineService()
         let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, reporter: spy)
 
-        let success = await deps.refreshCatalog()
+        let success = await deps.refreshCatalog(trigger: .launch)
 
         #expect(success == false)
         #expect(spy.reportCount == 0)
@@ -372,5 +372,52 @@ struct RefreshCatalogReportingTests {
         await deps.handleBackgroundPoll()
 
         #expect(spy.reportCount == 0)
+    }
+
+    // MARK: - Issue #108: catalog_refresh_completed analytics
+
+    @Test func genuineRefreshFailureRecordsAFailedOutcomeWithTheCallerSTrigger() async throws {
+        let service = try await Self.makeService(signedIn: true)
+        let analytics = SpyAnalytics()
+        let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, analytics: analytics)
+
+        _ = await deps.refreshCatalog(trigger: .background)
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "catalog_refresh_completed")
+        #expect(capture.properties["outcome"] == .enumString(CatalogRefreshOutcome.failed))
+        #expect(capture.properties["trigger"] == .enumString(CatalogRefreshTrigger.background))
+        #expect(capture.properties["row_count"] == .int(0))
+    }
+
+    /// A missing/expired session isn't a refresh attempt at all (issue #106's
+    /// identical carve-out for error reporting) -- nothing to log.
+    @Test func notSignedInSkipDuringRefreshRecordsNoAnalyticsEvent() async throws {
+        let service = try await Self.makeService(signedIn: false)
+        let analytics = SpyAnalytics()
+        let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, analytics: analytics)
+
+        _ = await deps.refreshCatalog(trigger: .launch)
+
+        #expect(analytics.captures.isEmpty)
+    }
+
+    /// Being offline is a supported mode, never worth a Sentry event (issue
+    /// #106 review Fix 1) -- but it *is* a genuine refresh attempt worth
+    /// counting as `.failed` for product analytics (issue #108): station
+    /// network health is exactly what `catalog_refresh_completed`'s
+    /// `outcome` and the connectivity events both exist to answer.
+    @Test func offlineFailureDuringRefreshRecordsAFailedOutcome() async throws {
+        let service = try await Self.makeOfflineService()
+        let analytics = SpyAnalytics()
+        let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, analytics: analytics)
+
+        _ = await deps.refreshCatalog(trigger: .foreground)
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.properties["outcome"] == .enumString(CatalogRefreshOutcome.failed))
+        #expect(capture.properties["trigger"] == .enumString(CatalogRefreshTrigger.foreground))
     }
 }

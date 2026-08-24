@@ -37,14 +37,14 @@ struct SearchView: View {
         // warning; keying on AlbumRoute also lets the in-app tap and the
         // deep-link push (step 7) share one destination. (issue #19 step 6)
         .navigationDestination(for: AlbumRoute.self) { route in
-            AlbumDetailView(albumId: route.id, fallback: route.fallback)
+            AlbumDetailView(albumId: route.id, fallback: route.fallback, origin: .search)
         }
         .navigationTitle("Library")
         .searchable(text: $searchText, prompt: "Artist or album")
         .toolbar { signOutMenu }
         .onAppear {
             if viewModel == nil {
-                viewModel = SearchViewModel(search: deps.librarySearch, api: deps.api)
+                viewModel = SearchViewModel(search: deps.librarySearch, api: deps.api, analytics: deps.analytics)
             }
         }
     }

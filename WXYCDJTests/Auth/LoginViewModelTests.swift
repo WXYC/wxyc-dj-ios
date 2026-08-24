@@ -646,6 +646,113 @@ struct LoginViewModelTests {
 
         #expect(spy.reportCount == 0)
     }
+
+    // MARK: - Issue #108: sign-in analytics
+
+    @Test func submitRecordsSignInCompletedOnSuccess() async throws {
+        let session = StubRequestSession()
+        let auth = makeAuth(session: session)
+        let analytics = SpyAnalytics()
+        let viewModel = LoginViewModel(auth: auth, analytics: analytics)
+        viewModel.identifier = "juana"
+        viewModel.password = "hunter2"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, headers: Self.signInSuccessHeaders))
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await viewModel.submit()
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "sign_in_completed")
+        #expect(capture.properties["method"] == .enumString(SignInMethod.password))
+    }
+
+    @Test func submitRecordsSignInFailedWithReasonOnInvalidCredentials() async throws {
+        let session = StubRequestSession()
+        let auth = makeAuth(session: session)
+        let analytics = SpyAnalytics()
+        let viewModel = LoginViewModel(auth: auth, analytics: analytics)
+        viewModel.identifier = "juana"
+        viewModel.password = "wrong"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 401))
+        await viewModel.submit()
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "sign_in_failed")
+        #expect(capture.properties["method"] == .enumString(SignInMethod.password))
+        #expect(capture.properties["reason"] == .enumString(SignInFailureReason.invalidCredentials))
+    }
+
+    @Test func submitCodeRecordsSignInCompletedWithOTPMethod() async throws {
+        let session = StubRequestSession()
+        let auth = makeAuth(session: session)
+        let analytics = SpyAnalytics()
+        let viewModel = LoginViewModel(auth: auth, analytics: analytics)
+        viewModel.identifier = "juana@wxyc.org"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success":true}"#.utf8)))
+        await viewModel.requestCode()
+        viewModel.code = "123456"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, headers: Self.signInSuccessHeaders))
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await viewModel.submitCode()
+
+        // requestCode() sends no sign_in_* event of its own (it isn't a sign-in
+        // leg) -- only submitCode()'s own outcome is recorded.
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "sign_in_completed")
+        #expect(capture.properties["method"] == .enumString(SignInMethod.otp))
+    }
+
+    @Test func submitCodeRecordsSignInFailedWithRejectedReasonOnAWrongCode() async throws {
+        let session = StubRequestSession()
+        let auth = makeAuth(session: session)
+        let analytics = SpyAnalytics()
+        let viewModel = LoginViewModel(auth: auth, analytics: analytics)
+        viewModel.identifier = "juana@wxyc.org"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success":true}"#.utf8)))
+        await viewModel.requestCode()
+        viewModel.code = "000000"
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 400,
+            body: Data(#"{"message":"Invalid OTP","code":"INVALID_OTP"}"#.utf8)
+        ))
+        await viewModel.submitCode()
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "sign_in_failed")
+        #expect(capture.properties["method"] == .enumString(SignInMethod.otp))
+        #expect(capture.properties["reason"] == .enumString(SignInFailureReason.rejected))
+    }
+
+    /// `requestCode()`/`resendCode()` send a mailed code -- neither is a
+    /// sign-in leg, so neither ever records `sign_in_completed`/
+    /// `sign_in_failed`, success or failure.
+    @Test func requestCodeRecordsNoSignInEvent() async throws {
+        let session = StubRequestSession()
+        let auth = makeAuth(session: session)
+        let analytics = SpyAnalytics()
+        let viewModel = LoginViewModel(auth: auth, analytics: analytics)
+        viewModel.identifier = "juana@wxyc.org"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 500, body: Data(#"{"error":"boom"}"#.utf8)))
+        await viewModel.requestCode()
+
+        #expect(analytics.captures.isEmpty)
+    }
 }
 
 /// Pins `LoginViewModel.shouldReport(_:)` — the total switch over every

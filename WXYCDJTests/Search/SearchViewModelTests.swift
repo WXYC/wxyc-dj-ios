@@ -29,14 +29,15 @@ struct SearchViewModelTests {
     private static func makeViewModel(
         _ client: APIClient,
         store: (any CatalogStore)? = nil,
-        online: Bool = true
+        online: Bool = true,
+        analytics: any Analytics = NoOpAnalytics()
     ) -> SearchViewModel {
         let search = LibrarySearch(
             api: client,
             catalogStore: store,
             connectivity: ConnectivityMonitor(initiallyOnline: online)
         )
-        return SearchViewModel(search: search, api: client)
+        return SearchViewModel(search: search, api: client, analytics: analytics)
     }
 
     @Test func emptyQueryStaysIdleAndIssuesNoRequest() async throws {
@@ -164,6 +165,104 @@ struct SearchViewModelTests {
         let body = try #require(posted.httpBody)
         let decoded = try JSONCoders.decoder.decode(AddToBinRequest.self, from: body)
         #expect(decoded.trackTitle == nil)
+    }
+
+    // MARK: - Issue #108: search analytics
+
+    @Test func settledSearchRecordsSearchPerformed() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let analytics = SpyAnalytics()
+        let viewModel = Self.makeViewModel(client, analytics: analytics)
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
+        ))
+
+        viewModel.query = "ju"
+        try await Self.waitForSettle(viewModel)
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "search_performed")
+        #expect(capture.properties["source"] == .enumString(SearchSource.server))
+        #expect(capture.properties["result_count"] == .int(1))
+        #expect(capture.properties["query_length"] == .int(2))
+    }
+
+    @Test func offlineSearchRecordsLocalSource() async throws {
+        let (client, _) = try await SignedInClient.make()
+        defer { Self.removeStore() }
+        // Inner scope for the same reason as
+        // `offlineServesLocalCloneAndExposesLocalSource` above: release the
+        // SQLite connection before the `defer` unlinks the file.
+        do {
+            let store = try await Self.makeStore(rows: [Self.juanaCatalogRow])
+            let analytics = SpyAnalytics()
+            let viewModel = Self.makeViewModel(client, store: store, online: false, analytics: analytics)
+
+            viewModel.query = "ju"
+            try await Self.waitForSettle(viewModel)
+
+            let capture = try #require(analytics.captures.first)
+            #expect(capture.properties["source"] == .enumString(SearchSource.local))
+            #expect(capture.properties["result_count"] == .int(1))
+        }
+    }
+
+    /// A search superseded **mid-flight** captures nothing (issue #108): the DJ
+    /// never saw those results, so it isn't a served search.
+    ///
+    /// This drives the case that actually exercises the guard. `performSearch(_:)`
+    /// checks `Task.isCancelled` *after* `LibrarySearch.search(query:)` returns
+    /// and *before* capturing, so the only way to reach that check is to have a
+    /// request genuinely in flight when the next keystroke lands — hence the
+    /// `BlockingRequestSession`. Both queries clear `minQueryLength`, so the
+    /// earlier "drop below 2 characters" version of this test never entered
+    /// `performSearch` at all and would still have passed with the guard
+    /// deleted. Here, deleting it yields two captures instead of one.
+    @Test func searchSupersededMidFlightCapturesOnlyTheServedOne() async throws {
+        let (client, blocking) = try await SignedInClient.makeBlocking(
+            responseBody: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
+        )
+        let analytics = SpyAnalytics()
+        let viewModel = Self.makeViewModel(client, analytics: analytics)
+
+        viewModel.query = "ju"
+        // Park until the first search is genuinely on the wire.
+        await blocking.waitForFirstRequest()
+        // A follow-up keystroke cancels that in-flight task and starts a new
+        // search. Still >= minQueryLength, so this is a supersession, not an
+        // abandonment.
+        viewModel.query = "jua"
+        // Let the first (now-cancelled) request resume and the second run.
+        blocking.release()
+        try await Self.waitForSettle(viewModel)
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "search_performed")
+        // The *served* query is the 3-character one, proving the survivor is
+        // the later search rather than the superseded one.
+        #expect(capture.properties["query_length"] == .int(3))
+    }
+
+    /// The abandonment case: dropping below `minQueryLength` cancels the pending
+    /// debounce before it ever issues a request, so there is nothing to serve
+    /// and nothing to capture.
+    @Test func searchAbandonedBeforeItIssuesCapturesNothing() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let analytics = SpyAnalytics()
+        let viewModel = Self.makeViewModel(client, analytics: analytics)
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
+        ))
+
+        viewModel.query = "ju"
+        viewModel.query = "j"
+        try await Self.waitBriefly()
+
+        #expect(analytics.captures.isEmpty)
     }
 
     @Test func shorteningQueryBelowMinimumCancelsInFlightSearch() async throws {
