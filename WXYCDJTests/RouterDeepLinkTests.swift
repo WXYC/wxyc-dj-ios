@@ -24,11 +24,17 @@ import WXYCAPI
 @MainActor
 struct RouterDeepLinkTests {
     /// An AppDependencies backed by a fresh temp SQLite store, plus the store
-    /// URL so the caller can clean up the sidecar files.
-    private static func makeDeps() -> (AppDependencies, URL) {
+    /// URL so the caller can clean up the sidecar files. `analytics` is
+    /// threaded through rather than left to a second, spied `AppDependencies`
+    /// built over the same store: two instances share one `CatalogStore` but
+    /// get *separate* `Router`s, so an assertion accidentally written against
+    /// the unspied one's `router` would pass vacuously.
+    private static func makeDeps(
+        analytics: any Analytics = NoOpAnalytics()
+    ) -> (AppDependencies, URL) {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "router-deeplink-\(UUID().uuidString).sqlite")
-        return (AppDependencies(catalogStoreURL: url), url)
+        return (AppDependencies(catalogStoreURL: url, analytics: analytics), url)
     }
 
     private static func cleanup(_ url: URL) {
@@ -210,6 +216,66 @@ struct RouterDeepLinkTests {
         // Fresh wins; the stale 100 bowed out rather than clobbering the cover.
         #expect(deps.router.deepLink?.id == 200)
         #expect(deps.router.pending == nil)
+    }
+
+    // MARK: - Issue #108: spotlight_deeplink_opened analytics
+
+    @Test func immediateSignedInTapRecordsCloneHitAndNotParked() async throws {
+        let analytics = SpyAnalytics()
+        let (deps, url) = Self.makeDeps(analytics: analytics)
+        defer { Self.cleanup(url) }
+        try await #require(deps.catalogStore).replace(rows: [Self.dogaRow()], lastModified: nil)
+
+        await deps.handleSpotlightTap(albumID: 100, isSignedIn: true)
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "spotlight_deeplink_opened")
+        #expect(capture.properties["clone_hit"] == .bool(true))
+        #expect(capture.properties["parked"] == .bool(false))
+    }
+
+    @Test func immediateSignedInTapCloneMissRecordsCloneHitFalse() async throws {
+        let analytics = SpyAnalytics()
+        let (deps, url) = Self.makeDeps(analytics: analytics)
+        defer { Self.cleanup(url) }
+        try await #require(deps.catalogStore).replace(rows: [Self.dogaRow(id: 100)], lastModified: nil)
+
+        await deps.handleSpotlightTap(albumID: 999, isSignedIn: true)
+
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.properties["clone_hit"] == .bool(false))
+        #expect(capture.properties["parked"] == .bool(false))
+    }
+
+    @Test func replayedParkRecordsParkedTrue() async throws {
+        let analytics = SpyAnalytics()
+        let (deps, url) = Self.makeDeps(analytics: analytics)
+        defer { Self.cleanup(url) }
+        try await #require(deps.catalogStore).replace(rows: [Self.dogaRow()], lastModified: nil)
+
+        await deps.handleSpotlightTap(albumID: 100, isSignedIn: false)  // parks, no event yet
+        #expect(analytics.captures.isEmpty)
+        await deps.handleAuthChange(wasSignedIn: false, isSignedIn: true)  // replays
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.properties["clone_hit"] == .bool(true))
+        #expect(capture.properties["parked"] == .bool(true))
+    }
+
+    /// Re-tapping the already-open cover early-outs before any resolve —
+    /// no new deep link actually opened, so no second event.
+    @Test func reTappingTheAlreadyOpenCoverRecordsNoSecondEvent() async throws {
+        let analytics = SpyAnalytics()
+        let (deps, url) = Self.makeDeps(analytics: analytics)
+        defer { Self.cleanup(url) }
+        try await #require(deps.catalogStore).replace(rows: [Self.dogaRow()], lastModified: nil)
+
+        await deps.handleSpotlightTap(albumID: 100, isSignedIn: true)
+        await deps.handleSpotlightTap(albumID: 100, isSignedIn: true)
+
+        #expect(analytics.captures.count == 1)
     }
 }
 

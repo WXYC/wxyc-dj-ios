@@ -35,13 +35,13 @@ struct WXYCDJApp: App {
                     // Foreground-primary refresh: restore the session, then clone
                     // the catalog (a no-op skip until signed in).
                     await dependencies.authService.restoreSession()
-                    await dependencies.refreshCatalog()
+                    await dependencies.refreshCatalog(trigger: .launch)
                 }
                 .onChange(of: scenePhase) { _, phase in
                     switch phase {
                     case .active:
                         // Re-entry from background: top up the clone.
-                        Task { await dependencies.refreshCatalog() }
+                        Task { await dependencies.refreshCatalog(trigger: .foreground) }
                     case .background:
                         // Arm the background poll for while we're away (only if
                         // there's a catalog to refresh); it re-arms itself

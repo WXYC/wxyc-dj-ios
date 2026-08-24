@@ -74,6 +74,9 @@ final class LoginViewModel {
     /// ``NoOpErrorReporter`` so every existing test construction site keeps
     /// compiling unchanged; `LoginView` passes `deps.errorReporter`.
     private let reporter: any ErrorReporter
+    /// The app's product-analytics seam (issue #108). Same default-to-no-op
+    /// discipline as `reporter`; `LoginView` passes `deps.analytics`.
+    private let analytics: any Analytics
 
     /// better-auth allows 3 sends per 60s on the send route, so 30 s leaves
     /// headroom (2/min) while still letting a DJ whose mail is slow try again
@@ -88,10 +91,12 @@ final class LoginViewModel {
     init(
         auth: AuthService,
         reporter: any ErrorReporter = NoOpErrorReporter(),
+        analytics: any Analytics = NoOpAnalytics(),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.auth = auth
         self.reporter = reporter
+        self.analytics = analytics
         self.sleep = sleep
     }
 
@@ -279,6 +284,48 @@ final class LoginViewModel {
         reporter.report(PendingJWTAfterSignIn(), context: "LoginViewModel.pendingJWT")
     }
 
+    // MARK: - Analytics (issue #108)
+
+    /// Records `sign_in_completed`/`sign_in_failed` for the leg that just
+    /// settled. Called from `submit()`/`submitCode()` only — `requestCode()`
+    /// and `resendCode()` send a mailed code, they don't sign anyone in, so
+    /// they have no `sign_in_*` outcome to report (matching why they're
+    /// excluded from ``AuthService/State/isSignedIn`` transitions entirely).
+    ///
+    /// Reads `auth.lastError`/`auth.isSignedIn` post-hoc, the same pattern
+    /// ``reportIfDefect()`` uses and for the same reason: `AuthService`
+    /// clears `lastError` at the start of `signIn`, so whatever is here once
+    /// the `await` returns is this call's own outcome. `isSignedIn` is `true`
+    /// for **both** `.signedIn(payload:)` cases, including the issue-#53
+    /// pending-JWT window (`payload: nil`) — the DJ genuinely is signed in
+    /// there, which is a different, narrower fact than
+    /// ``reportPendingJWTIfNeeded()``'s "was the JWT leg itself clean,"
+    /// worth recording to Sentry separately but not worth splitting this
+    /// product event over.
+    private func recordSignInOutcome(method: SignInMethod) {
+        if let error = auth.lastError {
+            analytics.capture(SignInFailedEvent(method: method, reason: SignInFailureReason(error)))
+        } else if auth.isSignedIn {
+            analytics.capture(SignInCompletedEvent(method: method))
+        }
+    }
+
+    /// Everything a completed sign-in leg has to do once `auth` has settled,
+    /// in the one order that is correct. Both legs (`submit`, `submitCode`)
+    /// end with a single call to this, so a future third credential route
+    /// can't wire up two of the three and silently drop the other -- which is
+    /// exactly the shape of the gap `reportPendingJWTIfNeeded()` was added to
+    /// close in the first place.
+    ///
+    /// All three read `auth`'s state post-hoc rather than taking a returned
+    /// outcome, because `AuthService.signIn` records into `lastError` instead
+    /// of throwing (issue #100's contract) -- see ``reportIfDefect()``.
+    private func settle(method: SignInMethod) {
+        reportIfDefect()
+        reportPendingJWTIfNeeded()
+        recordSignInOutcome(method: method)
+    }
+
     // MARK: - Actions
 
     /// Ask for a code and advance to the entry step. Stays on `.identifier` if
@@ -343,8 +390,7 @@ final class LoginViewModel {
     func submitCode() async {
         guard canSubmitCode, case let .awaitingCode(destination) = stage else { return }
         await auth.signIn(email: destination.email, otp: code)
-        reportIfDefect()
-        reportPendingJWTIfNeeded()
+        settle(method: .otp)
     }
 
     func submit() async {
@@ -354,8 +400,7 @@ final class LoginViewModel {
         // would 401. Password intentionally untrimmed; whitespace in a password
         // is significant.
         await auth.signIn(identifier: trimmedIdentifier, password: password)
-        reportIfDefect()
-        reportPendingJWTIfNeeded()
+        settle(method: .password)
     }
 
     // MARK: - Stage changes

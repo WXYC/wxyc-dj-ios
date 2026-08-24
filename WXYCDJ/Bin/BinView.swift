@@ -32,12 +32,17 @@ struct BinView: View {
         // AlbumDetailView still fetches /library/info to replace it with the
         // authoritative row. (issue #19 step 6, issue #87)
         .navigationDestination(for: AlbumRoute.self) { route in
-            AlbumDetailView(albumId: route.id, fallback: route.fallback)
+            AlbumDetailView(albumId: route.id, fallback: route.fallback, origin: .bin)
         }
         .navigationTitle("My Bin")
         .onAppear {
             if viewModel == nil {
-                let vm = BinViewModel(api: deps.api, binStore: deps.binStore, errorReporter: deps.errorReporter)
+                let vm = BinViewModel(
+                    api: deps.api,
+                    binStore: deps.binStore,
+                    errorReporter: deps.errorReporter,
+                    analytics: deps.analytics
+                )
                 viewModel = vm
                 // Load the persisted snapshot first (instant offline render),
                 // then top up from the network. (issue #60)

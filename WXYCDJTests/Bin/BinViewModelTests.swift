@@ -162,6 +162,47 @@ struct BinViewModelTests {
         #expect(spy.reports.first?.context == "BinViewModel.persistSnapshot")
     }
 
+    // MARK: - Issue #108: bin analytics
+
+    @Test func removeSuccessRecordsBinItemRemoved() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let analytics = SpyAnalytics()
+        let viewModel = BinViewModel(api: client, analytics: analytics)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.binResponseJSON.utf8)
+        ))
+        await viewModel.refresh()
+        let target = try #require(viewModel.entries.first)
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200))
+        await viewModel.remove(target)
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "bin_item_removed")
+        #expect(capture.properties["album_id"] == .int(target.albumId))
+    }
+
+    @Test func removeFailureRecordsNoAnalyticsEvent() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let analytics = SpyAnalytics()
+        let viewModel = BinViewModel(api: client, analytics: analytics)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.binResponseJSON.utf8)
+        ))
+        await viewModel.refresh()
+        let target = try #require(viewModel.entries.first)
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 500, body: Data(#"{"error":"boom"}"#.utf8)))
+        await viewModel.remove(target)
+
+        #expect(analytics.captures.isEmpty)
+    }
+
     @Test func removeFailurePreservesEntriesAndPopulatesRemoveError() async throws {
         let (client, session) = try await SignedInClient.make()
         let viewModel = BinViewModel(api: client)
