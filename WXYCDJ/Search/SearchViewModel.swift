@@ -40,13 +40,18 @@ final class SearchViewModel {
 
     private let search: LibrarySearch
     private let api: APIClient
+    /// The app's product-analytics seam (issue #108). Defaults to
+    /// ``NoOpAnalytics`` so every existing construction site keeps compiling
+    /// unchanged; `SearchView` passes `deps.analytics`.
+    private let analytics: any Analytics
     private var searchTask: Task<Void, Never>?
     private static let minQueryLength = 2
     private static let debounce: Duration = .milliseconds(300)
 
-    init(search: LibrarySearch, api: APIClient) {
+    init(search: LibrarySearch, api: APIClient, analytics: any Analytics = NoOpAnalytics()) {
         self.search = search
         self.api = api
+        self.analytics = analytics
     }
 
     private func onQueryChanged() {
@@ -70,10 +75,18 @@ final class SearchViewModel {
         // monitor degrades to the on-device clone automatically. The outcome
         // carries which tier served it so the UI can frame local results.
         let outcome = await search.search(query: q)
+        // A debounce-cancelled search (a keystroke superseded this one before
+        // the request settled) captures nothing (issue #108) — the DJ never
+        // saw these results, so they're not a served search.
         if Task.isCancelled { return }
         results = outcome.results
         source = outcome.source
         state = outcome.results.isEmpty ? .empty : .results
+        analytics.capture(SearchPerformedEvent(
+            source: SearchSource(outcome.source),
+            resultCount: outcome.results.count,
+            queryLength: q.count
+        ))
     }
 
     func addToBin(_ row: AlbumSearchResult) async -> Bool {
@@ -83,6 +96,13 @@ final class SearchViewModel {
         // Empty matchedVia (normal artist/album hit) passes nil through.
         do {
             try await api.addToBin(albumId: row.id, trackTitle: row.matchedVia.first?.title)
+            // Issue #108: bin adoption. This is the *other* add button --
+            // `AlbumDetailView.addToBin()` is the one on the release screen.
+            // Instrumenting only that one would answer "bin adoption" from a
+            // biased sample and leave `bin_item_removed` events with no
+            // matching add, since a DJ can add straight from the results list
+            // without ever opening the detail view.
+            analytics.capture(BinItemAddedEvent(albumId: row.id))
             return true
         } catch {
             return false

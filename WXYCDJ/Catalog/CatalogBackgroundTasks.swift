@@ -112,7 +112,7 @@ enum CatalogBackgroundTasks {
         // rejects as a 'sending' risk.
         let box = UncheckedSendableBox(task)
         let work = Task {
-            let succeeded = await dependencies.refreshCatalog()
+            let succeeded = await dependencies.refreshCatalog(trigger: .background)
             box.value.setTaskCompleted(success: succeeded)
         }
         // Best-effort cancellation if iOS reclaims our background time. This is a

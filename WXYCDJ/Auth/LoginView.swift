@@ -38,7 +38,7 @@ struct LoginView: View {
         }
         .onAppear {
             if viewModel == nil {
-                viewModel = LoginViewModel(auth: auth, reporter: deps.errorReporter)
+                viewModel = LoginViewModel(auth: auth, reporter: deps.errorReporter, analytics: deps.analytics)
             }
         }
     }

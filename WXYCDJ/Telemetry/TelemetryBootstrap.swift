@@ -241,7 +241,37 @@ enum TelemetryBootstrap {
     /// the contract the app cannot hold by construction. See ADR 0007 and
     /// CLAUDE.md for what flipping it costs dj-site and why that is safe.
     static func startAnalytics() {
+        // `WXYCDJTests` is a host-app bundle (`TEST_HOST` points at
+        // `WXYCDJ.app/WXYCDJ`), so `@main WXYCDJApp` -> `AppDelegate.init()`
+        // runs before any test does. Without this guard every CI run and every
+        // local `xcodebuild test` starts the real SDK against the production
+        // token and emits `Application Opened` / `Application Installed` into
+        // dj-site's shared project -- `captureApplicationLifecycleEvents` is on,
+        // and those events are emitted by the SDK itself, so they bypass
+        // `PostHogAnalytics` and the `NoOpAnalytics` default that keeps
+        // app-authored events out of tests. `build_type` would mark them
+        // `development`, i.e. indistinguishable from a real developer build.
+        //
+        // The tests that genuinely need a started SDK
+        // (`PostHogPrivacyPipelineTests`) call
+        // `debugCaptureAnalyticsEventProperties(_:apiKey:host:)` with their own
+        // test key, so nothing is lost by skipping the production start here.
+        guard !isRunningUnitTests(environment: ProcessInfo.processInfo.environment) else { return }
         startAnalytics(apiKey: postHogAPIKey, host: productionHost)
+    }
+
+    /// Whether this process was launched by the test runner.
+    ///
+    /// Takes the environment as a **parameter** rather than reading
+    /// `ProcessInfo` directly, for the same reason
+    /// `BuildEnvironment.classify(receiptURL:)` takes its URL: the predicate is
+    /// then testable from a bundle that is *itself* always running under the
+    /// test runner, where reading the real environment could only ever return
+    /// `true`. `XCTestConfigurationFilePath` is set by the runner for Swift
+    /// Testing bundles too -- the name is historical, not a statement about
+    /// which framework is in use.
+    static func isRunningUnitTests(environment: [String: String]) -> Bool {
+        environment["XCTestConfigurationFilePath"] != nil
     }
 
     /// Starts PostHog against `apiKey`/`host`. Split from ``startAnalytics()``

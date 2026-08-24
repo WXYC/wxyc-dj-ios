@@ -45,6 +45,10 @@ final class BinViewModel {
     /// compiling unchanged and never fires a real Sentry event; `BinView`
     /// passes `deps.errorReporter` explicitly.
     private let errorReporter: any ErrorReporter
+    /// The app's product-analytics seam (issue #108). Defaults to
+    /// ``NoOpAnalytics`` for the same reason `errorReporter` defaults to
+    /// ``NoOpErrorReporter``; `BinView` passes `deps.analytics`.
+    private let analytics: any Analytics
     /// True once `entries` reflects an *authoritative* bin — a persisted snapshot
     /// (even an empty one) or a successful server load — as opposed to "not loaded
     /// yet". This is what consumes the store's never-written-`nil` vs written-
@@ -53,10 +57,16 @@ final class BinViewModel {
     /// empty tray rather than regressing to "Couldn't load bin".
     private var hasLoadedBin = false
 
-    init(api: APIClient, binStore: (any BinStore)? = nil, errorReporter: any ErrorReporter = NoOpErrorReporter()) {
+    init(
+        api: APIClient,
+        binStore: (any BinStore)? = nil,
+        errorReporter: any ErrorReporter = NoOpErrorReporter(),
+        analytics: any Analytics = NoOpAnalytics()
+    ) {
         self.api = api
         self.binStore = binStore
         self.errorReporter = errorReporter
+        self.analytics = analytics
     }
 
     /// Cold-launch step: populate `entries` from the persisted snapshot **before**
@@ -154,6 +164,7 @@ final class BinViewModel {
         do {
             try await api.removeFromBin(albumId: entry.albumId, trackTitle: nil)
             entries.removeAll { $0.albumId == entry.albumId }
+            analytics.capture(BinItemRemovedEvent(albumId: entry.albumId))
             // Mirror the removal into the snapshot, or "remove → relaunch"
             // resurrects the release via loadSnapshot() until a network refresh
             // lands — indefinitely while offline, the case issue #60 exists for.

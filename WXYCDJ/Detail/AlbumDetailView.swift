@@ -22,6 +22,10 @@ private let detailLog = Logger(subsystem: "org.wxyc.dj", category: "detail")
 struct AlbumDetailView: View {
     let albumId: Int
     let fallback: AlbumSearchResult?
+    /// How the DJ arrived here (issue #108) -- required, not defaulted, so a
+    /// future fourth call site has to make a conscious choice rather than
+    /// silently inheriting whatever the default happened to be.
+    let origin: AlbumDetailOrigin
     @Environment(AppDependencies.self) private var deps
     @State private var info: AlbumInfo?
     @State private var infoLoaded: Bool = false
@@ -41,9 +45,10 @@ struct AlbumDetailView: View {
     @State private var addedToBin: Bool = false
     @State private var addInFlight: Bool = false
 
-    init(albumId: Int, fallback: AlbumSearchResult? = nil) {
+    init(albumId: Int, fallback: AlbumSearchResult? = nil, origin: AlbumDetailOrigin) {
         self.albumId = albumId
         self.fallback = fallback
+        self.origin = origin
     }
 
     var body: some View {
@@ -111,6 +116,11 @@ struct AlbumDetailView: View {
         // Viewing an album is a strong "populated by use" signal: lazily cache its
         // Spotlight cover thumbnail so a later home-screen hit shows art (issue #44).
         .task { await deps.cacheThumbnail(forAlbumID: albumId) }
+        // Issue #108: which releases DJs actually look at, broken down by
+        // which surface (search/bin/Spotlight) sent them here. `.onAppear`,
+        // not a third `.task`: the body has no `await` in it, so a Task would
+        // buy an allocation and a run-loop turn's delay for nothing.
+        .onAppear { deps.analytics.capture(AlbumDetailViewedEvent(origin: origin, albumId: albumId)) }
     }
 
     // MARK: Sections
@@ -155,6 +165,16 @@ struct AlbumDetailView: View {
                                 .onAppear {
                                     guard ArtworkFailureClassification.indictsURL(error) else { return }
                                     failedArtworkURLs.insert(url)
+                                    // Issue #108: dead-CDN-URL frequency, by
+                                    // which source's URL it was -- fires at
+                                    // the same one-way-door gate the
+                                    // retirement itself does, never on a
+                                    // connectivity blip.
+                                    if let source = Self.artworkRetiredSource(
+                                        for: url, info: info, fallback: fallback, cloneRow: cloneRow, metadata: metadata
+                                    ) {
+                                        deps.analytics.capture(ArtworkURLRetiredEvent(source: source))
+                                    }
                                 }
                                 .id(url)
                         case .empty:
@@ -423,18 +443,95 @@ struct AlbumDetailView: View {
     /// `failedURLs` (nothing has been recorded as failed yet) reproduces the
     /// pre-#86 behavior exactly, which is what keeps the #83 invariant intact:
     /// a source that is merely still loading is never treated as failed.
-    static func preferredArtworkURL(
+    /// `nonisolated` deliberately -- and so is **every pure `static` on this
+    /// view**, not just the artwork family. `AlbumDetailView` conforms to
+    /// `View`, which is `@MainActor` under
+    /// Swift 6, so these statics inherit main-actor isolation by inference even
+    /// though they are pure functions over their parameters and touch no view
+    /// state. That inference is not harmless: handing an inferred-`@MainActor`
+    /// closure to a generic that runs it -- `.first(where:)` here -- makes the
+    /// compiler emit a runtime isolation assertion, and Swift Testing runs a
+    /// non-`@MainActor` test off the main actor, so the check traps and takes
+    /// the whole test host down (`EXC_BREAKPOINT` in
+    /// `swift_task_checkIsolatedSwift`) rather than failing one test.
+    /// ``preferredArtworkURL`` only escaped that because a `for` loop inlines
+    /// into the caller's isolation and emits no check -- it was one refactor
+    /// away from the same trap. Marking the family `nonisolated` is what makes
+    /// "pure and unit-testable without rendering" actually true instead of
+    /// true-by-codegen-accident; every call site is on the main actor already,
+    /// and calling a nonisolated function from there is always fine.
+    ///
+    /// The rule is the tier, not this function: ``resolveCatalog``,
+    /// ``shouldShowMetadataLabel``, ``shouldReadCloneForArtwork`` and
+    /// ``shouldReportMetadataFailure`` carry the same annotation for the same
+    /// reason. None of them trips the assertion *today* -- none currently hands
+    /// a closure to a generic -- but neither did ``preferredArtworkURL`` until
+    /// the refactor in this PR gave it a `.first(where:)`, and each is already
+    /// called from a non-`@MainActor` `@Suite` that Swift Testing runs
+    /// off-main. `resolveCatalog` is the likeliest next one: it is a precedence
+    /// walk over four optionals, the exact shape that was just rewritten into a
+    /// candidate list. Marking the tier also clears the standing
+    /// `#ActorIsolatedCall` warnings those call sites emit -- the compiler was
+    /// already pointing at this.
+    nonisolated static func preferredArtworkURL(
         info: AlbumInfo?,
         fallback: AlbumSearchResult?,
         cloneRow: CatalogRow?,
         metadata: AlbumMetadata?,
         failedURLs: Set<URL> = []
     ) -> URL? {
-        let candidates = [info?.artworkURL, fallback?.artworkURL, cloneRow?.artworkURL, metadata?.artworkURL]
-        for case let url? in candidates where !failedURLs.contains(url) {
-            return url
+        for candidate in artworkCandidates(info: info, fallback: fallback, cloneRow: cloneRow, metadata: metadata) {
+            if let url = candidate.url, !failedURLs.contains(url) { return url }
         }
         return nil
+    }
+
+    /// The four artwork sources in precedence order, each tagged with the
+    /// ``ArtworkRetiredSource`` that names it.
+    ///
+    /// **One list, two readers.** ``preferredArtworkURL`` takes the first
+    /// candidate that hasn't failed; ``artworkRetiredSource(for:…)`` takes the
+    /// one whose URL matches. They previously spelled the same four-element
+    /// ordering out twice — a list and a chain of `if`s — with a doc comment
+    /// asking that they stay in sync. They must: the analytics attribution is
+    /// only correct if it names the source the DJ was *actually shown*, so a
+    /// fifth source or a reorder applied to one and not the other would make
+    /// `artwork_url_retired` silently misattribute, with no compile error and
+    /// no test that would catch it. Sharing the list makes that unrepresentable.
+    nonisolated private static func artworkCandidates(
+        info: AlbumInfo?,
+        fallback: AlbumSearchResult?,
+        cloneRow: CatalogRow?,
+        metadata: AlbumMetadata?
+    ) -> [(source: ArtworkRetiredSource, url: URL?)] {
+        [
+            (.info, info?.artworkURL),
+            (.searchRow, fallback?.artworkURL),
+            (.clone, cloneRow?.artworkURL),
+            (.lml, metadata?.artworkURL),
+        ]
+    }
+
+    /// Which of the four artwork sources `url` came from, walked in the same
+    /// precedence ``preferredArtworkURL`` uses — literally the same list, via
+    /// ``artworkCandidates(info:fallback:cloneRow:metadata:)``. Pure + `static`
+    /// (issue #108) so `artwork_url_retired`'s source classification is
+    /// unit-testable without rendering, the same tier
+    /// `shouldReportMetadataFailure` and `shouldShowMetadataLabel` occupy on
+    /// this view. `nil` only if `url` doesn't match any live candidate --
+    /// shouldn't happen in practice, since the caller only ever passes the URL
+    /// `AsyncImage` was just handed, but a decision that can't fire is safer
+    /// than one that fires wrong.
+    nonisolated static func artworkRetiredSource(
+        for url: URL,
+        info: AlbumInfo?,
+        fallback: AlbumSearchResult?,
+        cloneRow: CatalogRow?,
+        metadata: AlbumMetadata?
+    ) -> ArtworkRetiredSource? {
+        artworkCandidates(info: info, fallback: fallback, cloneRow: cloneRow, metadata: metadata)
+            .first { $0.url == url }?
+            .source
     }
 
     /// What the header + catalog sections render from once `/library/info`
@@ -469,7 +566,7 @@ struct AlbumDetailView: View {
     /// un-framed; once the load fails we render the `fallback` (then the clone's
     /// bridged row) with a quiet "saved data" note, or — with nothing to show —
     /// a quiet "unavailable" note over a minimal header.
-    static func resolveCatalog(
+    nonisolated static func resolveCatalog(
         info: AlbumInfo?,
         fallback: AlbumSearchResult?,
         cloneRow: CatalogRow?,
@@ -535,7 +632,7 @@ struct AlbumDetailView: View {
     /// label already shown in the header (`catalogLabel`) — a matching label is a
     /// redundant duplicate. Pure + `static` so it's unit-testable without
     /// rendering (see `AlbumDetailFallbackTests`).
-    static func shouldShowMetadataLabel(
+    nonisolated static func shouldShowMetadataLabel(
         metadataLabel: String?, catalogLabel: String?, infoLoaded: Bool
     ) -> Bool {
         guard infoLoaded, let label = metadataLabel, !label.isEmpty else { return false }
@@ -568,7 +665,7 @@ struct AlbumDetailView: View {
     /// projection carries no `artwork_url`) and a Spotlight clone miss (no
     /// `fallback` at all) both reading the clone. Pure + `static` so the
     /// decision is testable without rendering.
-    static func shouldReadCloneForArtwork(fallback: AlbumSearchResult?) -> Bool {
+    nonisolated static func shouldReadCloneForArtwork(fallback: AlbumSearchResult?) -> Bool {
         fallback?.artworkURL == nil
     }
 
@@ -696,7 +793,7 @@ struct AlbumDetailView: View {
     /// compile-time decision, not a silent miss. `static` + pure so it's
     /// unit-testable without driving the view's network calls (see
     /// `AlbumDetailFallbackTests`).
-    static func shouldReportMetadataFailure(_ error: APIError) -> Bool {
+    nonisolated static func shouldReportMetadataFailure(_ error: APIError) -> Bool {
         switch error {
         case .decoding, .network:
             return true
@@ -729,6 +826,12 @@ struct AlbumDetailView: View {
             if Self.shouldReportMetadataFailure(error) {
                 deps.errorReporter.report(error, context: "AlbumDetailView.loadMetadata")
             }
+            // Issue #108: LML coverage gaps, bucketed by kind -- upstream
+            // library-metadata-lookup signal, independent of whether this
+            // particular gap was worth a Sentry event above.
+            if let kind = MetadataEnrichmentMissingKind(error) {
+                deps.analytics.capture(MetadataEnrichmentMissingEvent(kind: kind))
+            }
             return nil
         } catch {
             metadataLog.error("metadata fetch failed: \(error.localizedDescription, privacy: .public)")
@@ -744,6 +847,7 @@ struct AlbumDetailView: View {
         do {
             try await deps.api.addToBin(albumId: albumId)
             addedToBin = true
+            deps.analytics.capture(BinItemAddedEvent(albumId: albumId))
         } catch {
             // Surface to a dedicated addError state so the add-to-bin
             // failure doesn't masquerade as a catalog-row load error.
