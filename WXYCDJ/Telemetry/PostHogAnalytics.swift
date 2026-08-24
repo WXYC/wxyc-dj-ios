@@ -25,24 +25,20 @@ import PostHog
 /// its SDK.
 struct PostHogAnalytics: Analytics {
     func capture(_ event: some AnalyticsEvent) {
-        Self.capture(event)
-    }
-
-    /// The actual capture, factored out as a generic static function so
-    /// `E.name` (a `static var` on the concrete event type) is available --
-    /// `some AnalyticsEvent`'s opaque-parameter sugar erases the concrete
-    /// type inside `capture(_:)`'s body otherwise.
-    private static func capture<E: AnalyticsEvent>(_ event: E) {
-        var properties = event.properties.mapValues(\.wireValue)
-        // Every event carries this so a Debug-simulator run during
-        // development can never dominate the ~dozens-of-real-DJs dataset --
-        // PostHog has no Sentry-style `environment` concept, so without an
-        // explicit dimension every launch under Xcode lands in the same
-        // bucket as production traffic. `build_type` is in
-        // AnalyticsPrivacyAllowlist.allowedKeys precisely because it's
-        // stamped here rather than carried by any individual event's own
-        // `properties`.
-        properties["build_type"] = BuildEnvironment.current.rawValue
-        PostHogSDK.shared.capture(E.name, properties: properties)
+        // `type(of: event).name` reaches the concrete type's `static var` from
+        // inside an opaque-parameter body just fine -- `SpyAnalytics` does the
+        // same thing. (An earlier version routed this through a private
+        // generic `static func` on the theory that `some AnalyticsEvent`
+        // erased the concrete type here. It does not.)
+        //
+        // `build_type` is deliberately NOT stamped here: it belongs on *every*
+        // event, and the SDK emits its own application-lifecycle events
+        // directly, bypassing this conformer entirely. The stamp therefore
+        // lives in `TelemetryBootstrap.filterAnalyticsEvent(_:)`, the
+        // `beforeSend` hook every event really does pass through.
+        PostHogSDK.shared.capture(
+            type(of: event).name,
+            properties: event.properties.mapValues(\.wireValue)
+        )
     }
 }

@@ -44,6 +44,27 @@ struct AnalyticsPrivacyFilterTests {
         #expect(filtered["build_type"] as? String == "development")
     }
 
+    /// posthog-ios attaches these to the `Application Installed`/`Updated`/
+    /// `Opened` events `captureApplicationLifecycleEvents = true` turns on.
+    /// They're the payload that makes those events worth keeping — without
+    /// `from_background` an `Application Opened` can't tell a cold launch from
+    /// a foreground resume — so they're named in a separate, reviewed set
+    /// rather than dropped along with everything else non-`$`.
+    @Test("the SDK's own lifecycle-event keys survive")
+    func sdkLifecycleKeysSurvive() {
+        let filtered = AnalyticsPrivacyAllowlist.filterNonSDKProperties([
+            "from_background": false,
+            "version": "0.1.0",
+            "build": 42,
+            "previous_version": "0.0.9",
+            "previous_build": 41,
+        ])
+
+        #expect(filtered.count == 5)
+        #expect(filtered["from_background"] as? Bool == false)
+        #expect(filtered["previous_version"] as? String == "0.0.9")
+    }
+
     @Test("a non-allowlisted, non-$ key is dropped")
     func unallowlistedKeysAreDropped() {
         let filtered = AnalyticsPrivacyAllowlist.filterNonSDKProperties([

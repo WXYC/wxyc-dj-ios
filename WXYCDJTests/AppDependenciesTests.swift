@@ -294,7 +294,7 @@ struct RefreshCatalogReportingTests {
         let service = try await Self.makeService(signedIn: true)
         let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, reporter: spy)
 
-        let success = await deps.refreshCatalog()
+        let success = await deps.refreshCatalog(trigger: .launch)
 
         #expect(success == false)
         #expect(spy.reportCount == 1)
@@ -306,7 +306,7 @@ struct RefreshCatalogReportingTests {
         let service = try await Self.makeService(signedIn: false)
         let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, reporter: spy)
 
-        let success = await deps.refreshCatalog()
+        let success = await deps.refreshCatalog(trigger: .launch)
 
         #expect(success == true)
         #expect(spy.reportCount == 0)
@@ -358,7 +358,7 @@ struct RefreshCatalogReportingTests {
         let service = try await Self.makeOfflineService()
         let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, reporter: spy)
 
-        let success = await deps.refreshCatalog()
+        let success = await deps.refreshCatalog(trigger: .launch)
 
         #expect(success == false)
         #expect(spy.reportCount == 0)

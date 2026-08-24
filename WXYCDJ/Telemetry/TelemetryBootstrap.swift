@@ -190,22 +190,36 @@ enum TelemetryBootstrap {
 
     // MARK: - PostHog (issue #108)
 
-    /// The WXYC DJ project token, pending issue #108's PostHog project
-    /// creation.
+    /// **dj-site's** PostHog project (444958, org `wxyc`) — this app shares it
+    /// rather than getting one of its own.
     ///
-    /// **This is a placeholder, not a real token, and must be filled in
-    /// before merge.** The org is at its free-tier project limit; creating
-    /// "WXYC DJ" requires first deleting the dormant "Archive Player"
-    /// project (id 170909) in the PostHog web UI -- after exporting its
-    /// trailing-year events, per the org's data-safety rule -- which only
-    /// Jake can do (the PostHog MCP has no project-delete tool). See issue
-    /// #108 for the full sequencing and status as of 2026-08-24.
-    private static let postHogAPIKeyPlaceholder = "phc_REPLACE_ME_WXYC_DJ_PROJECT_TOKEN"
-
-    /// Swap this for the real "WXYC DJ" project token once issue #108's
-    /// PostHog project exists. Left equal to the placeholder until then --
-    /// see ``startAnalytics()``, which refuses to start the SDK while it is.
-    private static let postHogAPIKey = postHogAPIKeyPlaceholder
+    /// A deliberate exception to the org's one-project-per-surface convention,
+    /// not a workaround for the free tier's six-project cap. dj-site *is* the
+    /// web equivalent of this app: the same DJs doing the same jobs (library
+    /// search, the bin) on a different surface. In separate projects, "do DJs
+    /// reach for the phone or the desktop for library search?" is unanswerable;
+    /// in one project it is a breakdown on `$lib`. Verified before deciding
+    /// (2026-08-24): the project's trailing-30-day traffic is entirely
+    /// `$lib = web`, so `$lib` separates the two surfaces cleanly, and it
+    /// carries no `$identify` events, so anonymous iOS events aren't dropped
+    /// into a pool of identified DJ profiles. See issue #108 for the rejected
+    /// alternatives (the listener project; a separate environment, which would
+    /// have been better but appears gated to a paid tier).
+    ///
+    /// **Standing constraint that comes with sharing:** dj-site's event names
+    /// (`$pageview`, `$rageclick`, `web_vitals`, `$exception`, `csp_violation`,
+    /// `login_post_redirect`, `login_server_bounce`, the five `sse_*`,
+    /// `flowsheet_optimistic_replace_miss`) collide with none of this app's
+    /// twelve. Keep it that way on both surfaces — a name reused across
+    /// surfaces would put two schemas under one event, and `$lib` is a filter
+    /// you have to remember to apply, not a guarantee.
+    ///
+    /// Hardcoded for exactly the reason ``productionDSN`` is: a project token
+    /// is a **publishable client identifier, not a secret**. It authorizes
+    /// writing events to one project and nothing else, it ships inside the app
+    /// binary wherever it is read from, and this particular one is already
+    /// public in dj-site's web bundle.
+    private static let postHogAPIKey = "phc_Dhry3BxmF752J5UX4h7mQeHmUkVj3gzknZRFDQChL6DV"
 
     /// `https://us.i.posthog.com` per issue #108 -- every DJ is in Chapel
     /// Hill, so there's no EU-residency reason to point at
@@ -216,40 +230,42 @@ enum TelemetryBootstrap {
     /// Starts PostHog with the production project token. The sole production
     /// call site is `AppDelegate.init()`, right after ``start()`` -- a
     /// second call rather than folded into that one because the two SDKs
-    /// have unrelated failure modes worth keeping visibly separate (a
-    /// missing/placeholder PostHog token must never affect whether Sentry
-    /// starts, and vice versa).
+    /// have unrelated failure modes worth keeping visibly separate (a PostHog
+    /// startup problem must never affect whether Sentry starts, and vice
+    /// versa).
     ///
-    /// **Gated on the token not being the placeholder.** A build that ships
-    /// before issue #108's PostHog project exists must not fire events
-    /// against a project that was never created -- this makes that build
-    /// behave exactly as if analytics were still unimplemented (PostHog
-    /// simply never starts) rather than silently misrouting or erroring.
-    /// Remove this guard's reason to exist by filling in ``postHogAPIKey``,
-    /// not by removing the guard.
+    /// Note that **no IP-discarding option is set here, and none exists.**
+    /// Privacy contract item 3 (`$ip` dropped at ingest, no GeoIP enrichment)
+    /// is `anonymize_ips`, a **project-wide server-side setting** on project
+    /// 444958 — there is no client-side equivalent, so this is the one item of
+    /// the contract the app cannot hold by construction. See ADR 0007 and
+    /// CLAUDE.md for what flipping it costs dj-site and why that is safe.
     static func startAnalytics() {
-        guard postHogAPIKey != postHogAPIKeyPlaceholder else { return }
         startAnalytics(apiKey: postHogAPIKey, host: productionHost)
     }
 
     /// Starts PostHog against `apiKey`/`host`. Split from ``startAnalytics()``
     /// the same way ``start(dsn:)`` is split from ``start()`` -- so a test
     /// (or the `#if DEBUG` hook below) can exercise this exact option set
-    /// against a project of its own, never the production token above. Does
-    /// **not** re-check the placeholder guard -- that's ``startAnalytics()``'s
-    /// job alone, so a test can always drive this with an explicit test key.
+    /// against a project of its own, never the production token above.
     static func startAnalytics(apiKey: String, host: String) {
         PostHogSDK.shared.setup(makeAnalyticsConfig(apiKey: apiKey, host: host))
     }
 
-    /// Builds the `PostHogConfig` both ``startAnalytics(apiKey:host:)`` and
-    /// the `#if DEBUG` hook install -- one option set backs production and
-    /// the belt test alike.
+    /// Builds the one `PostHogConfig` behind ``startAnalytics(apiKey:host:)``,
+    /// which is the single path both production and the `#if DEBUG` belt-test
+    /// hook take -- so the option set under test is byte-for-byte the one that
+    /// ships.
     private static func makeAnalyticsConfig(apiKey: String, host: String) -> PostHogConfig {
         let config = PostHogConfig(projectToken: apiKey, host: host)
 
         // Free `Application Installed`/`Application Updated`/`Application
         // Opened` events with no PII -- worth the SDK default staying on.
+        // Their own non-`$` properties (`version`, `build`, `previous_version`,
+        // `previous_build`, `from_background`) reach the wire because
+        // AnalyticsPrivacyAllowlist.sdkLifecycleKeys names them explicitly;
+        // without that they'd survive as bare event names with the payload
+        // that makes them worth keeping stripped off.
         config.captureApplicationLifecycleEvents = true
         // This app is entirely SwiftUI; the UIViewController-swizzling
         // `$screen` autocapture this flag drives would capture nothing
@@ -286,8 +302,16 @@ enum TelemetryBootstrap {
         // autocapture stays off explicitly rather than resting on its
         // already-`false` default, so a future SDK version can't quietly
         // stand up a second, uncurated error-reporting pipeline alongside
-        // ADR 0007's.
+        // ADR 0007's. This local flag is authoritative: `getIntegrations()`
+        // only installs PostHogErrorTrackingAutoCaptureIntegration when it's
+        // true, so the SDK's *remote* `errorTracking.autocaptureExceptions`
+        // config can't switch it back on.
         config.errorTrackingConfig.autoCapture = false
+        // Feature flags are explicitly out of scope for issue #108 and this
+        // app reads none -- but the SDK default is `true`, which spends a
+        // `/flags` round trip (plus a handful of cache writes) at setup and on
+        // every foreground to fetch an answer nothing consults. Off.
+        config.preloadFeatureFlags = false
 
         // The runtime backstop behind the typed AnalyticsEvent catalog: a
         // bare static-function value (no closure literal), so nothing is
@@ -300,11 +324,33 @@ enum TelemetryBootstrap {
 
     /// The `beforeSend` filter every PostHog event passes through: applies
     /// ``AnalyticsPrivacyAllowlist/filterNonSDKProperties(_:)`` to the fully
-    /// merged property dict, then (DEBUG only) records the result for
-    /// ``debugCaptureAnalyticsEventProperties(_:apiKey:host:)`` to return.
-    /// `nonisolated` and captures nothing, per this file's header.
+    /// merged property dict, stamps `build_type`, then (DEBUG only) records
+    /// the result for ``debugCaptureAnalyticsEventProperties(_:apiKey:host:)``
+    /// to return. `nonisolated` and captures nothing, per this file's header.
+    ///
+    /// **`build_type` is stamped here, not in `PostHogAnalytics`, and that is
+    /// the point.** PostHog has no Sentry-style `environment` concept, so
+    /// without a build dimension every Debug-simulator run during development
+    /// lands in the same dataset as the ~dozens of real DJs and dominates it.
+    /// `PostHogAnalytics.capture` only sees events *this app* authors --
+    /// `captureApplicationLifecycleEvents = true` means the SDK emits
+    /// `Application Opened`/`Installed`/`Updated`/`Backgrounded` by calling
+    /// `PostHogSDK.capture` directly, bypassing the conformer. `Application
+    /// Opened` is both the canonical launch/retention event *and* the one a
+    /// developer generates dozens of times a day, i.e. exactly where the
+    /// pollution `build_type` exists to make filterable is worst. `beforeSend`
+    /// is the one genuine chokepoint: verified in the pinned SDK, every
+    /// capture path runs `captureInternal` → `buildEvent` → `runBeforeSend`.
+    ///
+    /// Stamped *after* the filter rather than before so the ordering can't be
+    /// misread as the allowlist vetting it; `build_type` is in `allowedKeys`
+    /// regardless, and its value is a `BuildEnvironment` case, never free text.
+    /// `BuildEnvironment.current` is a `static let`, so this costs nothing per
+    /// event.
     private static func filterAnalyticsEvent(_ event: PostHogEvent) -> PostHogEvent? {
-        event.properties = AnalyticsPrivacyAllowlist.filterNonSDKProperties(event.properties)
+        var properties = AnalyticsPrivacyAllowlist.filterNonSDKProperties(event.properties)
+        properties["build_type"] = BuildEnvironment.current.rawValue
+        event.properties = properties
         #if DEBUG
         TelemetryBootstrap.lastAnalyticsEventProperties = event.properties
         #endif
@@ -400,12 +446,18 @@ enum TelemetryBootstrap {
     ///   - apiKey: A test project token -- never ``postHogAPIKey`` or a real
     ///     one. Defaults to a syntactically-valid placeholder so
     ///     `PostHogConfig`'s empty-token guard doesn't itself disable the SDK.
-    ///   - host: Defaults to ``productionHost``; nothing this hook does
-    ///     reaches the network in a way any assertion here depends on.
+    ///   - host: Defaults to the discard port on loopback, deliberately **not**
+    ///     ``productionHost``. Nothing this hook asserts depends on the host --
+    ///     `beforeSend` runs inline, long before anything is flushed -- but
+    ///     `setup(_:)` does kick off real background requests (remote config,
+    ///     and the queue's flush timer), so a production default would have CI
+    ///     opening connections to PostHog's live ingest endpoint on every run,
+    ///     with a bogus token, for no assertion's benefit. Loopback fails those
+    ///     instantly instead.
     static func debugCaptureAnalyticsEventProperties(
         _ event: some AnalyticsEvent,
         apiKey: String = "phc_test_00000000000000000000000000000000",
-        host: String = productionHost
+        host: String = "http://127.0.0.1:9"
     ) -> [String: Any]? {
         lastAnalyticsEventProperties = nil
         PostHogSDK.shared.close()

@@ -68,28 +68,38 @@ struct AnalyticsEventCatalogTests {
     @Test("every catalog event's enum-string values are genuine members of their own closed vocabulary", arguments: analyticsEventCatalog)
     func everyEnumStringValueIsAMemberOfItsOwnVocabulary(event: any AnalyticsEvent) {
         for (key, value) in event.properties {
-            if case .enumString(let raw, let allowed) = value {
+            if case .enumString(let enumValue) = value {
                 #expect(
-                    allowed.contains(raw),
-                    "\(type(of: event).name).\(key) = \(raw) is not a member of \(allowed)"
+                    enumValue.allowedValues.contains(enumValue.rawValue),
+                    "\(type(of: event).name).\(key) = \(enumValue.rawValue) is not a member of \(enumValue.allowedValues)"
                 )
             }
         }
     }
 
-    @Test("every catalog event's property values are int, bool, or enumString — never a bare string", arguments: analyticsEventCatalog)
-    func everyPropertyValueIsAClosedShape(event: any AnalyticsEvent) {
-        // AnalyticsPropertyValue has no `.string(String)` case at all (see its
-        // doc comment), so this exhaustive switch is really asserting the
-        // type system already holds — but it's the assertion the acceptance
-        // criteria asks for, made explicit rather than merely implied by
-        // "it compiled."
-        for (_, value) in event.properties {
-            switch value {
-            case .int, .bool, .enumString:
-                break
-            }
-        }
+    /// The reverse direction of ``everyPropertyKeyIsAllowlisted``. Without it
+    /// the allowlist can only go stale in one direction: a key left behind by
+    /// a dropped event, or (worse) a live event missing from
+    /// `analyticsEventCatalog` above, would both pass unnoticed. Swift can't
+    /// enumerate a protocol's conformers, so the catalog array is
+    /// hand-maintained — this is what makes forgetting to add an event to it
+    /// cost something, as long as the event brought a new key with it.
+    @Test("every allowlisted key is claimed by some event in the catalog")
+    func everyAllowlistedKeyIsClaimedByAnEvent() {
+        let claimed = Set(analyticsEventCatalog.flatMap(\.properties.keys))
+        // `build_type` is the one deliberate exception: no event carries it,
+        // TelemetryBootstrap.filterAnalyticsEvent stamps it in `beforeSend`.
+        let unclaimed = AnalyticsPrivacyAllowlist.allowedKeys.subtracting(claimed).subtracting(["build_type"])
+        #expect(unclaimed.isEmpty, "allowlisted but emitted by no catalog event: \(unclaimed.sorted())")
+    }
+
+    /// The app's own keys and posthog-ios's lifecycle-event keys are two
+    /// separately-reviewed sets, and they must stay separate: if they ever
+    /// overlapped, an app event could reach the wire on a key it was never
+    /// audited for, just by reusing an SDK key's name.
+    @Test("the app's allowlist and the SDK lifecycle allowance are disjoint")
+    func allowlistAndSDKLifecycleKeysAreDisjoint() {
+        #expect(AnalyticsPrivacyAllowlist.allowedKeys.isDisjoint(with: AnalyticsPrivacyAllowlist.sdkLifecycleKeys))
     }
 }
 

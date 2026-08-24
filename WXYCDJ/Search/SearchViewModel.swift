@@ -96,6 +96,13 @@ final class SearchViewModel {
         // Empty matchedVia (normal artist/album hit) passes nil through.
         do {
             try await api.addToBin(albumId: row.id, trackTitle: row.matchedVia.first?.title)
+            // Issue #108: bin adoption. This is the *other* add button --
+            // `AlbumDetailView.addToBin()` is the one on the release screen.
+            // Instrumenting only that one would answer "bin adoption" from a
+            // biased sample and leave `bin_item_removed` events with no
+            // matching add, since a DJ can add straight from the results list
+            // without ever opening the detail view.
+            analytics.capture(BinItemAddedEvent(albumId: row.id))
             return true
         } catch {
             return false

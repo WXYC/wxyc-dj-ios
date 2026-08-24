@@ -88,14 +88,8 @@ struct RootView: View {
         // SwiftUI wiring, the same carve-out AlbumDetailView's four events
         // have — see CLAUDE.md's Telemetry section).
         .onChange(of: connectivity.isOnline) { wasOnline, isOnline in
-            switch ConnectivityTransition.classify(wasOnline: wasOnline, isOnline: isOnline) {
-            case .engaged:
-                deps.analytics.capture(OfflineLatchEngagedEvent())
-            case .restored:
-                deps.analytics.capture(ConnectivityRestoredEvent())
-            case nil:
-                break
-            }
+            guard let transition = ConnectivityTransition.classify(wasOnline: wasOnline, isOnline: isOnline) else { return }
+            deps.analytics.capture(transition.event)
         }
         // The deep-linked detail lives in its own cover (own NavigationStack),
         // never on the Search/Bin tab stacks — so dismissing returns the DJ to

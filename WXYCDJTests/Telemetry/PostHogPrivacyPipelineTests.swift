@@ -44,9 +44,9 @@ private struct RogueTestEvent: AnalyticsEvent {
 
 @Suite("PostHog privacy pipeline (end-to-end)", .serialized)
 struct PostHogPrivacyPipelineTests {
-    /// Never the placeholder production token, and never a real one --
-    /// syntactically plausible so `PostHogConfig` accepts it, pointed at a
-    /// host nothing in this suite depends on actually reaching.
+    /// Never the real project token this app ships with -- syntactically
+    /// plausible so `PostHogConfig` accepts it, and the hook's default host is
+    /// loopback, so nothing this suite does can reach a live PostHog project.
     private static let testAPIKey = "phc_test_00000000000000000000000000000000"
 
     @Test("$process_person_profile is false, per personProfiles = .never")

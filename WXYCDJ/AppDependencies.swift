@@ -292,12 +292,16 @@ final class AppDependencies {
     /// (`WXYCDJApp`'s launch `.task`, its scene-`.active` `.onChange`, and
     /// `CatalogBackgroundTasks`'s reindex handler) is calling, so
     /// `catalog_refresh_completed` can answer "do the background tasks
-    /// actually run on real devices?" Defaults to ``CatalogRefreshTrigger/launch``
-    /// only so the many existing test call sites that don't care about the
-    /// analytics dimension keep compiling unchanged; every real call site
-    /// passes its trigger explicitly.
+    /// actually run on real devices?"
+    ///
+    /// **Required, not defaulted** -- deliberately, and for the same reason
+    /// `AlbumDetailView.origin` is: every candidate default is a *real* case,
+    /// so a fourth call site that forgot the argument wouldn't fail, it would
+    /// silently file under whichever case the default happened to be and
+    /// corrupt the exact dimension this event exists to measure. A compile
+    /// error is the cheaper outcome.
     @discardableResult
-    func refreshCatalog(trigger: CatalogRefreshTrigger = .launch) async -> Bool {
+    func refreshCatalog(trigger: CatalogRefreshTrigger) async -> Bool {
         guard let catalogRefreshService else {
             await updateLastCatalogSyncText()
             return true

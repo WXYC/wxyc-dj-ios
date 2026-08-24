@@ -57,6 +57,32 @@ protocol Analytics: Sendable {
     func capture(_ event: some AnalyticsEvent)
 }
 
+// MARK: - AnalyticsEnum
+
+/// The only kind of string an ``AnalyticsEvent`` property may carry: a case
+/// of a closed Swift enum whose whole vocabulary is enumerable.
+///
+/// This exists so ``AnalyticsPropertyValue/enumString(_:)``'s payload can be
+/// typed as `any AnalyticsEnum` rather than a `String`. That is the whole
+/// mechanism: `.enumString(typedText)` is a **compile** error ("argument type
+/// 'String' does not conform to expected type 'AnalyticsEnum'"), not a review
+/// obligation — the same bar `TelemetryValue.string(StaticString)` sets on the
+/// Sentry side, where a `StaticString` can only be spelled as a source literal.
+/// An earlier shape carried `(String, allowedValues: Set<String>)` and asked,
+/// in a doc comment, that call sites only use a factory; a hand-built
+/// `.enumString(typedText, allowedValues: [typedText])` compiled *and* passed
+/// the PII audit, which is exactly the failure mode ADR 0007 says never to
+/// hold by comment.
+protocol AnalyticsEnum: RawRepresentable, CaseIterable, Sendable where RawValue == String {}
+
+extension AnalyticsEnum {
+    /// The enum's entire vocabulary, for the PII audit
+    /// (`AnalyticsEventCatalogTests`) to check a value's membership against
+    /// without reaching back into application code to ask what that
+    /// vocabulary was. Derived on demand rather than stored on every value.
+    var allowedValues: Set<String> { Set(Self.allCases.map(\.rawValue)) }
+}
+
 // MARK: - AnalyticsPropertyValue
 
 /// The closed set of shapes an ``AnalyticsEvent`` property may take.
@@ -65,34 +91,16 @@ protocol Analytics: Sendable {
 /// compile fine against `properties: ["query": typedText]` and ship a DJ's
 /// search text straight to PostHog -- the same trap `TelemetryValue` closes
 /// for Sentry's `extra` payload (see `ErrorReporting.swift`). Every string
-/// this catalog ever emits is instead a case's `rawValue` off a closed
-/// `RawRepresentable & CaseIterable` enum (`SignInMethod`, `SearchSource`,
-/// ...), routed through ``enumString(_:)`` -- which captures the enum's
-/// *entire* `allCases.rawValue` set alongside the one value actually chosen,
-/// so the PII audit (`AnalyticsEventCatalogTests`) can verify a value is a
-/// genuine member of a closed vocabulary without reaching back into
-/// application code to ask what that vocabulary was.
+/// this catalog ever emits is instead a case of an ``AnalyticsEnum``
+/// (`SignInMethod`, `SearchSource`, ...), which is the *only* thing
+/// ``enumString(_:)`` accepts.
 enum AnalyticsPropertyValue: Sendable, Equatable {
     case int(Int)
     case bool(Bool)
-    /// A value drawn from a closed Swift enum's `rawValue`, plus the enum's
-    /// full `allCases.rawValue` set captured at construction. Construct this
-    /// only through ``enumString(_:)`` -- the raw case exists so `Equatable`
-    /// and pattern matching stay ordinary, not so a call site hand-assembles
-    /// an arbitrary `(String, Set<String>)` pair.
-    case enumString(String, allowedValues: Set<String>)
-
-    /// Builds an ``enumString(_:allowedValues:)`` from a real enum case,
-    /// deriving `allowedValues` from `E.allCases` -- the closed vocabulary
-    /// the PII audit checks membership against. A future case added to `E`
-    /// widens `allowedValues` automatically; it does not widen what a call
-    /// site can pass as a bare string, because there is nothing here a call
-    /// site *can* pass but a genuine `E` value.
-    static func enumString<E: RawRepresentable & CaseIterable>(
-        _ value: E
-    ) -> AnalyticsPropertyValue where E.RawValue == String {
-        .enumString(value.rawValue, allowedValues: Set(E.allCases.map(\.rawValue)))
-    }
+    /// A case of a closed ``AnalyticsEnum``. The existential payload is what
+    /// makes free text unrepresentable here rather than merely discouraged --
+    /// see ``AnalyticsEnum``.
+    case enumString(any AnalyticsEnum)
 
     /// This value as a plain Foundation type, for handing to
     /// `PostHogSDK.capture(_:properties:)`'s `[String: Any]?`. Foundation
@@ -104,7 +112,31 @@ enum AnalyticsPropertyValue: Sendable, Equatable {
         switch self {
         case .int(let value): value
         case .bool(let value): value
-        case .enumString(let value, _): value
+        case .enumString(let value): value.rawValue
+        }
+    }
+
+    /// Hand-written because `any AnalyticsEnum` isn't `Equatable`, so the
+    /// synthesized conformance can't be used. Switches on `lhs` alone -- never
+    /// a `(lhs, rhs)` tuple with a `default:` -- so a fourth case is a compile
+    /// error here until this function grows an arm for it, rather than two
+    /// unequal values silently comparing equal. `.enumString` compares the
+    /// **type as well as** the raw value, so two different vocabularies that
+    /// happen to share a spelling (`SearchSource.local` and some future
+    /// `…Origin.local`) are never equal.
+    static func == (lhs: AnalyticsPropertyValue, rhs: AnalyticsPropertyValue) -> Bool {
+        switch lhs {
+        case .int(let left):
+            if case .int(let right) = rhs { return left == right }
+            return false
+        case .bool(let left):
+            if case .bool(let right) = rhs { return left == right }
+            return false
+        case .enumString(let left):
+            if case .enumString(let right) = rhs {
+                return type(of: left) == type(of: right) && left.rawValue == right.rawValue
+            }
+            return false
         }
     }
 }
@@ -123,9 +155,9 @@ enum AnalyticsPropertyValue: Sendable, Equatable {
 enum AnalyticsPrivacyAllowlist {
     /// Every property key any event in the wave-1 catalog may emit --
     /// `build_type` included, even though no individual `AnalyticsEvent`
-    /// carries it: `PostHogAnalytics.capture(_:)` stamps it onto every
-    /// event's properties beside the event's own, so it has to clear this
-    /// gate exactly like a typed property does. A property key a future
+    /// carries it: `TelemetryBootstrap.filterAnalyticsEvent(_:)` stamps it
+    /// onto every event as it passes through `beforeSend`, so it has to clear
+    /// this gate exactly like a typed property does. A property key a future
     /// event wants to add is not usable until it's added here -- the point
     /// of the allowlist being separate from the event's own struct fields.
     static let allowedKeys: Set<String> = [
@@ -147,8 +179,40 @@ enum AnalyticsPrivacyAllowlist {
         "kind",
     ]
 
-    /// Filters `properties` to PostHog's own `$`-prefixed context or this
-    /// catalog's reviewed key set.
+    /// The properties **posthog-ios itself** attaches to the application
+    /// lifecycle events `captureApplicationLifecycleEvents = true` turns on --
+    /// verified against `PostHogAppLifeCycleIntegration.swift` in the pinned
+    /// 3.69.x SDK, which is the only source of non-`$` keys this app does not
+    /// author.
+    ///
+    /// A **separate, separately-reviewed** constant rather than more entries in
+    /// ``allowedKeys``, for two reasons. First, it keeps ``allowedKeys``
+    /// meaning exactly "keys this app's own catalog emits," which is the set
+    /// `AnalyticsEventCatalogTests` audits in both directions. Second, the two
+    /// are asserted **disjoint** by that suite, so no app event can ever reach
+    /// the wire by reusing a lifecycle key's name.
+    ///
+    /// Every member is a `Bundle.main` version string or a `Bool` -- the same
+    /// class of data as the `$app_version` / `$app_build` already in PostHog's
+    /// static context, which passes untouched under the `$` carve-out below.
+    /// Nothing here is or can become personal data. Without them the lifecycle
+    /// events still arrive but are gutted: `Application Opened` loses
+    /// `from_background`, the only thing separating a cold launch from a
+    /// foreground resume, and `Application Updated` loses which build a DJ
+    /// upgraded *from*. That is the entire reason those events were left on.
+    ///
+    /// This is a named allowance, not a loosening: the mechanism is still
+    /// "drop every non-`$` key that isn't on a reviewed list."
+    static let sdkLifecycleKeys: Set<String> = [
+        "version",
+        "build",
+        "previous_version",
+        "previous_build",
+        "from_background",
+    ]
+
+    /// Filters `properties` to PostHog's own `$`-prefixed context, this
+    /// catalog's reviewed key set, or the reviewed SDK-lifecycle key set.
     ///
     /// Scoping to non-`$` keys is load-bearing, not incidental: PostHog's
     /// `beforeSend` runs over the *fully merged* property dict, after its
@@ -160,9 +224,12 @@ enum AnalyticsPrivacyAllowlist {
     /// keys) would strip that flag along with the SDK context, which is
     /// exactly backwards: those are the two things `beforeSend` must not
     /// touch. Every other key -- everything this app's own capture sites put
-    /// on the event -- must be in ``allowedKeys`` or is dropped.
+    /// on the event -- must be in ``allowedKeys`` (or, for the SDK's own
+    /// lifecycle events, ``sdkLifecycleKeys``) or is dropped.
     static func filterNonSDKProperties(_ properties: [String: Any]) -> [String: Any] {
-        properties.filter { key, _ in key.hasPrefix("$") || allowedKeys.contains(key) }
+        properties.filter { key, _ in
+            key.hasPrefix("$") || allowedKeys.contains(key) || sdkLifecycleKeys.contains(key)
+        }
     }
 }
 

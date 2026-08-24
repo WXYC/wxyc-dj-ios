@@ -117,8 +117,10 @@ struct AlbumDetailView: View {
         // Spotlight cover thumbnail so a later home-screen hit shows art (issue #44).
         .task { await deps.cacheThumbnail(forAlbumID: albumId) }
         // Issue #108: which releases DJs actually look at, broken down by
-        // which surface (search/bin/Spotlight) sent them here.
-        .task { deps.analytics.capture(AlbumDetailViewedEvent(origin: origin, albumId: albumId)) }
+        // which surface (search/bin/Spotlight) sent them here. `.onAppear`,
+        // not a third `.task`: the body has no `await` in it, so a Task would
+        // buy an allocation and a run-loop turn's delay for nothing.
+        .onAppear { deps.analytics.capture(AlbumDetailViewedEvent(origin: origin, albumId: albumId)) }
     }
 
     // MARK: Sections
@@ -441,40 +443,81 @@ struct AlbumDetailView: View {
     /// `failedURLs` (nothing has been recorded as failed yet) reproduces the
     /// pre-#86 behavior exactly, which is what keeps the #83 invariant intact:
     /// a source that is merely still loading is never treated as failed.
-    static func preferredArtworkURL(
+    /// `nonisolated` deliberately, and the whole artwork-precedence family with
+    /// it. `AlbumDetailView` conforms to `View`, which is `@MainActor` under
+    /// Swift 6, so these statics inherit main-actor isolation by inference even
+    /// though they are pure functions over their parameters and touch no view
+    /// state. That inference is not harmless: handing an inferred-`@MainActor`
+    /// closure to a generic that runs it -- `.first(where:)` here -- makes the
+    /// compiler emit a runtime isolation assertion, and Swift Testing runs a
+    /// non-`@MainActor` test off the main actor, so the check traps and takes
+    /// the whole test host down (`EXC_BREAKPOINT` in
+    /// `swift_task_checkIsolatedSwift`) rather than failing one test.
+    /// ``preferredArtworkURL`` only escaped that because a `for` loop inlines
+    /// into the caller's isolation and emits no check -- it was one refactor
+    /// away from the same trap. Marking the family `nonisolated` is what makes
+    /// "pure and unit-testable without rendering" actually true instead of
+    /// true-by-codegen-accident; every call site is on the main actor already,
+    /// and calling a nonisolated function from there is always fine.
+    nonisolated static func preferredArtworkURL(
         info: AlbumInfo?,
         fallback: AlbumSearchResult?,
         cloneRow: CatalogRow?,
         metadata: AlbumMetadata?,
         failedURLs: Set<URL> = []
     ) -> URL? {
-        let candidates = [info?.artworkURL, fallback?.artworkURL, cloneRow?.artworkURL, metadata?.artworkURL]
-        for case let url? in candidates where !failedURLs.contains(url) {
-            return url
+        for candidate in artworkCandidates(info: info, fallback: fallback, cloneRow: cloneRow, metadata: metadata) {
+            if let url = candidate.url, !failedURLs.contains(url) { return url }
         }
         return nil
     }
 
+    /// The four artwork sources in precedence order, each tagged with the
+    /// ``ArtworkRetiredSource`` that names it.
+    ///
+    /// **One list, two readers.** ``preferredArtworkURL`` takes the first
+    /// candidate that hasn't failed; ``artworkRetiredSource(for:…)`` takes the
+    /// one whose URL matches. They previously spelled the same four-element
+    /// ordering out twice — a list and a chain of `if`s — with a doc comment
+    /// asking that they stay in sync. They must: the analytics attribution is
+    /// only correct if it names the source the DJ was *actually shown*, so a
+    /// fifth source or a reorder applied to one and not the other would make
+    /// `artwork_url_retired` silently misattribute, with no compile error and
+    /// no test that would catch it. Sharing the list makes that unrepresentable.
+    nonisolated private static func artworkCandidates(
+        info: AlbumInfo?,
+        fallback: AlbumSearchResult?,
+        cloneRow: CatalogRow?,
+        metadata: AlbumMetadata?
+    ) -> [(source: ArtworkRetiredSource, url: URL?)] {
+        [
+            (.info, info?.artworkURL),
+            (.searchRow, fallback?.artworkURL),
+            (.clone, cloneRow?.artworkURL),
+            (.lml, metadata?.artworkURL),
+        ]
+    }
+
     /// Which of the four artwork sources `url` came from, walked in the same
-    /// precedence ``preferredArtworkURL`` uses. Pure + `static` (issue #108)
-    /// so `artwork_url_retired`'s source classification is unit-testable
-    /// without rendering, the same tier `shouldReportMetadataFailure` and
-    /// `shouldShowMetadataLabel` occupy on this view. `nil` only if `url`
-    /// doesn't match any live candidate -- shouldn't happen in practice,
-    /// since the caller only ever passes the URL `AsyncImage` was just handed,
-    /// but a decision that can't fire is safer than one that fires wrong.
-    static func artworkRetiredSource(
+    /// precedence ``preferredArtworkURL`` uses — literally the same list, via
+    /// ``artworkCandidates(info:fallback:cloneRow:metadata:)``. Pure + `static`
+    /// (issue #108) so `artwork_url_retired`'s source classification is
+    /// unit-testable without rendering, the same tier
+    /// `shouldReportMetadataFailure` and `shouldShowMetadataLabel` occupy on
+    /// this view. `nil` only if `url` doesn't match any live candidate --
+    /// shouldn't happen in practice, since the caller only ever passes the URL
+    /// `AsyncImage` was just handed, but a decision that can't fire is safer
+    /// than one that fires wrong.
+    nonisolated static func artworkRetiredSource(
         for url: URL,
         info: AlbumInfo?,
         fallback: AlbumSearchResult?,
         cloneRow: CatalogRow?,
         metadata: AlbumMetadata?
     ) -> ArtworkRetiredSource? {
-        if info?.artworkURL == url { return .info }
-        if fallback?.artworkURL == url { return .searchRow }
-        if cloneRow?.artworkURL == url { return .clone }
-        if metadata?.artworkURL == url { return .lml }
-        return nil
+        artworkCandidates(info: info, fallback: fallback, cloneRow: cloneRow, metadata: metadata)
+            .first { $0.url == url }?
+            .source
     }
 
     /// What the header + catalog sections render from once `/library/info`

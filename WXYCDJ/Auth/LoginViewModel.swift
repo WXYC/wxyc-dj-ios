@@ -310,6 +310,22 @@ final class LoginViewModel {
         }
     }
 
+    /// Everything a completed sign-in leg has to do once `auth` has settled,
+    /// in the one order that is correct. Both legs (`submit`, `submitCode`)
+    /// end with a single call to this, so a future third credential route
+    /// can't wire up two of the three and silently drop the other -- which is
+    /// exactly the shape of the gap `reportPendingJWTIfNeeded()` was added to
+    /// close in the first place.
+    ///
+    /// All three read `auth`'s state post-hoc rather than taking a returned
+    /// outcome, because `AuthService.signIn` records into `lastError` instead
+    /// of throwing (issue #100's contract) -- see ``reportIfDefect()``.
+    private func settle(method: SignInMethod) {
+        reportIfDefect()
+        reportPendingJWTIfNeeded()
+        recordSignInOutcome(method: method)
+    }
+
     // MARK: - Actions
 
     /// Ask for a code and advance to the entry step. Stays on `.identifier` if
@@ -374,9 +390,7 @@ final class LoginViewModel {
     func submitCode() async {
         guard canSubmitCode, case let .awaitingCode(destination) = stage else { return }
         await auth.signIn(email: destination.email, otp: code)
-        reportIfDefect()
-        reportPendingJWTIfNeeded()
-        recordSignInOutcome(method: .otp)
+        settle(method: .otp)
     }
 
     func submit() async {
@@ -386,9 +400,7 @@ final class LoginViewModel {
         // would 401. Password intentionally untrimmed; whitespace in a password
         // is significant.
         await auth.signIn(identifier: trimmedIdentifier, password: password)
-        reportIfDefect()
-        reportPendingJWTIfNeeded()
-        recordSignInOutcome(method: .password)
+        settle(method: .password)
     }
 
     // MARK: - Stage changes

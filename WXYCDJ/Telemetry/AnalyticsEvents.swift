@@ -24,7 +24,7 @@ import WXYCAPI
 
 /// Which credential a sign-in leg used. Shared by both sign-in events so
 /// "otp vs. password" is one vocabulary, not two.
-enum SignInMethod: String, CaseIterable, Sendable {
+enum SignInMethod: String, AnalyticsEnum {
     case otp
     case password
 }
@@ -45,7 +45,7 @@ struct SignInCompletedEvent: AnalyticsEvent {
 /// `AuthError.caseName` and `LoginViewModel.shouldReport(_:)` -- so a future
 /// `AuthError` case is a compile-time decision about which reason bucket it
 /// belongs in, not a silent gap.
-enum SignInFailureReason: String, CaseIterable, Sendable {
+enum SignInFailureReason: String, AnalyticsEnum {
     case invalidCredentials = "invalid_credentials"
     case rateLimited = "rate_limited"
     case rejected
@@ -85,7 +85,7 @@ struct SignInFailedEvent: AnalyticsEvent {
 
 /// Which tier served a search -- mirrors `LibrarySearchOutcome.Source`
 /// (issue #58), which has no `rawValue` of its own to reuse directly.
-enum SearchSource: String, CaseIterable, Sendable {
+enum SearchSource: String, AnalyticsEnum {
     case server
     case local
 
@@ -122,7 +122,7 @@ struct SearchPerformedEvent: AnalyticsEvent {
 /// How a DJ arrived at the detail screen. Threaded into `AlbumDetailView`'s
 /// initializer by its three call sites (`SearchView`, `BinView`,
 /// `DeepLinkAlbumCover`) so the event never has to guess.
-enum AlbumDetailOrigin: String, CaseIterable, Sendable {
+enum AlbumDetailOrigin: String, AnalyticsEnum {
     case search
     case bin
     case spotlight
@@ -142,10 +142,16 @@ struct AlbumDetailViewedEvent: AnalyticsEvent {
 
 // MARK: - Bin (AlbumDetailView adds, BinViewModel removes)
 
-/// Answers: bin feature adoption. The add button lives in the detail view
-/// (`BinViewModel` only removes -- see `BinView`/`AlbumDetailView`), so this
-/// event and ``BinItemRemovedEvent`` fire from two different files despite
-/// naming the same feature.
+/// Answers: bin feature adoption. There are **two** add buttons and one
+/// remove button, so this event and ``BinItemRemovedEvent`` fire from three
+/// different files despite naming the same feature: a DJ can add from the
+/// search results list (`SearchResultRow`'s button →
+/// `SearchViewModel.addToBin(_:)`) or from the release detail screen
+/// (`AlbumDetailView.addToBin()`), and can only remove from the bin tab
+/// (`BinViewModel.remove(_:)`). Instrumenting only the detail-view add --
+/// which an earlier draft of this comment wrongly described as the only one --
+/// would answer "adoption" from a biased sample and produce
+/// ``BinItemRemovedEvent``s with no matching add.
 struct BinItemAddedEvent: AnalyticsEvent {
     static let name = "bin_item_added"
     let albumId: Int
@@ -188,7 +194,7 @@ struct SpotlightDeeplinkOpenedEvent: AnalyticsEvent {
 
 /// How `catalog_refresh_completed` learned about the run: `refreshCatalog()`
 /// is called from three sites, each passing its own case.
-enum CatalogRefreshTrigger: String, CaseIterable, Sendable {
+enum CatalogRefreshTrigger: String, AnalyticsEnum {
     /// `WXYCDJApp`'s launch `.task`, after `restoreSession()`.
     case launch
     /// `WXYCDJApp`'s `.onChange(of: scenePhase)` on the `.active` case.
@@ -205,7 +211,7 @@ enum CatalogRefreshTrigger: String, CaseIterable, Sendable {
 /// it isn't a refresh attempt (`refreshCatalog()` treats it as a no-op, not
 /// a failure), so it emits no event, matching the error-reporting capture
 /// site's identical carve-out.
-enum CatalogRefreshOutcome: String, CaseIterable, Sendable {
+enum CatalogRefreshOutcome: String, AnalyticsEnum {
     case refreshed
     case upToDate = "up_to_date"
     case skippedEmpty = "skipped_empty"
@@ -269,7 +275,7 @@ struct CatalogRefreshCompletedEvent: AnalyticsEvent {
 /// signal: `.unauthorized`/`.notSignedIn` are session states, `.network`/
 /// `.offline` are transport-layer (not enrichment-coverage) facts, and an
 /// `.http` status outside 404/429 is too varied to bucket honestly.
-enum MetadataEnrichmentMissingKind: String, CaseIterable, Sendable {
+enum MetadataEnrichmentMissingKind: String, AnalyticsEnum {
     case notFound = "not_found"
     case rateLimited = "rate_limited"
     case decodeFailed = "decode_failed"
@@ -304,7 +310,7 @@ struct MetadataEnrichmentMissingEvent: AnalyticsEvent {
 /// Which catalog/LML source's artwork URL was retired, mirroring the
 /// precedence `AlbumDetailView.preferredArtworkURL` walks: `/library/info`,
 /// the live search-row fallback, the on-device clone, LML metadata.
-enum ArtworkRetiredSource: String, CaseIterable, Sendable {
+enum ArtworkRetiredSource: String, AnalyticsEnum {
     case info
     case searchRow = "search_row"
     case clone
@@ -344,24 +350,32 @@ struct ConnectivityRestoredEvent: AnalyticsEvent {
 /// "transition" (`.onChange` firing with an unchanged value isn't possible
 /// in SwiftUI, but a direct test of this function shouldn't assume that).
 ///
-/// A closed enum rather than returning `any AnalyticsEvent` directly: `Analytics
-/// .capture(_:)` takes `some AnalyticsEvent` (an opaque/generic parameter, per
-/// this file's header), which an existential `any AnalyticsEvent` value does
-/// **not** satisfy -- `AnalyticsEvent` has no compiler-blessed self-conformance,
-/// so `deps.analytics.capture(existentialValue)` fails to type-check. Returning
-/// this enum instead and letting the caller switch into the concrete
-/// ``OfflineLatchEngagedEvent``/``ConnectivityRestoredEvent`` sidesteps that
-/// entirely, while keeping the *decision* -- which edge, if any, fired -- pure
-/// and unit-testable independent of `RootView`'s otherwise-untestable
-/// `.onChange` wiring, the same shape `shouldReportMetadataFailure` gives
-/// `AlbumDetailView`.
+/// A closed `Equatable` enum so the *decision* -- which edge, if any, fired --
+/// stays pure and unit-testable independently of `RootView`'s otherwise
+/// untestable `.onChange` wiring, the same shape `shouldReportMetadataFailure`
+/// gives `AlbumDetailView`. ``event`` then does the mapping here, in the file
+/// that owns the events and is covered by the catalog suite, rather than in a
+/// switch at the untested call site.
 enum ConnectivityTransition: Sendable, Equatable {
     case engaged
     case restored
 
     static func classify(wasOnline: Bool, isOnline: Bool) -> ConnectivityTransition? {
-        if wasOnline, !isOnline { return .engaged }
-        if !wasOnline, isOnline { return .restored }
-        return nil
+        guard wasOnline != isOnline else { return nil }
+        return isOnline ? .restored : .engaged
+    }
+
+    /// The event this edge records. Returning `any AnalyticsEvent` is fine
+    /// even though `Analytics.capture(_:)` takes `some AnalyticsEvent`: Swift's
+    /// implicit existential opening (SE-0352) opens the existential at the call
+    /// site, so `analytics.capture(transition.event)` type-checks. (An earlier
+    /// version of this comment claimed it did not, and made the caller switch
+    /// into the concrete type; that claim was false -- verified by compiling
+    /// both forms under `-swift-version 6`.)
+    var event: any AnalyticsEvent {
+        switch self {
+        case .engaged: OfflineLatchEngagedEvent()
+        case .restored: ConnectivityRestoredEvent()
+        }
     }
 }

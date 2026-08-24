@@ -26,15 +26,12 @@ final class SpyAnalytics: Analytics {
 
     private let state = OSAllocatedUnfairLock(initialState: [Capture]())
 
-    /// Every `capture` call, in order.
+    /// Every `capture` call, in order. Deliberately the only accessor: an
+    /// earlier draft mirrored `SpyErrorReporter`'s `reportCount` with
+    /// `captureCount`/`capturedNames` conveniences that no test used, which
+    /// left two competing idioms and no signal about which was preferred.
+    /// Assertions read `captures.count` / `.first` / `.isEmpty` directly.
     var captures: [Capture] { state.withLock { $0 } }
-
-    /// Convenience for the common "was anything captured at all" assertion.
-    var captureCount: Int { captures.count }
-
-    /// Names of every captured event, in order -- the common assertion shape
-    /// ("did `search_performed` fire, and only once").
-    var capturedNames: [String] { captures.map(\.name) }
 
     func capture(_ event: some AnalyticsEvent) {
         let record = Capture(name: type(of: event).name, properties: event.properties)
