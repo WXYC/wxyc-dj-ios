@@ -70,6 +70,12 @@ final class AppDependencies {
     /// ``init()``, whose sole caller is `AppDelegate`, passes a real
     /// ``SentryErrorReporter`` explicitly.
     let errorReporter: any ErrorReporter
+    /// The app's product-analytics seam (issue #108). Same default-to-no-op
+    /// discipline as ``errorReporter`` -- both test-facing initializers below
+    /// default to ``NoOpAnalytics`` so unit tests never fire a real PostHog
+    /// event; only ``init()``, whose sole caller is `AppDelegate`, passes a
+    /// real ``PostHogAnalytics`` explicitly.
+    let analytics: any Analytics
     /// Cold-launch Spotlight deep-link state (issue #19 step 7), injected via
     /// `.environment` and bound to RootView's `fullScreenCover`. The resolution
     /// that turns a tapped `album.<id>` into a route lives here — on
@@ -86,7 +92,8 @@ final class AppDependencies {
         self.init(
             catalogStoreURL: Self.defaultCatalogStoreURL(),
             binStoreURL: Self.defaultBinStoreURL(),
-            reporter: SentryErrorReporter()
+            reporter: SentryErrorReporter(),
+            analytics: PostHogAnalytics()
         )
     }
 
@@ -96,9 +103,17 @@ final class AppDependencies {
     /// fails to open, leaves that feature inert. `binStoreURL` defaults to `nil`
     /// so existing catalog-only test call sites don't open a real bin store.
     /// `reporter` defaults to ``NoOpErrorReporter`` -- see ``errorReporter``'s
-    /// doc comment for why only ``init()`` overrides it.
-    init(catalogStoreURL: URL?, binStoreURL: URL? = nil, reporter: any ErrorReporter = NoOpErrorReporter()) {
+    /// doc comment for why only ``init()`` overrides it. `analytics` defaults
+    /// to ``NoOpAnalytics`` for the identical reason (see ``analytics``'s doc
+    /// comment).
+    init(
+        catalogStoreURL: URL?,
+        binStoreURL: URL? = nil,
+        reporter: any ErrorReporter = NoOpErrorReporter(),
+        analytics: any Analytics = NoOpAnalytics()
+    ) {
         self.errorReporter = reporter
+        self.analytics = analytics
         let connectivity = ConnectivityMonitor()
         self.connectivity = connectivity
         let (configuration, authService, api) = Self.makeCore(onOutcome: Self.outcomeHandler(for: connectivity))
@@ -201,9 +216,11 @@ final class AppDependencies {
     init(
         catalogStore: any CatalogStore,
         catalogRefreshService: CatalogRefreshService? = nil,
-        reporter: any ErrorReporter = NoOpErrorReporter()
+        reporter: any ErrorReporter = NoOpErrorReporter(),
+        analytics: any Analytics = NoOpAnalytics()
     ) {
         self.errorReporter = reporter
+        self.analytics = analytics
         let connectivity = ConnectivityMonitor()
         self.connectivity = connectivity
         let (configuration, authService, api) = Self.makeCore(onOutcome: Self.outcomeHandler(for: connectivity))
@@ -270,8 +287,17 @@ final class AppDependencies {
     /// `true` on a real refresh/304 **and** on a clean no-session skip (the task
     /// did its job; we'll retry next cycle), `false` only on a genuine error
     /// (network/decode) so iOS may reschedule sooner.
+    ///
+    /// `trigger` (issue #108) names which of this method's three call sites
+    /// (`WXYCDJApp`'s launch `.task`, its scene-`.active` `.onChange`, and
+    /// `CatalogBackgroundTasks`'s reindex handler) is calling, so
+    /// `catalog_refresh_completed` can answer "do the background tasks
+    /// actually run on real devices?" Defaults to ``CatalogRefreshTrigger/launch``
+    /// only so the many existing test call sites that don't care about the
+    /// analytics dimension keep compiling unchanged; every real call site
+    /// passes its trigger explicitly.
     @discardableResult
-    func refreshCatalog() async -> Bool {
+    func refreshCatalog(trigger: CatalogRefreshTrigger = .launch) async -> Bool {
         guard let catalogRefreshService else {
             await updateLastCatalogSyncText()
             return true
@@ -280,11 +306,13 @@ final class AppDependencies {
         do {
             let outcome = try await catalogRefreshService.refresh()
             catalogLog.info("Catalog refresh: \(String(describing: outcome), privacy: .public)")
+            analytics.capture(CatalogRefreshCompletedEvent.from(outcome: outcome, trigger: trigger))
             success = true
         } catch APIError.notSignedIn {
             // Expected state, not a defect: a missing/expired session is a
             // silent skip everywhere else in this method too, so it is never
-            // reported (issue #106).
+            // reported (issue #106) or counted as a refresh attempt (issue
+            // #108) — nothing was attempted, so there's nothing to log.
             catalogLog.debug("Catalog refresh skipped: not signed in")
             success = true
         } catch APIError.offline {
@@ -293,8 +321,13 @@ final class AppDependencies {
             // catalog clone behind it. Unlike the `.notSignedIn` skip above,
             // a refresh really was attempted and genuinely failed to reach
             // the server, so `success` stays `false` exactly as the generic
-            // catch below would set it; only the report is skipped.
+            // catch below would set it, and the attempt is still counted as
+            // `.failed` for analytics (issue #108) — station network health
+            // is exactly the signal `offline_latch_engaged` also answers, and
+            // a genuinely offline background task is real product data even
+            // though it's never worth a Sentry event.
             catalogLog.debug("Catalog refresh failed: offline")
+            analytics.capture(CatalogRefreshCompletedEvent.failed(trigger: trigger))
             success = false
         } catch {
             catalogLog.error("Catalog refresh failed: \(Self.catalogErrorDetail(error), privacy: .public)")
@@ -303,6 +336,7 @@ final class AppDependencies {
             // the field (issue #106) — the error object itself carries the
             // domain/code `catalogErrorDetail` renders for the log line above.
             errorReporter.report(error, context: "AppDependencies.refreshCatalog")
+            analytics.capture(CatalogRefreshCompletedEvent.failed(trigger: trigger))
             success = false
         }
         // Re-derive the "last synced" line from the clone's watermark regardless
@@ -436,7 +470,7 @@ final class AppDependencies {
         // (before the resolve hop) so a concurrent drain can't replay the stale
         // parked id behind us.
         router.pending = nil
-        await present(albumID: albumID)
+        await present(albumID: albumID, parked: false)
     }
 
     /// Reconcile the deep-link surface with an auth-state transition — RootView
@@ -457,7 +491,7 @@ final class AppDependencies {
             // Capture-and-clear synchronously: the resolve below suspends, and
             // clearing now stops a second replay from re-reading the same park.
             router.pending = nil
-            await present(albumID: albumID)
+            await present(albumID: albumID, parked: true)
         } else if wasSignedIn {
             invalidateDeepLink()
         }
@@ -482,7 +516,15 @@ final class AppDependencies {
     /// outcome win deterministically — rather than whichever store read resumes
     /// last — so a stale parked id (or a route resolved before sign-out) can't
     /// clobber a just-tapped one (or strand over `LoginView`).
-    private func present(albumID: Int) async {
+    ///
+    /// `parked` (issue #108) is passed through from the caller rather than
+    /// inferred here — `handleSpotlightTap` (an immediate signed-in tap) and
+    /// the `handleAuthChange` replay (a tap that had to wait on `Router.pending`)
+    /// are the only two callers, and they already know which one they are.
+    /// Recorded only when a route is actually presented (the early-out for an
+    /// already-shown album, and a token bow-out from a superseded resolve,
+    /// both fire no event — neither is a genuine new deep-link open).
+    private func present(albumID: Int, parked: Bool) async {
         // Already showing this exact album (e.g. a re-tap of the open cover):
         // nothing to present, and skip the redundant clone read.
         if router.deepLink?.id == albumID { return }
@@ -493,6 +535,7 @@ final class AppDependencies {
         // so its fresher outcome is the one that lands.
         guard token == presentationToken else { return }
         router.deepLink = route
+        analytics.capture(SpotlightDeeplinkOpenedEvent(cloneHit: route.fallback != nil, parked: parked))
     }
 
     /// Build the route for `albumID`, looking up the cloned row for an instant

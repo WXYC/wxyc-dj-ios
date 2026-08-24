@@ -20,6 +20,7 @@ struct RootView: View {
     @Environment(AppDependencies.self) private var deps
     @Environment(AuthService.self) private var auth
     @Environment(Router.self) private var router
+    @Environment(ConnectivityMonitor.self) private var connectivity
 
     var body: some View {
         // @Bindable so the cover can two-way bind $router.deepLink — dismissing
@@ -75,6 +76,25 @@ struct RootView: View {
                     wasSignedIn: oldState.isSignedIn,
                     isSignedIn: newState.isSignedIn
                 )
+            }
+        }
+        // Issue #108's two connectivity events. Deliberately sourced from
+        // this onChange, not ConnectivityMonitor.reconnects: that stream is a
+        // single-consumer AsyncStream issue #61's queued-bin flush is
+        // documented to claim, and there is no offline-edge stream at all —
+        // this needs both edges and must not race a future #61 consumer for
+        // the online one. ConnectivityTransition.classify is the pure
+        // decision (unit-tested independent of this otherwise-untestable
+        // SwiftUI wiring, the same carve-out AlbumDetailView's four events
+        // have — see CLAUDE.md's Telemetry section).
+        .onChange(of: connectivity.isOnline) { wasOnline, isOnline in
+            switch ConnectivityTransition.classify(wasOnline: wasOnline, isOnline: isOnline) {
+            case .engaged:
+                deps.analytics.capture(OfflineLatchEngagedEvent())
+            case .restored:
+                deps.analytics.capture(ConnectivityRestoredEvent())
+            case nil:
+                break
             }
         }
         // The deep-linked detail lives in its own cover (own NavigationStack),

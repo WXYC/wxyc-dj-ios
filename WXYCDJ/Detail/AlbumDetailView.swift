@@ -22,6 +22,10 @@ private let detailLog = Logger(subsystem: "org.wxyc.dj", category: "detail")
 struct AlbumDetailView: View {
     let albumId: Int
     let fallback: AlbumSearchResult?
+    /// How the DJ arrived here (issue #108) -- required, not defaulted, so a
+    /// future fourth call site has to make a conscious choice rather than
+    /// silently inheriting whatever the default happened to be.
+    let origin: AlbumDetailOrigin
     @Environment(AppDependencies.self) private var deps
     @State private var info: AlbumInfo?
     @State private var infoLoaded: Bool = false
@@ -41,9 +45,10 @@ struct AlbumDetailView: View {
     @State private var addedToBin: Bool = false
     @State private var addInFlight: Bool = false
 
-    init(albumId: Int, fallback: AlbumSearchResult? = nil) {
+    init(albumId: Int, fallback: AlbumSearchResult? = nil, origin: AlbumDetailOrigin) {
         self.albumId = albumId
         self.fallback = fallback
+        self.origin = origin
     }
 
     var body: some View {
@@ -111,6 +116,9 @@ struct AlbumDetailView: View {
         // Viewing an album is a strong "populated by use" signal: lazily cache its
         // Spotlight cover thumbnail so a later home-screen hit shows art (issue #44).
         .task { await deps.cacheThumbnail(forAlbumID: albumId) }
+        // Issue #108: which releases DJs actually look at, broken down by
+        // which surface (search/bin/Spotlight) sent them here.
+        .task { deps.analytics.capture(AlbumDetailViewedEvent(origin: origin, albumId: albumId)) }
     }
 
     // MARK: Sections
@@ -155,6 +163,16 @@ struct AlbumDetailView: View {
                                 .onAppear {
                                     guard ArtworkFailureClassification.indictsURL(error) else { return }
                                     failedArtworkURLs.insert(url)
+                                    // Issue #108: dead-CDN-URL frequency, by
+                                    // which source's URL it was -- fires at
+                                    // the same one-way-door gate the
+                                    // retirement itself does, never on a
+                                    // connectivity blip.
+                                    if let source = Self.artworkRetiredSource(
+                                        for: url, info: info, fallback: fallback, cloneRow: cloneRow, metadata: metadata
+                                    ) {
+                                        deps.analytics.capture(ArtworkURLRetiredEvent(source: source))
+                                    }
                                 }
                                 .id(url)
                         case .empty:
@@ -434,6 +452,28 @@ struct AlbumDetailView: View {
         for case let url? in candidates where !failedURLs.contains(url) {
             return url
         }
+        return nil
+    }
+
+    /// Which of the four artwork sources `url` came from, walked in the same
+    /// precedence ``preferredArtworkURL`` uses. Pure + `static` (issue #108)
+    /// so `artwork_url_retired`'s source classification is unit-testable
+    /// without rendering, the same tier `shouldReportMetadataFailure` and
+    /// `shouldShowMetadataLabel` occupy on this view. `nil` only if `url`
+    /// doesn't match any live candidate -- shouldn't happen in practice,
+    /// since the caller only ever passes the URL `AsyncImage` was just handed,
+    /// but a decision that can't fire is safer than one that fires wrong.
+    static func artworkRetiredSource(
+        for url: URL,
+        info: AlbumInfo?,
+        fallback: AlbumSearchResult?,
+        cloneRow: CatalogRow?,
+        metadata: AlbumMetadata?
+    ) -> ArtworkRetiredSource? {
+        if info?.artworkURL == url { return .info }
+        if fallback?.artworkURL == url { return .searchRow }
+        if cloneRow?.artworkURL == url { return .clone }
+        if metadata?.artworkURL == url { return .lml }
         return nil
     }
 
@@ -729,6 +769,12 @@ struct AlbumDetailView: View {
             if Self.shouldReportMetadataFailure(error) {
                 deps.errorReporter.report(error, context: "AlbumDetailView.loadMetadata")
             }
+            // Issue #108: LML coverage gaps, bucketed by kind -- upstream
+            // library-metadata-lookup signal, independent of whether this
+            // particular gap was worth a Sentry event above.
+            if let kind = MetadataEnrichmentMissingKind(error) {
+                deps.analytics.capture(MetadataEnrichmentMissingEvent(kind: kind))
+            }
             return nil
         } catch {
             metadataLog.error("metadata fetch failed: \(error.localizedDescription, privacy: .public)")
@@ -744,6 +790,7 @@ struct AlbumDetailView: View {
         do {
             try await deps.api.addToBin(albumId: albumId)
             addedToBin = true
+            deps.analytics.capture(BinItemAddedEvent(albumId: albumId))
         } catch {
             // Surface to a dedicated addError state so the add-to-bin
             // failure doesn't masquerade as a catalog-row load error.
