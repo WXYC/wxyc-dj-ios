@@ -70,6 +70,12 @@ final class AppDependencies {
     /// ``init()``, whose sole caller is `AppDelegate`, passes a real
     /// ``SentryErrorReporter`` explicitly.
     let errorReporter: any ErrorReporter
+    /// The app's product-analytics seam (issue #108). Same default-to-no-op
+    /// discipline as ``errorReporter`` -- both test-facing initializers below
+    /// default to ``NoOpAnalytics`` so unit tests never fire a real PostHog
+    /// event; only ``init()``, whose sole caller is `AppDelegate`, passes a
+    /// real ``PostHogAnalytics`` explicitly.
+    let analytics: any Analytics
     /// Cold-launch Spotlight deep-link state (issue #19 step 7), injected via
     /// `.environment` and bound to RootView's `fullScreenCover`. The resolution
     /// that turns a tapped `album.<id>` into a route lives here — on
@@ -86,7 +92,8 @@ final class AppDependencies {
         self.init(
             catalogStoreURL: Self.defaultCatalogStoreURL(),
             binStoreURL: Self.defaultBinStoreURL(),
-            reporter: SentryErrorReporter()
+            reporter: SentryErrorReporter(),
+            analytics: PostHogAnalytics()
         )
     }
 
@@ -96,9 +103,17 @@ final class AppDependencies {
     /// fails to open, leaves that feature inert. `binStoreURL` defaults to `nil`
     /// so existing catalog-only test call sites don't open a real bin store.
     /// `reporter` defaults to ``NoOpErrorReporter`` -- see ``errorReporter``'s
-    /// doc comment for why only ``init()`` overrides it.
-    init(catalogStoreURL: URL?, binStoreURL: URL? = nil, reporter: any ErrorReporter = NoOpErrorReporter()) {
+    /// doc comment for why only ``init()`` overrides it. `analytics` defaults
+    /// to ``NoOpAnalytics`` for the identical reason (see ``analytics``'s doc
+    /// comment).
+    init(
+        catalogStoreURL: URL?,
+        binStoreURL: URL? = nil,
+        reporter: any ErrorReporter = NoOpErrorReporter(),
+        analytics: any Analytics = NoOpAnalytics()
+    ) {
         self.errorReporter = reporter
+        self.analytics = analytics
         let connectivity = ConnectivityMonitor()
         self.connectivity = connectivity
         let (configuration, authService, api) = Self.makeCore(onOutcome: Self.outcomeHandler(for: connectivity))
@@ -201,9 +216,11 @@ final class AppDependencies {
     init(
         catalogStore: any CatalogStore,
         catalogRefreshService: CatalogRefreshService? = nil,
-        reporter: any ErrorReporter = NoOpErrorReporter()
+        reporter: any ErrorReporter = NoOpErrorReporter(),
+        analytics: any Analytics = NoOpAnalytics()
     ) {
         self.errorReporter = reporter
+        self.analytics = analytics
         let connectivity = ConnectivityMonitor()
         self.connectivity = connectivity
         let (configuration, authService, api) = Self.makeCore(onOutcome: Self.outcomeHandler(for: connectivity))
