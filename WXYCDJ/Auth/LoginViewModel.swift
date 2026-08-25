@@ -143,6 +143,22 @@ final class LoginViewModel {
         identifier.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Whether a sign-in leg is currently settling, i.e. whether `settle(_:)`
+    /// is suspended waiting to read `auth.lastError` as *its own* outcome.
+    ///
+    /// Every gate below carries this, and naming it once is the point: the
+    /// condition is the single invariant issue #118 item 5 exists to protect —
+    /// no action that can write `auth.lastError` may run while a sign-in is
+    /// reading it — and it was previously spelled out four separate times,
+    /// with two of those spellings added by #118 itself and their doc comments
+    /// cross-referencing each other rather than a shared definition. Naming it
+    /// does not *force* a future gate to include it (nothing structural can, in
+    /// a computed `Bool`), but it makes the invariant greppable and gives the
+    /// next `can*` property one obvious thing to copy.
+    private var isVerifyInFlight: Bool {
+        auth.state == .signingIn
+    }
+
     /// Gates on the *trimmed* identifier, matching what is actually sent — an
     /// all-whitespace field would otherwise post an empty identifier and come
     /// back as a verdict on a field the DJ never filled in.
@@ -153,8 +169,8 @@ final class LoginViewModel {
     /// budget the cooldown protects is per-IP, so switching accounts does not
     /// refill it — the gate has to follow the request, not the identifier.
     ///
-    /// Also gated on `auth.state != .signingIn`, the same one-line guard
-    /// `canResendCode` and `canSubmitCode` carry (issue #118 review). Reaching
+    /// Also gated on `isVerifyInFlight`, the guard every gate here carries
+    /// (issue #118 review). Reaching
     /// this while a sign-in is in flight needs a stage change mid-verify — the
     /// "Use a different account" / "Email me a code instead" buttons are not
     /// themselves disabled during `.signingIn`, which is the wider hole this
@@ -164,11 +180,11 @@ final class LoginViewModel {
     /// the send leg must not be able to write `auth.lastError` while
     /// `settle(_:)` is waiting to read it as the sign-in's own outcome.
     var canRequestCode: Bool {
-        !trimmedIdentifier.isEmpty && !isSendingCode && !isResendOnCooldown && auth.state != .signingIn
+        !trimmedIdentifier.isEmpty && !isSendingCode && !isResendOnCooldown && !isVerifyInFlight
     }
 
     var canSubmit: Bool {
-        !trimmedIdentifier.isEmpty && !password.isEmpty && auth.state != .signingIn
+        !trimmedIdentifier.isEmpty && !password.isEmpty && !isVerifyInFlight
     }
 
     /// Blocked while a send is in flight, because a resend **replaces** the
@@ -178,7 +194,7 @@ final class LoginViewModel {
     /// second is being minted races that write, comes back `INVALID_OTP` for a
     /// code the DJ read correctly, and burns one of the 5 `allowedAttempts`.
     var canSubmitCode: Bool {
-        code.count == 6 && auth.state != .signingIn && !isSendingCode
+        code.count == 6 && !isVerifyInFlight && !isSendingCode
     }
 
     /// Whether a fresh code may be requested yet.
@@ -191,12 +207,12 @@ final class LoginViewModel {
     /// `settle(.otp)` read it, misattributing a resend failure as a sign-in
     /// failure — both to `sign_in_failed` (issue #108) and, via
     /// `reportIfDefect()`, to Sentry (issue #106; this predates #108). Mirrors
-    /// `canSubmitCode`'s existing `auth.state != .signingIn` gate, just in the
+    /// `canSubmitCode`'s existing `isVerifyInFlight` gate, just in the
     /// other direction: that one keeps a verify from racing a resend's
     /// in-flight OTP replacement, this one keeps a resend from racing a
     /// verify's in-flight outcome.
     var canResendCode: Bool {
-        !isSendingCode && !isResendOnCooldown && auth.state != .signingIn
+        !isSendingCode && !isResendOnCooldown && !isVerifyInFlight
     }
 
     // MARK: - Error reporting (issue #106)

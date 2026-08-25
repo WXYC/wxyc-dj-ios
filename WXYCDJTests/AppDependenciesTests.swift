@@ -443,21 +443,18 @@ struct RefreshCatalogReportingTests {
     // MARK: - Issue #118 item 3: handleBackgroundPoll() analytics
 
     /// Build a signed-in `CatalogRefreshService` whose one queued network leg
-    /// answers with `stub` — the same sign-in/JWT boilerplate `makeService(signedIn:)`
-    /// uses above, parameterized on the response so the poll-specific tests
-    /// (a `200` with a body, a bare `304`) don't have to repeat it.
+    /// answers with `stub`, parameterized on the response so the poll-specific
+    /// tests (a `200` with a body, a bare `304`) don't have to repeat it.
+    ///
+    /// Delegates the sign-in/JWT bootstrap to `SignedInClient.make()`, the
+    /// shared `Support/` fixture built for exactly this, rather than re-pasting
+    /// it: two co-located helpers in this file already inline that sequence, and
+    /// a third copy would be a third place to fix when the JWT fixture shape
+    /// moves. `SignedInClient.configuration` is `.localDevelopment`, the same
+    /// value `config` holds here, so this is behaviour-preserving.
     private static func makeSignedInService(queuing stub: StubRequestSession.Stub) async throws -> CatalogRefreshService {
-        let session = StubRequestSession()
-        let storage = InMemoryTokenStorage()
-        try storage.save("session-abc", for: .sessionToken)
-        let auth = AuthService(configuration: config, storage: storage, session: session)
-        session.enqueue(StubRequestSession.Stub(
-            statusCode: 200,
-            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
-        ))
-        await auth.restoreSession()
+        let (client, session) = try await SignedInClient.make()
         session.enqueue(stub)
-        let client = APIClient(configuration: config, session: session, authService: auth)
         return CatalogRefreshService(client: client, store: NullCatalogStore(), makeIndexer: { NullCatalogIndexer() })
     }
 
