@@ -51,8 +51,8 @@ enum TelemetryBootstrap {
     /// site is `AppDelegate.init()`.
     ///
     /// No-ops under the unit-test host runner (issue #119) -- the identical
-    /// guard ``startAnalytics()`` (PostHog) already carries, added in issue
-    /// #116. `WXYCDJTests` is a host-app test bundle (`TEST_HOST` points at
+    /// guard ``startAnalytics()`` (PostHog) already carries, added in #116.
+    /// `WXYCDJTests` is a host-app test bundle (`TEST_HOST` points at
     /// `WXYCDJ.app/WXYCDJ`), so `@main WXYCDJApp` -> `AppDelegate.init()`
     /// runs before any test does; without this guard every CI run and every
     /// local `xcodebuild test` starts the real SDK against the production
