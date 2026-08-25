@@ -292,7 +292,11 @@ final class AppDependencies {
     /// (`WXYCDJApp`'s launch `.task`, its scene-`.active` `.onChange`, and
     /// `CatalogBackgroundTasks`'s reindex handler) is calling, so
     /// `catalog_refresh_completed` can answer "do the background tasks
-    /// actually run on real devices?"
+    /// actually run on real devices?" A fourth trigger, `.backgroundPoll`, is
+    /// **not** one of this method's call sites — `handleBackgroundPoll()`
+    /// below records its own `catalog_refresh_completed` for the cheap
+    /// `BGAppRefreshTask` poll leg, which this method never sees (issue
+    /// #118 item 3).
     ///
     /// **Required, not defaulted** -- deliberately, and for the same reason
     /// `AlbumDetailView.origin` is: every candidate default is a *real* case,
@@ -303,6 +307,12 @@ final class AppDependencies {
     @discardableResult
     func refreshCatalog(trigger: CatalogRefreshTrigger) async -> Bool {
         guard let catalogRefreshService else {
+            // Issue #118: previously silent -- a device whose SQLite store
+            // never opened (`AppDependencies.init`'s degrade path) looked
+            // identical, in this metric, to one that simply never refreshed.
+            // `.noStore` names the structural difference: nothing was
+            // attempted because there was nothing to attempt it with.
+            analytics.capture(CatalogRefreshCompletedEvent.noStore(trigger: trigger))
             await updateLastCatalogSyncText()
             return true
         }
@@ -404,25 +414,45 @@ final class AppDependencies {
     /// cheap conditional GET; on a `200` submit the charging-gated reindex
     /// `BGProcessingTask` rather than reindexing on the ~30 s app-refresh budget.
     /// A missing/expired session is a silent skip + reschedule.
+    ///
+    /// **Issue #118 item 3.** Before this, the poll leg had no analytics
+    /// signal of its own — only the reindex `BGProcessingTask` (a
+    /// `refreshCatalog(trigger: .background)` call) ever recorded
+    /// `catalog_refresh_completed`, and that task is `requiresExternalPower`
+    /// *and* only submitted when a poll's conditional GET reports a `200`. A
+    /// device whose app-refresh task runs faithfully but whose catalog never
+    /// changes, or which is never on a charger, reported **zero**
+    /// `.background` events — indistinguishable from "background tasks never
+    /// fire." Every reachable outcome here now records under the
+    /// `.backgroundPoll` trigger via ``CatalogRefreshCompletedEvent/poll(changed:trigger:)``
+    /// (success) or ``CatalogRefreshCompletedEvent/failed(trigger:)``
+    /// (offline / a genuine error) — mirroring `refreshCatalog()`'s identical
+    /// `.notSignedIn`-is-not-an-attempt / `.offline`-still-counts split.
     func handleBackgroundPoll() async {
         guard let catalogRefreshService else { return }
         CatalogBackgroundTasks.scheduleNextPoll()
         do {
-            if try await catalogRefreshService.poll() {
+            let changed = try await catalogRefreshService.poll()
+            analytics.capture(CatalogRefreshCompletedEvent.poll(changed: changed, trigger: .backgroundPoll))
+            if changed {
                 CatalogBackgroundTasks.scheduleReindex()
             }
         } catch APIError.notSignedIn {
-            // Same expected-state carve-out as refreshCatalog() (issue #106).
+            // Same expected-state carve-out as refreshCatalog() (issue #106):
+            // not a refresh attempt at all, so no analytics event either.
             catalogLog.debug("Background catalog poll skipped: not signed in")
         } catch APIError.offline {
             // Same offline carve-out as refreshCatalog() (issue #106 review
             // Fix 1) — a background poll running into a dead network on a
             // system schedule is exactly the spam `enableCaptureFailedRequests
-            // = false` exists to prevent.
+            // = false` exists to prevent. Still a genuine attempt for product
+            // analytics, exactly as refreshCatalog()'s offline arm is.
             catalogLog.debug("Background catalog poll skipped: offline")
+            analytics.capture(CatalogRefreshCompletedEvent.failed(trigger: .backgroundPoll))
         } catch {
             catalogLog.error("Background catalog poll failed: \(Self.catalogErrorDetail(error), privacy: .public)")
             errorReporter.report(error, context: "AppDependencies.handleBackgroundPoll")
+            analytics.capture(CatalogRefreshCompletedEvent.failed(trigger: .backgroundPoll))
         }
     }
 

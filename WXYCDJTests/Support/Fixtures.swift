@@ -109,6 +109,14 @@ enum Fixtures {
         ]
         """
 
+    /// One catalog row as compact, single-line NDJSON — the exact
+    /// `GET /library/catalog` wire shape (one `CatalogExportRow` per line).
+    /// Mirrors `WXYCAPITests/Support/Fixtures.catalogNDJSON`'s first row
+    /// (Juana Molina / DOGA); duplicated for the same reason as the rest of
+    /// this file.
+    static let catalogNDJSON =
+        #"{"id":100,"artist_name":"Juana Molina","album_title":"DOGA","code_letters":"MOL","code_number":12,"code_artist_number":1,"label":"Sonamos","genre_name":"Rock","format_name":"CD","on_streaming":true,"plays":34,"artwork_url":"https://img.discogs.com/doga.jpg","rotation_bin":"H","rotation_kill_date":"2026-07-01"}"#
+
     /// JWT with payload {"sub":"42","email":"juana@wxyc.org","role":"dj","exp": <Date>}.
     /// Signature is a placeholder; the client doesn't verify it.
     static func jwt(expiresIn seconds: TimeInterval = 600) -> String {

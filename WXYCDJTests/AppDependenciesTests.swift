@@ -420,4 +420,119 @@ struct RefreshCatalogReportingTests {
         #expect(capture.properties["outcome"] == .enumString(CatalogRefreshOutcome.failed))
         #expect(capture.properties["trigger"] == .enumString(CatalogRefreshTrigger.foreground))
     }
+
+    /// Issue #118 "also worth a sentence": before this, a `refreshCatalog()`
+    /// call with no `catalogRefreshService` at all (the SQLite store never
+    /// opened) recorded nothing, so a device with a permanently broken store
+    /// was invisible in this metric -- indistinguishable from one that simply
+    /// never refreshed.
+    @Test func refreshWithNoCatalogRefreshServiceRecordsNoStoreOutcome() async throws {
+        let analytics = SpyAnalytics()
+        let deps = AppDependencies(catalogStoreURL: nil, analytics: analytics)
+
+        let success = await deps.refreshCatalog(trigger: .launch)
+
+        #expect(success == true)
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "catalog_refresh_completed")
+        #expect(capture.properties["outcome"] == .enumString(CatalogRefreshOutcome.noStore))
+        #expect(capture.properties["trigger"] == .enumString(CatalogRefreshTrigger.launch))
+    }
+
+    // MARK: - Issue #118 item 3: handleBackgroundPoll() analytics
+
+    /// Build a signed-in `CatalogRefreshService` whose one queued network leg
+    /// answers with `stub` — the same sign-in/JWT boilerplate `makeService(signedIn:)`
+    /// uses above, parameterized on the response so the poll-specific tests
+    /// (a `200` with a body, a bare `304`) don't have to repeat it.
+    private static func makeSignedInService(queuing stub: StubRequestSession.Stub) async throws -> CatalogRefreshService {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let auth = AuthService(configuration: config, storage: storage, session: session)
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)
+        ))
+        await auth.restoreSession()
+        session.enqueue(stub)
+        let client = APIClient(configuration: config, session: session, authService: auth)
+        return CatalogRefreshService(client: client, store: NullCatalogStore(), makeIndexer: { NullCatalogIndexer() })
+    }
+
+    /// The poll leg's core fix: before issue #118, `handleBackgroundPoll()`
+    /// recorded nothing at all, so a `BGAppRefreshTask` that ran faithfully
+    /// but found no change (or ran on a device that's never on a charger, so
+    /// the reindex `BGProcessingTask` never followed up) was indistinguishable
+    /// from "background tasks never fire."
+    @Test func pollDetectingAChangeRecordsPollChangedWithBackgroundPollTrigger() async throws {
+        let service = try await Self.makeSignedInService(queuing: StubRequestSession.Stub(
+            statusCode: 200, headers: ["Last-Modified": "NEW"], body: Data(Fixtures.catalogNDJSON.utf8)
+        ))
+        let analytics = SpyAnalytics()
+        let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, analytics: analytics)
+
+        await deps.handleBackgroundPoll()
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "catalog_refresh_completed")
+        #expect(capture.properties["outcome"] == .enumString(CatalogRefreshOutcome.pollChanged))
+        #expect(capture.properties["trigger"] == .enumString(CatalogRefreshTrigger.backgroundPoll))
+    }
+
+    @Test func pollFindingNoChangeRecordsUpToDateWithBackgroundPollTrigger() async throws {
+        let service = try await Self.makeSignedInService(queuing: StubRequestSession.Stub(statusCode: 304))
+        let analytics = SpyAnalytics()
+        let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, analytics: analytics)
+
+        await deps.handleBackgroundPoll()
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.properties["outcome"] == .enumString(CatalogRefreshOutcome.upToDate))
+        #expect(capture.properties["trigger"] == .enumString(CatalogRefreshTrigger.backgroundPoll))
+    }
+
+    @Test func genuineBackgroundPollFailureRecordsAFailedOutcomeWithBackgroundPollTrigger() async throws {
+        let service = try await Self.makeService(signedIn: true)
+        let analytics = SpyAnalytics()
+        let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, analytics: analytics)
+
+        await deps.handleBackgroundPoll()
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.properties["outcome"] == .enumString(CatalogRefreshOutcome.failed))
+        #expect(capture.properties["trigger"] == .enumString(CatalogRefreshTrigger.backgroundPoll))
+    }
+
+    /// Offline is never worth a Sentry event, but it's still a genuine
+    /// attempt worth counting for product analytics (mirrors
+    /// `offlineFailureDuringRefreshRecordsAFailedOutcome` above).
+    @Test func offlineDuringBackgroundPollRecordsAFailedOutcomeWithBackgroundPollTrigger() async throws {
+        let service = try await Self.makeOfflineService()
+        let analytics = SpyAnalytics()
+        let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, analytics: analytics)
+
+        await deps.handleBackgroundPoll()
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.properties["outcome"] == .enumString(CatalogRefreshOutcome.failed))
+        #expect(capture.properties["trigger"] == .enumString(CatalogRefreshTrigger.backgroundPoll))
+    }
+
+    /// A missing/expired session isn't a poll attempt at all -- identical
+    /// carve-out to `notSignedInSkipDuringRefreshRecordsNoAnalyticsEvent`.
+    @Test func notSignedInSkipDuringBackgroundPollRecordsNoAnalyticsEvent() async throws {
+        let service = try await Self.makeService(signedIn: false)
+        let analytics = SpyAnalytics()
+        let deps = AppDependencies(catalogStore: NullCatalogStore(), catalogRefreshService: service, analytics: analytics)
+
+        await deps.handleBackgroundPoll()
+
+        #expect(analytics.captures.isEmpty)
+    }
 }
