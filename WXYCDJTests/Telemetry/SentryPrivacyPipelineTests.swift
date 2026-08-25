@@ -50,25 +50,6 @@ struct SentryPrivacyPipelineTests {
     private static let secretQueryMarker = "SECRET_QUERY_MARKER"
     private static let secretServerCopy = "SECRET_SERVER_REJECTION_COPY"
 
-    /// Walks the entire serialized event tree and collects every `String`
-    /// leaf -- deliberately not path-specific (`event["exception"]
-    /// ["values"][0]["value"]`, etc.): the acceptance bar is "nowhere in the
-    /// serialized event", and asserting against every string this pipeline
-    /// produced is the only way to actually hold that bar, rather than the
-    /// handful of fields this test happened to anticipate.
-    private static func allStrings(in value: Any) -> [String] {
-        switch value {
-        case let string as String:
-            return [string]
-        case let dictionary as [String: Any]:
-            return dictionary.values.flatMap(allStrings)
-        case let array as [Any]:
-            return array.flatMap(allStrings)
-        default:
-            return []
-        }
-    }
-
     @Test func capturedURLErrorLeavesNoQueryStringAnywhereInTheEvent() throws {
         let queryURL = "https://api.wxyc.org/library/search?artist=\(Self.secretQueryMarker)"
         let error = URLError(.cannotDecodeContentData, userInfo: [
@@ -91,7 +72,7 @@ struct SentryPrivacyPipelineTests {
             }
         ))
 
-        let strings = Self.allStrings(in: event)
+        let strings = SerializedValueStrings.allStrings(in: event)
         #expect(!strings.isEmpty)
         for string in strings {
             #expect(!string.contains(Self.secretQueryMarker), "leaked query text in: \(string)")
@@ -129,7 +110,7 @@ struct SentryPrivacyPipelineTests {
             dsn: Self.testDSN
         ))
 
-        let strings = Self.allStrings(in: event)
+        let strings = SerializedValueStrings.allStrings(in: event)
         #expect(!strings.isEmpty)
         for string in strings {
             #expect(!string.contains(Self.secretQueryMarker), "leaked query text in: \(string)")
@@ -145,7 +126,7 @@ struct SentryPrivacyPipelineTests {
             dsn: Self.testDSN
         ))
 
-        let strings = Self.allStrings(in: event)
+        let strings = SerializedValueStrings.allStrings(in: event)
         #expect(!strings.isEmpty)
         for string in strings {
             #expect(!string.contains(Self.secretServerCopy), "leaked server copy in: \(string)")
@@ -164,7 +145,7 @@ struct SentryPrivacyPipelineTests {
             dsn: Self.testDSN
         ))
 
-        let strings = Self.allStrings(in: event)
+        let strings = SerializedValueStrings.allStrings(in: event)
         for string in strings {
             #expect(!string.contains(Self.secretServerCopy), "leaked server copy in: \(string)")
         }
