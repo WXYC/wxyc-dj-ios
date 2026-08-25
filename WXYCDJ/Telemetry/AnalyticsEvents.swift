@@ -275,10 +275,19 @@ struct CatalogRefreshCompletedEvent: AnalyticsEvent {
 /// signal: `.unauthorized`/`.notSignedIn` are session states, `.network`/
 /// `.offline` are transport-layer (not enrichment-coverage) facts, and an
 /// `.http` status outside 404/429 is too varied to bucket honestly.
+///
+/// ``missingArtistName`` is the one case with no `APIError` behind it at
+/// all: `AlbumDetailView.loadMetadata`'s `guard let artistName` early return
+/// (a Spotlight deep link whose clone-miss `/library/info` also came back
+/// with nothing to key an LML lookup on) is a genuine enrichment gap that
+/// never reaches the network, so it never reached this switch -- issue
+/// #118's "also worth a sentence": that gap was invisible to this event
+/// entirely. Constructed directly at that call site, not through `init?(_:)`.
 enum MetadataEnrichmentMissingKind: String, AnalyticsEnum {
     case notFound = "not_found"
     case rateLimited = "rate_limited"
     case decodeFailed = "decode_failed"
+    case missingArtistName = "missing_artist_name"
 
     init?(_ error: APIError) {
         switch error {
