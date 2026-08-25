@@ -49,8 +49,39 @@ enum TelemetryBootstrap {
 
     /// Starts the SDK with the production DSN. The sole production call
     /// site is `AppDelegate.init()`.
-    static func start() {
+    ///
+    /// No-ops under the unit-test host runner (issue #119) -- the identical
+    /// guard ``startAnalytics()`` (PostHog) already carries, added in issue
+    /// #116. `WXYCDJTests` is a host-app test bundle (`TEST_HOST` points at
+    /// `WXYCDJ.app/WXYCDJ`), so `@main WXYCDJApp` -> `AppDelegate.init()`
+    /// runs before any test does; without this guard every CI run and every
+    /// local `xcodebuild test` starts the real SDK against the production
+    /// DSN and files a real event against the `wxyc-dj-ios` project,
+    /// attributed to a build that doesn't exist. `environment` is set to
+    /// `.development` by `BuildEnvironment`, so this was filterable rather
+    /// than mixed into real DJ traffic -- which is why it went unnoticed
+    /// until #116 established the pattern for PostHog and this issue ported
+    /// it here.
+    ///
+    /// `SentryPrivacyPipelineTests` does not depend on this call having run:
+    /// it drives ``start(dsn:)`` directly against its own test DSN via
+    /// ``debugCaptureSerializedEvent(for:dsn:breadcrumb:via:)``, and
+    /// `SentrySDK.start` is freely re-callable (unlike PostHog's `setup`),
+    /// so a later `start(dsn:)` call with a different DSN simply
+    /// reconfigures whatever SDK state (or absence of it) preceded it.
+    ///
+    /// - Returns: `true` if the real SDK was started, `false` if this call
+    ///   was skipped because the process is a unit-test run. `@discardableResult`
+    ///   because the sole production caller has no need to read it; a test
+    ///   can assert on it directly instead of only on the shared predicate,
+    ///   so a future edit that drops the guard from this function's body
+    ///   still fails a test even if `isRunningUnitTests(environment:)`
+    ///   itself is untouched.
+    @discardableResult
+    static func start() -> Bool {
+        guard !isRunningUnitTests(environment: ProcessInfo.processInfo.environment) else { return false }
         start(dsn: productionDSN)
+        return true
     }
 
     /// Starts the SDK against `dsn`. Split from ``start()`` so a test can
