@@ -347,6 +347,48 @@ struct LoginViewModelTests {
         _ = await inFlight.value
     }
 
+    // MARK: - Issue #118 item 5: resend must not race a verify's outcome
+
+    /// **The counting bug this issue's item 5 exists to fix.** Before the
+    /// `auth.state != .signingIn` gate, `canResendCode` stayed true while a
+    /// verify was in flight, so a resend racing a successful `submitCode()`
+    /// could land its own error in `auth.lastError` right as `settle(.otp)`
+    /// reads it — misattributing a resend failure as a sign-in failure (and,
+    /// via `reportIfDefect()`, the identical Sentry mis-file since issue
+    /// #106, which predates #108). Closing the gate structurally — rather
+    /// than tightening a timing window — is what this pins: resend simply
+    /// can't start while a verify is in flight, so `resendCode()` is a no-op
+    /// (no request, no error, no analytics) for as long as
+    /// `auth.state == .signingIn`.
+    @Test func resendIsBlockedWhileAVerifyIsInFlight() async throws {
+        let session = StubThenHangSession(stubs: [
+            StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success":true}"#.utf8)),
+        ])
+        let sleeper = ManualSleeper()
+        let auth = makeAuth(session: session)
+        let analytics = SpyAnalytics()
+        let viewModel = LoginViewModel(auth: auth, analytics: analytics, sleep: { await sleeper.sleep($0) })
+        viewModel.identifier = "juana@wxyc.org"
+
+        await viewModel.requestCode()  // consumes the one stub; stage -> awaitingCode
+        viewModel.code = "123456"
+        sleeper.elapse()
+        await waitUntil { viewModel.canResendCode }
+
+        let verify = Task { await viewModel.submitCode() }
+        await session.waitUntilHung()  // the sign-in-with-otp request is now parked
+
+        #expect(auth.state == .signingIn)
+        #expect(viewModel.canResendCode == false)
+
+        await viewModel.resendCode()  // must be a no-op while blocked
+        #expect(session.recordedRequests.count == 2)  // send + the parked verify; no resend
+        #expect(analytics.captures.isEmpty)  // no bogus sign_in_failed/completed recorded
+
+        verify.cancel()
+        _ = await verify.value
+    }
+
     /// The identifier stage is now the *first* screen a bounced-out DJ sees, so
     /// it has to render an error raised somewhere else entirely. `currentJWT`'s
     /// 401 demotion sets `.notSignedIn` on its way to swapping `MainView` for
@@ -877,5 +919,72 @@ extension Optional {
         let value = self
         self = nil
         return value
+    }
+}
+
+/// RequestSession that answers each enqueued stub in FIFO order, then --
+/// once the queue is empty -- records the request, signals ``waitUntilHung()``,
+/// and suspends until the surrounding task is cancelled. Lets a test drive a
+/// view model through one real request (`requestCode()`'s send) before
+/// parking the *next* one (`submitCode()`'s verify) mid-flight, which plain
+/// `HangingRequestSession` can't do since it hangs unconditionally.
+private final class StubThenHangSession: RequestSession, @unchecked Sendable {
+    private struct State {
+        var stubs: [StubRequestSession.Stub]
+        var recorded: [URLRequest] = []
+        // Set only by the specific `data(for:)` invocation that finds the
+        // stub queue empty -- NOT derivable from `stubs.isEmpty` alone, which
+        // goes true the instant the *previous* (stubbed) request is answered,
+        // before the next request has even been issued. Keying on that would
+        // let `waitUntilHung()` return before the hanging request existed.
+        var isHanging = false
+        var waiter: CheckedContinuation<Void, Never>?
+    }
+
+    private let state: OSAllocatedUnfairLock<State>
+
+    init(stubs: [StubRequestSession.Stub]) {
+        state = OSAllocatedUnfairLock(initialState: State(stubs: stubs))
+    }
+
+    var recordedRequests: [URLRequest] {
+        state.withLock { $0.recorded }
+    }
+
+    /// Suspend until a request has actually reached the hang (the stub queue
+    /// was empty *for that request*), not merely until the queue is empty.
+    func waitUntilHung() async {
+        await withCheckedContinuation { continuation in
+            let resumeImmediately = state.withLock { state -> Bool in
+                if state.isHanging { return true }
+                state.waiter = continuation
+                return false
+            }
+            if resumeImmediately { continuation.resume() }
+        }
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let (stub, waiter) = state.withLock { state -> (StubRequestSession.Stub?, CheckedContinuation<Void, Never>?) in
+            state.recorded.append(request)
+            if !state.stubs.isEmpty {
+                return (state.stubs.removeFirst(), nil)
+            }
+            state.isHanging = true
+            return (nil, state.waiter.take())
+        }
+        waiter?.resume()
+        if let stub {
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: stub.statusCode,
+                httpVersion: "HTTP/1.1",
+                headerFields: stub.headers
+            )!
+            return (stub.body, response)
+        }
+        // Sleep until cancelled — the test releases us via Task.cancel.
+        try await Task.sleep(for: .seconds(60))
+        throw CancellationError()
     }
 }

@@ -171,8 +171,21 @@ final class LoginViewModel {
     }
 
     /// Whether a fresh code may be requested yet.
+    ///
+    /// **Issue #118 item 5.** Also gated on `auth.state != .signingIn`, unlike
+    /// an earlier version of this property — without it, Resend stayed live
+    /// while `submitCode()`'s verify was in flight, so a resend that failed
+    /// (a 429 is reachable from the control room's shared egress) while the
+    /// verify succeeded could land its error in `auth.lastError` right as
+    /// `settle(.otp)` read it, misattributing a resend failure as a sign-in
+    /// failure — both to `sign_in_failed` (issue #108) and, via
+    /// `reportIfDefect()`, to Sentry (issue #106; this predates #108). Mirrors
+    /// `canSubmitCode`'s existing `auth.state != .signingIn` gate, just in the
+    /// other direction: that one keeps a verify from racing a resend's
+    /// in-flight OTP replacement, this one keeps a resend from racing a
+    /// verify's in-flight outcome.
     var canResendCode: Bool {
-        !isSendingCode && !isResendOnCooldown
+        !isSendingCode && !isResendOnCooldown && auth.state != .signingIn
     }
 
     // MARK: - Error reporting (issue #106)
