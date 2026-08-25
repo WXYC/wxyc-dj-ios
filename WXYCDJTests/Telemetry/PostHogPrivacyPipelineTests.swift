@@ -42,6 +42,32 @@ private struct RogueTestEvent: AnalyticsEvent {
     }
 }
 
+/// Closed vocabulary of exactly one case, carrying a realistic-looking but
+/// obviously synthetic DJ email -- not a real WXYC DJ, and unrelated to the
+/// WXYC-representative-artist fixture pool, since this stands in for a PII
+/// leak rather than example data. Exists purely to give
+/// ``RogueIdentifyingTestEvent`` a value that *looks like* what a real leak
+/// would look like, rather than an inert `.int`.
+private enum RogueIdentifyingValue: String, AnalyticsEnum {
+    case marker = "dj.kendra87@wxyc-test.example"
+}
+
+/// A second rogue event, carrying its identifying marker as an
+/// `.enumString` value under the same unallowlisted key `RogueTestEvent`
+/// uses. Issue #117: the four-named-key belt test could only ever prove
+/// four specific fields were clean; a key-only assertion (`properties["not_on_any_allowlist"]
+/// == nil`) proves the key is gone but says nothing about whether the same
+/// *value* resurfaced under a different key -- a filter bug that renamed
+/// rather than dropped the property would pass that check and still leak.
+/// Walking every string leaf and asserting the marker appears nowhere is
+/// the only way to hold that bar.
+private struct RogueIdentifyingTestEvent: AnalyticsEvent {
+    static let name = "rogue_identifying_test_event"
+    var properties: [String: AnalyticsPropertyValue] {
+        ["not_on_any_allowlist": .enumString(RogueIdentifyingValue.marker)]
+    }
+}
+
 @Suite("PostHog privacy pipeline (end-to-end)", .serialized)
 struct PostHogPrivacyPipelineTests {
     /// Never the real project token this app ships with -- syntactically
@@ -82,5 +108,39 @@ struct PostHogPrivacyPipelineTests {
         // The filter drops the key, not the whole event -- PostHog's own
         // $-context is still present.
         #expect(properties["$process_person_profile"] as? Bool == false)
+    }
+
+    /// Issue #117: the three tests above only ever look at four named keys
+    /// (`$process_person_profile`, `method`, `build_type`,
+    /// `not_on_any_allowlist`), which leaves the rest of the captured
+    /// properties dict -- notably the entire `$`-prefixed surface
+    /// `filterNonSDKProperties` passes through untouched by design, exactly
+    /// where the `$rageclick` autocapture leak lived -- unobserved by any
+    /// test. A full recursive walk is the only way to hold the real bar:
+    /// nothing this app captures should carry a DJ-identifying string
+    /// *anywhere* in the payload, not just under the keys a test happened
+    /// to anticipate.
+    ///
+    /// `RogueIdentifyingTestEvent` is what proves this isn't vacuous: its
+    /// marker rides an unallowlisted key, so it's dropped today, but a
+    /// filter regression that *renamed* the key instead of removing it
+    /// (or a future SDK minor that starts folding arbitrary text into a
+    /// `$`-prefixed key `filterNonSDKProperties` waves through) would leave
+    /// the marker sitting under some other key in this same tree -- which
+    /// `properties["not_on_any_allowlist"] == nil` alone could never catch,
+    /// but a full-tree string scan does.
+    @Test("no DJ-identifying string appears anywhere in the captured properties, not just under four named keys")
+    func noDJIdentifyingStringAnywhereInProperties() throws {
+        let properties = try #require(TelemetryBootstrap.debugCaptureAnalyticsEventProperties(
+            RogueIdentifyingTestEvent(),
+            apiKey: Self.testAPIKey
+        ))
+
+        let strings = SerializedValueStrings.allStrings(in: properties)
+        // PostHog's own $-context ($app_version, $lib, ...) is still there.
+        #expect(!strings.isEmpty)
+        for string in strings {
+            #expect(!string.contains(RogueIdentifyingValue.marker.rawValue), "leaked a DJ-identifying string in: \(string)")
+        }
     }
 }

@@ -35,6 +35,7 @@
 		75C46202B5A836CB31D649FE /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3C3F1A8A8E2B9449C84894 /* RootView.swift */; };
 		7C11010D9FB09DAA10462645 /* SentryErrorReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59035BBED9A73C38FDBC78BE /* SentryErrorReporter.swift */; };
 		7D3075788489ACEC916D66F8 /* SpyErrorReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9209D2D25B4421AC75229E13 /* SpyErrorReporter.swift */; };
+		81513052CA87F8B7780CA459 /* SerializedValueStrings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 283A1AB11D2D5858F9C131D0 /* SerializedValueStrings.swift */; };
 		8426DBD5B1C30B7ADE1F33F6 /* SpyAnalytics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07C11CAB2A04C0CE20AF1A3A /* SpyAnalytics.swift */; };
 		87657943589225BAA0E65A7B /* StubRequestSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85944AD2D64ED468BE70FB80 /* StubRequestSession.swift */; };
 		8BAB76DFE51CBFC74EEF967B /* AlbumDetailFallbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF8B854E5058AB00D7FC28B /* AlbumDetailFallbackTests.swift */; };
@@ -95,6 +96,7 @@
 		1CDF9B4F952EF3F5844740EC /* OfflineBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineBanner.swift; sourceTree = "<group>"; };
 		1FD0E661440B5825AA5F5B40 /* RouterDeepLinkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouterDeepLinkTests.swift; sourceTree = "<group>"; };
 		21E636FEAF9C268D4455F6BF /* AlbumRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumRoute.swift; sourceTree = "<group>"; };
+		283A1AB11D2D5858F9C131D0 /* SerializedValueStrings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerializedValueStrings.swift; sourceTree = "<group>"; };
 		2910CFA60AD178B436EFCF3E /* BlockingRequestSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockingRequestSession.swift; sourceTree = "<group>"; };
 		30DE4EC11A66379C3F9D35AE /* TrackMatchBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackMatchBadge.swift; sourceTree = "<group>"; };
 		3177CDD8FE323B5294083D52 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -218,6 +220,7 @@
 			children = (
 				2910CFA60AD178B436EFCF3E /* BlockingRequestSession.swift */,
 				9C17E03F68F1EE553DDECF35 /* Fixtures.swift */,
+				283A1AB11D2D5858F9C131D0 /* SerializedValueStrings.swift */,
 				8037CAA3BF1777EA3F2B050C /* SignedInClient.swift */,
 				07C11CAB2A04C0CE20AF1A3A /* SpyAnalytics.swift */,
 				A596BDE6117797EFB6A4D665 /* SpyBinStore.swift */,
@@ -517,6 +520,7 @@
 				E7A9C8D05D95D4EBCB17F9A6 /* RouterDeepLinkTests.swift in Sources */,
 				08E228FB46EFDFE100855DC3 /* SearchViewModelTests.swift in Sources */,
 				1F48C7C2362643C525C8B6E1 /* SentryPrivacyPipelineTests.swift in Sources */,
+				81513052CA87F8B7780CA459 /* SerializedValueStrings.swift in Sources */,
 				FE66AC126ECF6B037DCDA4DE /* SignedInClient.swift in Sources */,
 				B427ABFA72D740CDC87D0B35 /* SpotlightClientStateToleranceTests.swift in Sources */,
 				ED7433E5B79B71941023CE29 /* SpotlightFieldResolutionTests.swift in Sources */,
