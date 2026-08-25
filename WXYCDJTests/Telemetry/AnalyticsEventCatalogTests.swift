@@ -43,6 +43,22 @@ import WXYCAPI
 /// per-mapper `@Test(arguments:)` suites below own that for the two total
 /// switches. A top-level constant (not a suite member) so `@Test(arguments:)`
 /// can reference it directly.
+/// The `.enumString` membership predicate, in **one** place so the catalog
+/// audit and its negative test cannot drift apart.
+///
+/// `everyEnumStringValueIsAMemberOfItsOwnVocabulary` and
+/// `StructConformerMembershipTests` are only meaningful as a pair: the first
+/// asserts this holds for every catalog event, the second proves the
+/// assertion is capable of failing at all. That pairing is worth nothing if
+/// each spells the expression out separately, because weakening the audit's
+/// copy would leave the negative test green and still "proving" a check the
+/// audit no longer performs. This is the same drift argument issue #117 used
+/// to justify promoting `allStrings(in:)` into a shared helper instead of
+/// copying it, applied to the other assertion in the same PR.
+func enumValueIsMemberOfItsOwnVocabulary(_ enumValue: any AnalyticsEnum) -> Bool {
+    enumValue.allowedValues.contains(enumValue.rawValue)
+}
+
 private let analyticsEventCatalog: [any AnalyticsEvent] = [
     SignInCompletedEvent(method: .otp),
     SignInFailedEvent(method: .password, reason: .invalidCredentials),
@@ -88,13 +104,15 @@ struct AnalyticsEventCatalogTests {
     /// text). That is a real, if narrow, failure mode this assertion does
     /// catch -- `StructConformerMembershipTests` below constructs exactly
     /// such a conformer and proves the check goes red against it, rather
-    /// than resting on this comment's word for it.
+    /// than resting on this comment's word for it. Both this test and that
+    /// one call `enumValueIsMemberOfItsOwnVocabulary`, so the negative test
+    /// pins *this* assertion rather than a copy of it that could drift.
     @Test("every catalog event's enum-string values are genuine members of their own closed vocabulary", arguments: analyticsEventCatalog)
     func everyEnumStringValueIsAMemberOfItsOwnVocabulary(event: any AnalyticsEvent) {
         for (key, value) in event.properties {
             if case .enumString(let enumValue) = value {
                 #expect(
-                    enumValue.allowedValues.contains(enumValue.rawValue),
+                    enumValueIsMemberOfItsOwnVocabulary(enumValue),
                     "\(type(of: event).name).\(key) = \(enumValue.rawValue) is not a member of \(enumValue.allowedValues)"
                 )
             }
@@ -162,23 +180,26 @@ struct StructConformerMembershipTests {
     func freeTextConformerFailsMembership() {
         let value = FreeTextEnumConformer(rawValue: "typed search text a DJ entered")
 
-        // This is the exact boolean expression
-        // everyEnumStringValueIsAMemberOfItsOwnVocabulary's #expect uses.
-        // Asserting it here is `false` is what proves that assertion is
-        // capable of failing at all -- run against any of the twelve real
-        // catalog events it can only ever come back `true`.
-        #expect(!value.allowedValues.contains(value.rawValue))
+        // Drives `enumValueIsMemberOfItsOwnVocabulary` -- the same function
+        // everyEnumStringValueIsAMemberOfItsOwnVocabulary's #expect calls,
+        // not a hand-copied transcription of it. That matters: if this test
+        // restated the expression, weakening the audit's copy would leave
+        // this one green and still appearing to vouch for it.
+        #expect(!enumValueIsMemberOfItsOwnVocabulary(value))
     }
 
     @Test("...and the same conformer riding an AnalyticsPropertyValue reproduces the exact catalog-suite check")
     func freeTextConformerFailsTheRealCatalogAssertion() {
         let property: AnalyticsPropertyValue = .enumString(FreeTextEnumConformer(rawValue: "typed search text a DJ entered"))
 
+        // The `.enumString` unwrap is the half the test above skips: this is
+        // the whole path the catalog audit walks, from a property value to
+        // the membership verdict.
         guard case .enumString(let enumValue) = property else {
             Issue.record("expected .enumString")
             return
         }
-        #expect(!enumValue.allowedValues.contains(enumValue.rawValue))
+        #expect(!enumValueIsMemberOfItsOwnVocabulary(enumValue))
     }
 }
 
