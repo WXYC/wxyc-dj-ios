@@ -158,7 +158,9 @@ final class LoginViewModel {
     /// this while a sign-in is in flight needs a stage change mid-verify — the
     /// "Use a different account" / "Email me a code instead" buttons are not
     /// themselves disabled during `.signingIn`, which is the wider hole this
-    /// does *not* close (tracked separately). But given the DJ can get here,
+    /// does *not* close (issue #126's sibling, issue #127 — `enter(_:)` calls
+    /// `auth.clearLastError()`, so a stage change mid-verify *erases* the
+    /// outcome rather than overwriting it). But given the DJ can get here,
     /// the send leg must not be able to write `auth.lastError` while
     /// `settle(_:)` is waiting to read it as the sign-in's own outcome.
     var canRequestCode: Bool {

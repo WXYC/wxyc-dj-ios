@@ -584,7 +584,7 @@ final class AppDependencies {
         // and records nothing, which is what makes the event honest.
         //
         // Swapping the cover to the newly-tapped album would be better UX, and
-        // is a tracked follow-up rather than a line here, because it cannot be
+        // is issue #126 rather than a line here, because it cannot be
         // done by writing `deepLink` in place: `nil` and the new route in one
         // main-actor turn coalesce under Observation, so SwiftUI's body only
         // ever sees the final value and no dismissal is observed. It needs the
