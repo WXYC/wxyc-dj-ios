@@ -44,6 +44,17 @@ struct AlbumDetailView: View {
     @State private var addError: String?
     @State private var addedToBin: Bool = false
     @State private var addInFlight: Bool = false
+    // Issue #118 item 1: `.onAppear` (and `.task`, which has the identical
+    // appear/disappear lifecycle) re-fires whenever this view re-appears with
+    // unchanged identity -- reachable via a tab switch (each tab has its own
+    // NavigationStack, so Search -> Bin -> Search re-fires on a detail screen
+    // still on the stack) and via the Spotlight deep-link `fullScreenCover`
+    // presenting over the tab hierarchy (presenting a fullScreenCover drives
+    // the presenter through `.onDisappear`/`.onAppear` too). These latches
+    // make each analytics capture fire at most once per opened screen,
+    // without changing `loadAll()`'s own re-fetch behavior on reappear.
+    @State private var didRecordView = false
+    @State private var didRecordMetadataMiss = false
 
     init(albumId: Int, fallback: AlbumSearchResult? = nil, origin: AlbumDetailOrigin) {
         self.albumId = albumId
@@ -120,7 +131,14 @@ struct AlbumDetailView: View {
         // which surface (search/bin/Spotlight) sent them here. `.onAppear`,
         // not a third `.task`: the body has no `await` in it, so a Task would
         // buy an allocation and a run-loop turn's delay for nothing.
-        .onAppear { deps.analytics.capture(AlbumDetailViewedEvent(origin: origin, albumId: albumId)) }
+        // Issue #118 item 1: gated on `didRecordView` so a re-appear (tab
+        // switch, or the Spotlight cover presenting over this screen) counts
+        // as the same open, not a second one -- see the latch's doc comment.
+        .onAppear {
+            guard !didRecordView else { return }
+            didRecordView = true
+            deps.analytics.capture(AlbumDetailViewedEvent(origin: origin, albumId: albumId))
+        }
     }
 
     // MARK: Sections
@@ -809,6 +827,18 @@ struct AlbumDetailView: View {
     private func loadMetadata(artistName: String?, releaseTitle: String?) async -> AlbumMetadata? {
         guard let artistName, !artistName.isEmpty else {
             metadataError = "no artist name available"
+            // Issue #118 "also worth a sentence": this early return used to
+            // skip the catch block entirely, so a Spotlight deep link that
+            // missed the on-device clone -- the only case that reaches here
+            // with no fallback and a failed /library/info -- recorded
+            // nothing, even though it's exactly the genuine enrichment gap
+            // this event exists to count. Gated on the same `didRecordView`-
+            // style latch as the metadata catch below, for the identical
+            // reappear-inflation reason.
+            if !didRecordMetadataMiss {
+                didRecordMetadataMiss = true
+                deps.analytics.capture(MetadataEnrichmentMissingEvent(kind: .missingArtistName))
+            }
             return nil
         }
         metadataLog.info("fetching metadata for \(artistName, privacy: .public) — \(releaseTitle ?? "<nil>", privacy: .public)")
@@ -828,8 +858,13 @@ struct AlbumDetailView: View {
             }
             // Issue #108: LML coverage gaps, bucketed by kind -- upstream
             // library-metadata-lookup signal, independent of whether this
-            // particular gap was worth a Sentry event above.
-            if let kind = MetadataEnrichmentMissingKind(error) {
+            // particular gap was worth a Sentry event above. Issue #118 item
+            // 1: gated on `didRecordMetadataMiss` so a re-appear-triggered
+            // re-run of `loadAll()` (tab switch, or the Spotlight cover
+            // presenting over this screen) doesn't inflate the count for one
+            // underlying gap -- see `didRecordView`'s doc comment.
+            if let kind = MetadataEnrichmentMissingKind(error), !didRecordMetadataMiss {
+                didRecordMetadataMiss = true
                 deps.analytics.capture(MetadataEnrichmentMissingEvent(kind: kind))
             }
             return nil
