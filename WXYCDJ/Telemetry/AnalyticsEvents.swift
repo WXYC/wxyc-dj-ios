@@ -190,32 +190,54 @@ struct SpotlightDeeplinkOpenedEvent: AnalyticsEvent {
     }
 }
 
-// MARK: - Catalog refresh (AppDependencies.refreshCatalog)
+// MARK: - Catalog refresh (AppDependencies.refreshCatalog / .handleBackgroundPoll)
 
 /// How `catalog_refresh_completed` learned about the run: `refreshCatalog()`
-/// is called from three sites, each passing its own case.
+/// is called from three sites, each passing its own case, plus a fourth
+/// site that isn't a `refreshCatalog()` call at all.
 enum CatalogRefreshTrigger: String, AnalyticsEnum {
     /// `WXYCDJApp`'s launch `.task`, after `restoreSession()`.
     case launch
-    /// `WXYCDJApp`'s `.onChange(of: scenePhase)` on the `.active` case.
+    /// `WXYCDJApp`'s `.onChange(of: scenePhase)`, on a **genuine** `.active`
+    /// re-entry -- not the cold-launch activation, which `.launch` already
+    /// covers (issue #118 item 4: `ForegroundReentryTracker` is what tells
+    /// the two apart).
     case foreground
-    /// `CatalogBackgroundTasks`'s reindex `BGProcessingTask` handler.
+    /// `CatalogBackgroundTasks`'s reindex `BGProcessingTask` handler, via
+    /// `refreshCatalog()`.
     case background
+    /// `AppDependencies.handleBackgroundPoll()` -- the `BGAppRefreshTask`
+    /// poll leg (issue #118 item 3). Not a `refreshCatalog()` call: `poll()`
+    /// only asks "did the catalog move," so its event is built by
+    /// ``CatalogRefreshCompletedEvent/poll(changed:trigger:)``, not `.from`.
+    /// Before this case, the poll leg had **no** analytics signal at all --
+    /// `requiresExternalPower` on the reindex `BGProcessingTask` and the
+    /// 200-only submission gate meant a device that never charges, or whose
+    /// catalog never changed, reported zero `.background` events, which read
+    /// identically to "the background tasks never ran."
+    case backgroundPoll = "background_poll"
 }
 
 /// What the refresh did, as a closed vocabulary -- mirrors
-/// `CatalogRefreshService.Outcome`'s three cases plus a fourth,
-/// ``failed``, for the two catch arms (a genuine error, or
-/// `APIError.offline`) that never produce an `Outcome` at all. The
-/// `APIError.notSignedIn` skip is deliberately **not** representable here:
-/// it isn't a refresh attempt (`refreshCatalog()` treats it as a no-op, not
-/// a failure), so it emits no event, matching the error-reporting capture
-/// site's identical carve-out.
+/// `CatalogRefreshService.Outcome`'s three cases plus ``failed``, for the
+/// two catch arms (a genuine error, or `APIError.offline`) that never
+/// produce an `Outcome` at all; ``pollChanged``, for a `.backgroundPoll`
+/// conditional GET that found the catalog moved (the reindex itself is
+/// deferred to a later `.background`-triggered `refreshCatalog()`, so there
+/// are no row counts to report yet); and ``noStore``, for a `refreshCatalog()`
+/// call with no `catalogRefreshService` at all (the SQLite store never
+/// opened) -- previously indistinguishable from "never attempted" since
+/// that branch recorded nothing. The `APIError.notSignedIn` skip is
+/// deliberately **not** representable here: it isn't a refresh attempt
+/// (`refreshCatalog()` treats it as a no-op, not a failure), so it emits no
+/// event, matching the error-reporting capture site's identical carve-out.
 enum CatalogRefreshOutcome: String, AnalyticsEnum {
     case refreshed
     case upToDate = "up_to_date"
     case skippedEmpty = "skipped_empty"
     case failed
+    case pollChanged = "poll_changed"
+    case noStore = "no_store"
 }
 
 /// Answers: is the on-device clone actually fresh, and do the background
@@ -261,6 +283,23 @@ struct CatalogRefreshCompletedEvent: AnalyticsEvent {
     /// plain constructor rather than a second `from`.
     static func failed(trigger: CatalogRefreshTrigger) -> Self {
         Self(outcome: .failed, rowCount: 0, upserted: 0, removed: 0, trigger: trigger)
+    }
+
+    /// The event `AppDependencies.handleBackgroundPoll()` builds from
+    /// `CatalogRefreshService.poll()`'s plain `Bool` (issue #118 item 3) --
+    /// `poll()` has no `Outcome` to map (it never replaces the store or
+    /// reindexes), so `changed` is the only fact there is to report.
+    static func poll(changed: Bool, trigger: CatalogRefreshTrigger) -> Self {
+        Self(outcome: changed ? .pollChanged : .upToDate, rowCount: 0, upserted: 0, removed: 0, trigger: trigger)
+    }
+
+    /// The event for a `refreshCatalog()` call with no `catalogRefreshService`
+    /// at all -- the SQLite store never opened (issue #118's "also worth a
+    /// sentence": `AppDependencies.init`'s degrade path leaves this metric
+    /// unable to tell a broken store from a device that simply never
+    /// refreshed).
+    static func noStore(trigger: CatalogRefreshTrigger) -> Self {
+        Self(outcome: .noStore, rowCount: 0, upserted: 0, removed: 0, trigger: trigger)
     }
 }
 
