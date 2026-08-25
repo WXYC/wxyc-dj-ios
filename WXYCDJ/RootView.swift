@@ -111,8 +111,8 @@ struct RootView: View {
         // device. Nothing depends on it being true: `present` refuses the
         // second tap itself, so the no-op is the app's own decision under
         // either SwiftUI behaviour. Swapping the cover to the newly-tapped
-        // album is the better UX and is tracked as a follow-up — see the
-        // issue for why an in-place `deepLink` swap cannot implement it.
+        // album is the better UX and is tracked as issue #126, which records
+        // why an in-place `deepLink` swap cannot implement it.
         .fullScreenCover(item: $router.deepLink) { route in
             // fullScreenCover content is hosted in a separate presentation
             // context that does NOT inherit the presenter's
