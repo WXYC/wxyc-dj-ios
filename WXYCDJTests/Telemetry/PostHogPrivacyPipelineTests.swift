@@ -195,9 +195,12 @@ struct PostHogPrivacyPipelineTests {
         )
     }
 
-    /// Issue #117: the three tests above only ever look at four named keys
-    /// (`$process_person_profile`, `method`, `build_type`,
-    /// `not_on_any_allowlist`), which leaves the rest of the captured
+    /// Issue #117: the three tests this suite had before this one
+    /// (`processPersonProfileFlagIsFalse`,
+    /// `realEventPropertiesSurviveWithBuildType`,
+    /// `unallowlistedKeyIsDroppedEndToEnd`) only ever looked at four named
+    /// keys — `$process_person_profile`, `method`, `build_type`,
+    /// `not_on_any_allowlist` — which left the rest of the captured
     /// properties dict unobserved by any test. A full recursive walk is the
     /// only way to hold the real bar: nothing this app captures should carry
     /// a DJ-identifying string *anywhere* in the payload, not just under the
