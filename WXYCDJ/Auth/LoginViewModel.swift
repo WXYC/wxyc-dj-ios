@@ -152,8 +152,17 @@ final class LoginViewModel {
     /// login code" would otherwise loop unlimited sends straight past it. The
     /// budget the cooldown protects is per-IP, so switching accounts does not
     /// refill it — the gate has to follow the request, not the identifier.
+    ///
+    /// Also gated on `auth.state != .signingIn`, the same one-line guard
+    /// `canResendCode` and `canSubmitCode` carry (issue #118 review). Reaching
+    /// this while a sign-in is in flight needs a stage change mid-verify — the
+    /// "Use a different account" / "Email me a code instead" buttons are not
+    /// themselves disabled during `.signingIn`, which is the wider hole this
+    /// does *not* close (tracked separately). But given the DJ can get here,
+    /// the send leg must not be able to write `auth.lastError` while
+    /// `settle(_:)` is waiting to read it as the sign-in's own outcome.
     var canRequestCode: Bool {
-        !trimmedIdentifier.isEmpty && !isSendingCode && !isResendOnCooldown
+        !trimmedIdentifier.isEmpty && !isSendingCode && !isResendOnCooldown && auth.state != .signingIn
     }
 
     var canSubmit: Bool {

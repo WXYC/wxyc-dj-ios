@@ -224,10 +224,15 @@ enum CatalogRefreshTrigger: String, AnalyticsEnum {
 /// produce an `Outcome` at all; ``pollChanged``, for a `.backgroundPoll`
 /// conditional GET that found the catalog moved (the reindex itself is
 /// deferred to a later `.background`-triggered `refreshCatalog()`, so there
-/// are no row counts to report yet); and ``noStore``, for a `refreshCatalog()`
-/// call with no `catalogRefreshService` at all (the SQLite store never
-/// opened) -- previously indistinguishable from "never attempted" since
-/// that branch recorded nothing. The `APIError.notSignedIn` skip is
+/// are no row counts to report yet); ``pollSkipped``, for a `.backgroundPoll`
+/// that made **no request at all** because a `refresh()` was already in
+/// flight (issue #118 review -- deliberately its own case rather than
+/// `.upToDate`, since the app learned nothing about whether the catalog
+/// moved, and saying otherwise is the same null-answer bias item 3 removes);
+/// and ``noStore``, for a refresh or poll with no `catalogRefreshService` at
+/// all (the SQLite store never opened) -- previously indistinguishable from
+/// "never attempted" since that branch recorded nothing. The
+/// `APIError.notSignedIn` skip is
 /// deliberately **not** representable here: it isn't a refresh attempt
 /// (`refreshCatalog()` treats it as a no-op, not a failure), so it emits no
 /// event, matching the error-reporting capture site's identical carve-out.
@@ -237,6 +242,7 @@ enum CatalogRefreshOutcome: String, AnalyticsEnum {
     case skippedEmpty = "skipped_empty"
     case failed
     case pollChanged = "poll_changed"
+    case pollSkipped = "poll_skipped"
     case noStore = "no_store"
 }
 
@@ -286,11 +292,25 @@ struct CatalogRefreshCompletedEvent: AnalyticsEvent {
     }
 
     /// The event `AppDependencies.handleBackgroundPoll()` builds from
-    /// `CatalogRefreshService.poll()`'s plain `Bool` (issue #118 item 3) --
-    /// `poll()` has no `Outcome` to map (it never replaces the store or
-    /// reindexes), so `changed` is the only fact there is to report.
-    static func poll(changed: Bool, trigger: CatalogRefreshTrigger) -> Self {
-        Self(outcome: changed ? .pollChanged : .upToDate, rowCount: 0, upserted: 0, removed: 0, trigger: trigger)
+    /// `CatalogRefreshService.PollOutcome` (issue #118 item 3) -- `poll()` has
+    /// no `Outcome` to map (it never replaces the store or reindexes), so
+    /// whether the catalog moved is the only fact there is to report.
+    ///
+    /// A **total switch with no `default:`**, the same shape as `from` above:
+    /// `PollOutcome` gaining a case has to be a decision made here. In
+    /// particular ``CatalogRefreshOutcome/pollSkipped`` is deliberately not
+    /// folded into `.upToDate` (issue #118 review) -- a poll that
+    /// short-circuited on an in-flight refresh made no request at all, so
+    /// reporting it as "the catalog didn't move" would assert something the
+    /// app never learned, which is the same null-answer bias item 3 exists to
+    /// remove.
+    static func poll(outcome: CatalogRefreshService.PollOutcome, trigger: CatalogRefreshTrigger) -> Self {
+        let mapped: CatalogRefreshOutcome = switch outcome {
+        case .changed: .pollChanged
+        case .unchanged: .upToDate
+        case .skippedRefreshInFlight: .pollSkipped
+        }
+        return Self(outcome: mapped, rowCount: 0, upserted: 0, removed: 0, trigger: trigger)
     }
 
     /// The event for a `refreshCatalog()` call with no `catalogRefreshService`

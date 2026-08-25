@@ -535,4 +535,24 @@ struct RefreshCatalogReportingTests {
 
         #expect(analytics.captures.isEmpty)
     }
+
+    /// Issue #118 review: the no-store degrade is recorded on the poll leg
+    /// too, not only in `refreshCatalog()`. Reachable even though
+    /// `scheduleBackgroundRefreshIfAvailable()` checks for a store, because a
+    /// task submitted on a launch that had one fires on a later launch whose
+    /// store failed to open -- and closing the "broken store looks like a
+    /// device that never refreshed" gap on one leg while leaving it open on
+    /// the other would be the same blind spot in a different place.
+    @Test func backgroundPollWithNoCatalogRefreshServiceRecordsNoStoreOutcome() async throws {
+        let analytics = SpyAnalytics()
+        let deps = AppDependencies(catalogStoreURL: nil, analytics: analytics)
+
+        await deps.handleBackgroundPoll()
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "catalog_refresh_completed")
+        #expect(capture.properties["outcome"] == .enumString(CatalogRefreshOutcome.noStore))
+        #expect(capture.properties["trigger"] == .enumString(CatalogRefreshTrigger.backgroundPoll))
+    }
 }

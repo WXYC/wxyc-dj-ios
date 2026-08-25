@@ -46,12 +46,14 @@ struct WXYCDJApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     switch phase {
                     case .active:
-                        // Cold launch's own inactive -> active transition lands
-                        // here too, alongside the .task above -- consume it
-                        // without refreshing so a cold launch fires exactly one
-                        // catalog_refresh_completed, not two (issue #118 item 4).
-                        // Every transition after the first is a genuine
-                        // foreground re-entry: top up the clone.
+                        // Only an .active that follows a real .background is a
+                        // foreground re-entry (issue #118 item 4). The cold
+                        // launch's own inactive -> active lands here alongside
+                        // the .task above, and so does an inactive -> active
+                        // blip from Control Centre or the app switcher --
+                        // neither is a return from background, and refreshing
+                        // for the first would fire catalog_refresh_completed
+                        // twice for one launch.
                         guard foregroundReentry.isGenuineForegroundReentry() else { return }
                         Task { await dependencies.refreshCatalog(trigger: .foreground) }
                     case .background:
@@ -59,6 +61,9 @@ struct WXYCDJApp: App {
                         // there's a catalog to refresh); it re-arms itself
                         // thereafter.
                         dependencies.scheduleBackgroundRefreshIfAvailable()
+                        // ...and record that we genuinely left, which is what
+                        // makes the next .active a re-entry rather than a blip.
+                        foregroundReentry.noteBackground()
                     default:
                         break
                     }
@@ -73,41 +78,59 @@ struct WXYCDJApp: App {
     }
 }
 
-/// Tells a cold-launch `.active` scene-phase transition apart from a genuine
-/// foreground re-entry (issue #118 item 4). `WXYCDJApp`'s launch `.task` and
-/// its `.onChange(of: scenePhase)` both observe the same cold-launch
+/// Tells a genuine foreground re-entry apart from the other ways SwiftUI
+/// reports `.active` (issue #118 item 4). `WXYCDJApp`'s launch `.task` and its
+/// `.onChange(of: scenePhase)` both observe the same cold-launch
 /// `inactive -> active` transition — the `.task` because it runs on the
-/// scene's first appearance, the `onChange` because that IS the scene
-/// becoming active — so without this, a cold launch fired
-/// `catalog_refresh_completed` twice: once `.launch`, once `.foreground`.
-/// Worse than a constant double-count, the `.foreground` leg's outcome was
-/// *inconsistent* — it often outran the `.task`'s `restoreSession()` and hit
-/// the silent `.notSignedIn` skip, so whether the second event fired at all
-/// depended on scheduling.
+/// scene's first appearance, the `onChange` because that IS the scene becoming
+/// active — so without this, a cold launch fired `catalog_refresh_completed`
+/// twice: once `.launch`, once `.foreground`. Worse than a constant
+/// double-count, the `.foreground` leg's outcome was *inconsistent* — it often
+/// outran the `.task`'s `restoreSession()` and hit the silent `.notSignedIn`
+/// skip, so whether the second event fired at all depended on scheduling.
+///
+/// **The rule is "an `.active` counts only after a `.background`," not
+/// "ignore the first `.active`"** — and the difference is load-bearing twice
+/// over (issue #118 review):
+///
+/// - *It does not assume the cold-launch `.active` is delivered.* Whether
+///   SwiftUI raises `onChange(of: scenePhase)` for the launch activation is
+///   not contractually guaranteed. Consuming the first `.active`
+///   unconditionally is correct only if it always fires; if it ever doesn't,
+///   that rule eats the first **genuine** re-entry instead and
+///   `refreshCatalog(trigger: .foreground)` silently never runs on the first
+///   return from background — a functional regression, not just a miscount.
+///   Keying on a seen `.background` is right under both behaviours.
+/// - *It ignores an `inactive -> active` blip.* Pulling down Control Centre,
+///   entering the app switcher, or taking a call drives `.active -> .inactive
+///   -> .active` without ever reaching `.background`. That is not a return
+///   from background and there is nothing to top up.
 ///
 /// A timing-based fix (e.g. "skip `.active` if `restoreSession()` hasn't
-/// finished yet") would inherit that same race. This is race-free instead:
-/// exactly one `.active` transition occurs during the app's cold-launch
-/// sequence (`inactive -> active`), and every subsequent background ->
-/// active cycle produces exactly one more. Consuming the *first* `.active`
-/// call, unconditionally and synchronously, is therefore precise regardless
-/// of how long any concurrent async work takes.
+/// finished yet") would inherit the original race. This is race-free: it reads
+/// only which phases have been observed, never how long concurrent async work
+/// took.
 ///
 /// Deliberately no SwiftUI/scenePhase dependency, so it's unit-testable as a
 /// plain state machine (`WXYCDJTests/ForegroundReentryTrackerTests`) without
 /// standing up a scene.
 struct ForegroundReentryTracker: Sendable {
-    private var hasConsumedLaunchActivation = false
+    private var hasSeenBackground = false
 
-    /// Call on every `.active` scenePhase transition. Returns `false` only
-    /// on the first call (the cold-launch activation, already covered by the
-    /// launch `.task`); every call after that is a genuine foreground
-    /// re-entry and returns `true`.
-    mutating func isGenuineForegroundReentry() -> Bool {
-        guard hasConsumedLaunchActivation else {
-            hasConsumedLaunchActivation = true
-            return false
-        }
-        return true
+    /// Call on every `.background` scenePhase transition.
+    mutating func noteBackground() {
+        hasSeenBackground = true
+    }
+
+    /// Call on every `.active` scenePhase transition. `true` only once the app
+    /// has actually been backgrounded — so the cold-launch activation (already
+    /// covered by the launch `.task`) and any `inactive -> active` blip both
+    /// answer `false`.
+    ///
+    /// Non-mutating: unlike the first shape this had, the decision is a pure
+    /// read of observed phases and consumes nothing, so calling it twice for
+    /// one transition can't change the answer.
+    func isGenuineForegroundReentry() -> Bool {
+        hasSeenBackground
     }
 }

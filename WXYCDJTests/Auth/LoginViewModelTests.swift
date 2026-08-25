@@ -389,6 +389,44 @@ struct LoginViewModelTests {
         _ = await verify.value
     }
 
+    /// The same one-line gate on the *other* send button (issue #118 review).
+    /// `canRequestCode` sits on the identifier stage, which a DJ can reach
+    /// mid-verify via "Use a different account" — that button is not itself
+    /// disabled during `.signingIn`, so the send leg was free to overwrite
+    /// `auth.lastError` in exactly the window `settle(.otp)` reads it as the
+    /// sign-in's own outcome. (Disabling the stage-change affordances is the
+    /// wider fix, tracked separately; this closes the write.)
+    @Test func codeRequestIsBlockedWhileAVerifyIsInFlight() async throws {
+        let session = StubThenHangSession(stubs: [
+            StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success":true}"#.utf8)),
+        ])
+        let sleeper = ManualSleeper()
+        let auth = makeAuth(session: session)
+        let analytics = SpyAnalytics()
+        let viewModel = LoginViewModel(auth: auth, analytics: analytics, sleep: { await sleeper.sleep($0) })
+        viewModel.identifier = "juana@wxyc.org"
+
+        await viewModel.requestCode()  // consumes the one stub; stage -> awaitingCode
+        viewModel.code = "123456"
+        sleeper.elapse()
+        await waitUntil { viewModel.canResendCode }
+
+        let verify = Task { await viewModel.submitCode() }
+        await session.waitUntilHung()  // the sign-in-with-otp request is now parked
+
+        // Back out to the identifier stage while the verify is still in flight.
+        viewModel.changeIdentifier()
+        #expect(auth.state == .signingIn)
+        #expect(viewModel.canRequestCode == false)
+
+        await viewModel.requestCode()  // must be a no-op while blocked
+        #expect(session.recordedRequests.count == 2)  // send + the parked verify
+        #expect(analytics.captures.isEmpty)
+
+        verify.cancel()
+        _ = await verify.value
+    }
+
     /// The identifier stage is now the *first* screen a bounced-out DJ sees, so
     /// it has to render an error raised somewhere else entirely. `currentJWT`'s
     /// 401 demotion sets `.notSignedIn` on its way to swapping `MainView` for

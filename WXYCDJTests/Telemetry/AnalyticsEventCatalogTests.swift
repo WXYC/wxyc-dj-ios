@@ -290,6 +290,34 @@ struct CatalogRefreshCompletedEventMappingTests {
         #expect(event.upserted == 0)
         #expect(event.removed == 0)
     }
+
+    /// The `poll` factory's own total switch (issue #118 item 3, tightened in
+    /// review). The third row is the one that matters: a poll that
+    /// short-circuited on an in-flight refresh made no request, so it must not
+    /// be reported as `up_to_date` -- that would assert the catalog didn't
+    /// move when the app never asked, which is the null-answer bias item 3
+    /// exists to remove.
+    @Test(arguments: [
+        (CatalogRefreshService.PollOutcome.changed, CatalogRefreshOutcome.pollChanged),
+        (.unchanged, .upToDate),
+        (.skippedRefreshInFlight, .pollSkipped),
+    ])
+    func pollMapsEveryPollOutcome(outcome: CatalogRefreshService.PollOutcome, expected: CatalogRefreshOutcome) {
+        let event = CatalogRefreshCompletedEvent.poll(outcome: outcome, trigger: .backgroundPoll)
+        #expect(event.outcome == expected)
+        #expect(event.trigger == .backgroundPoll)
+        // A poll never replaces the store or reindexes, so there is no delta.
+        #expect(event.rowCount == 0)
+        #expect(event.upserted == 0)
+        #expect(event.removed == 0)
+    }
+
+    @Test func noStoreCarriesNoRowData() {
+        let event = CatalogRefreshCompletedEvent.noStore(trigger: .launch)
+        #expect(event.outcome == .noStore)
+        #expect(event.rowCount == 0)
+        #expect(event.trigger == .launch)
+    }
 }
 
 @Suite("ConnectivityTransition.classify")

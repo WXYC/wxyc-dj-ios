@@ -141,9 +141,9 @@ struct CatalogRefreshServiceTests {
         let service = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer })
         session.enqueue(StubRequestSession.Stub(statusCode: 304))
 
-        let changed = try await service.poll()
+        let outcome = try await service.poll()
 
-        #expect(changed == false)
+        #expect(outcome == .unchanged)
         // A poll is read-only: it never replaces the store or reindexes (that is
         // the reindex leg's job, deferred to a charging-gated processing task).
         #expect(store.replaceCalls.isEmpty)
@@ -165,12 +165,12 @@ struct CatalogRefreshServiceTests {
             body: Data(Fixtures.catalogNDJSON.utf8)
         ))
 
-        let changed = try await service.poll()
+        let outcome = try await service.poll()
 
         // A 200 means the catalog moved — the caller (the BGAppRefreshTask leg)
         // submits the reindex processing task — but the poll itself does no heavy
         // work: the store is untouched and the index watermark does not advance.
-        #expect(changed == true)
+        #expect(outcome == .changed)
         #expect(store.replaceCalls.isEmpty)
         #expect(indexer.reindexCalls.isEmpty)
         #expect(indexer.indexedWatermark() == "OLD")
@@ -568,9 +568,9 @@ struct CatalogRefreshServiceTests {
 
         session.enqueue(StubRequestSession.Stub(
             statusCode: 200, headers: ["Last-Modified": "W"], body: Data(Fixtures.catalogNDJSON.utf8)))
-        let changed = try await service.poll()
+        let outcome = try await service.poll()
 
-        #expect(changed == true)                            // poll did its conditional GET
+        #expect(outcome == .changed)                        // poll did its conditional GET
         #expect(Self.catalogRequests(session).count == 1)   // not short-circuited
 
         gate.proceed()
@@ -597,9 +597,11 @@ struct CatalogRefreshServiceTests {
         let refreshTask = Task { try await service.refresh() }
         await gate.waitUntilReached()   // refresh is mid-reindex (refreshInFlight>0)
 
-        let changed = try await service.poll()
+        let outcome = try await service.poll()
 
-        #expect(changed == false)                           // deferred to the refresh
+        // Issue #118 review: distinguishable from a genuine 304, so the caller
+        // does not record a skipped poll as "the catalog did not move".
+        #expect(outcome == .skippedRefreshInFlight)         // deferred to the refresh
         #expect(Self.catalogRequests(session).count == 1)   // poll issued no GET of its own
 
         gate.proceed()
