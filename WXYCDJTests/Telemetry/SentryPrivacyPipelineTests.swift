@@ -146,6 +146,16 @@ struct SentryPrivacyPipelineTests {
         ))
 
         let strings = SerializedValueStrings.allStrings(in: event)
+        // The one guard the other three tests in this suite already carry, and
+        // this one was missing: a `for` loop over an empty collection passes
+        // every assertion it contains without running one. That is cheap
+        // insurance in any belt test, but it became load-bearing when issue
+        // #117 promoted `allStrings(in:)` into a single shared helper -- a
+        // regression there is now one edit that five call sites depend on, and
+        // this was the only one that would have gone green through it.
+        // Verified: gutting the traversal to return `[]` reddens the other
+        // four and left exactly this test passing.
+        #expect(!strings.isEmpty)
         for string in strings {
             #expect(!string.contains(Self.secretServerCopy), "leaked server copy in: \(string)")
         }
