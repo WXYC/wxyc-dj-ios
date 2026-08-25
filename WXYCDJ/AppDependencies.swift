@@ -526,12 +526,19 @@ final class AppDependencies {
     /// the `handleAuthChange` replay (a tap that had to wait on `Router.pending`)
     /// are the only two callers, and they already know which one they are.
     /// Recorded only when a route is actually presented (the early-out for an
-    /// already-shown album, and a token bow-out from a superseded resolve,
+    /// already-open cover, and a token bow-out from a superseded resolve,
     /// both fire no event — neither is a genuine new deep-link open).
     private func present(albumID: Int, parked: Bool) async {
-        // Already showing this exact album (e.g. a re-tap of the open cover):
-        // nothing to present, and skip the redundant clone read.
-        if router.deepLink?.id == albumID { return }
+        // Issue #118 item 2: bail out whenever a cover is already showing —
+        // any album, not just this one. RootView's `fullScreenCover(item:)`
+        // only reacts to `router.deepLink` going nil -> non-nil, never to a
+        // value swap while already presented (see its doc comment), so
+        // resolving and setting `deepLink` to a *different* album here would
+        // silently overwrite the stored route with nothing visibly changing
+        // for the DJ — and used to fire `spotlight_deeplink_opened` for a
+        // presentation nobody ever saw. The old check (`router.deepLink?.id
+        // == albumID`) only caught the same-album re-tap; this subsumes it.
+        guard router.deepLink == nil else { return }
         presentationToken += 1
         let token = presentationToken
         let route = await resolveRoute(albumID: albumID)

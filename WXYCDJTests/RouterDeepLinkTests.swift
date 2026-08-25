@@ -277,6 +277,30 @@ struct RouterDeepLinkTests {
 
         #expect(analytics.captures.count == 1)
     }
+
+    /// **Issue #118 item 2.** A tap for a *different* album while a cover is
+    /// already showing is a silent no-op — `RootView`'s `fullScreenCover(item:)`
+    /// only reacts to `deepLink` going nil -> non-nil, not a value swap while
+    /// already presented, so the DJ keeps seeing album A regardless. Before
+    /// this fix, `present(albumID:)`'s early-out only caught a re-tap of the
+    /// *same* album: a tap for B here would still resolve, silently overwrite
+    /// `router.deepLink` with B's route, and fire `spotlight_deeplink_opened`
+    /// for a presentation nobody ever saw.
+    @Test func tapForADifferentAlbumWhileACoverIsAlreadyOpenIsASilentNoOp() async throws {
+        let analytics = SpyAnalytics()
+        let (deps, url) = Self.makeDeps(analytics: analytics)
+        defer { Self.cleanup(url) }
+        try await #require(deps.catalogStore).replace(
+            rows: [Self.dogaRow(id: 100), Self.dogaRow(id: 200)], lastModified: nil
+        )
+
+        await deps.handleSpotlightTap(albumID: 100, isSignedIn: true)
+        await deps.handleSpotlightTap(albumID: 200, isSignedIn: true)
+
+        // Still showing A — B's tap changed nothing, visible state or event.
+        #expect(deps.router.deepLink?.id == 100)
+        #expect(analytics.captures.count == 1)
+    }
 }
 
 /// A `CatalogStore` whose `row(id:)` records the requested id then blocks until
