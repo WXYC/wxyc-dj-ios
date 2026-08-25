@@ -54,7 +54,12 @@ struct AlbumDetailView: View {
     // make each analytics capture fire at most once per opened screen,
     // without changing `loadAll()`'s own re-fetch behavior on reappear.
     @State private var didRecordView = false
-    @State private var didRecordMetadataMiss = false
+    // One latch per capture *kind*, not one shared across both (issue #118
+    // review): the two record different `MetadataEnrichmentMissingKind`s from
+    // different call paths, so a single latch would let whichever fired first
+    // permanently suppress the other on the same screen.
+    @State private var didRecordArtistNameMiss = false
+    @State private var didRecordLMLMiss = false
 
     init(albumId: Int, fallback: AlbumSearchResult? = nil, origin: AlbumDetailOrigin) {
         self.albumId = albumId
@@ -828,15 +833,26 @@ struct AlbumDetailView: View {
         guard let artistName, !artistName.isEmpty else {
             metadataError = "no artist name available"
             // Issue #118 "also worth a sentence": this early return used to
-            // skip the catch block entirely, so a Spotlight deep link that
-            // missed the on-device clone -- the only case that reaches here
-            // with no fallback and a failed /library/info -- recorded
-            // nothing, even though it's exactly the genuine enrichment gap
-            // this event exists to count. Gated on the same `didRecordView`-
-            // style latch as the metadata catch below, for the identical
-            // reappear-inflation reason.
-            if !didRecordMetadataMiss {
-                didRecordMetadataMiss = true
+            // skip the catch block entirely, so a genuine enrichment gap --
+            // a release the app can't even key an LML lookup on -- recorded
+            // nothing, even though it's exactly what this event counts.
+            //
+            // **Gated on `!infoFailed`** (issue #118 review), which is what
+            // keeps that true. `AlbumSearchResult.artistName` and
+            // `AlbumInfo.artistName` are both non-optional `String`, so on the
+            // no-fallback branch the only way this parameter arrives nil is
+            // `loadInfo()` having returned nil -- i.e. `/library/info` failed,
+            // overwhelmingly because the DJ is offline. Recording that as an
+            // enrichment gap would fold a transport failure into the
+            // LML-coverage metric, which is precisely what
+            // `MetadataEnrichmentMissingKind` excludes `.network`/`.offline`
+            // for. With the gate, this fires only for the real gap: a row that
+            // resolved but carries an empty artist name.
+            //
+            // Latched (see `didRecordArtistNameMiss`) for the same
+            // reappear-inflation reason as `didRecordView`.
+            if !infoFailed, !didRecordArtistNameMiss {
+                didRecordArtistNameMiss = true
                 deps.analytics.capture(MetadataEnrichmentMissingEvent(kind: .missingArtistName))
             }
             return nil
@@ -859,12 +875,12 @@ struct AlbumDetailView: View {
             // Issue #108: LML coverage gaps, bucketed by kind -- upstream
             // library-metadata-lookup signal, independent of whether this
             // particular gap was worth a Sentry event above. Issue #118 item
-            // 1: gated on `didRecordMetadataMiss` so a re-appear-triggered
+            // 1: gated on `didRecordLMLMiss` so a re-appear-triggered
             // re-run of `loadAll()` (tab switch, or the Spotlight cover
             // presenting over this screen) doesn't inflate the count for one
             // underlying gap -- see `didRecordView`'s doc comment.
-            if let kind = MetadataEnrichmentMissingKind(error), !didRecordMetadataMiss {
-                didRecordMetadataMiss = true
+            if !didRecordLMLMiss, let kind = MetadataEnrichmentMissingKind(error) {
+                didRecordLMLMiss = true
                 deps.analytics.capture(MetadataEnrichmentMissingEvent(kind: kind))
             }
             return nil

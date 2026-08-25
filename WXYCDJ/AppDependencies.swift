@@ -424,17 +424,28 @@ final class AppDependencies {
     /// changes, or which is never on a charger, reported **zero**
     /// `.background` events — indistinguishable from "background tasks never
     /// fire." Every reachable outcome here now records under the
-    /// `.backgroundPoll` trigger via ``CatalogRefreshCompletedEvent/poll(changed:trigger:)``
+    /// `.backgroundPoll` trigger via ``CatalogRefreshCompletedEvent/poll(outcome:trigger:)``
     /// (success) or ``CatalogRefreshCompletedEvent/failed(trigger:)``
     /// (offline / a genuine error) — mirroring `refreshCatalog()`'s identical
     /// `.notSignedIn`-is-not-an-attempt / `.offline`-still-counts split.
     func handleBackgroundPoll() async {
-        guard let catalogRefreshService else { return }
+        guard let catalogRefreshService else {
+            // Issue #118 review: the no-store degrade is recorded here too, not
+            // just in `refreshCatalog()`. Reachable despite
+            // `scheduleBackgroundRefreshIfAvailable()`'s store check — a task
+            // submitted on a launch that *had* a store fires on a later launch
+            // whose store failed to open. Leaving it silent would close the
+            // "broken store looks like a device that never refreshed" gap on
+            // one leg and leave it open on the other. Still no reschedule:
+            // re-arming would queue wake-ups that can never progress.
+            analytics.capture(CatalogRefreshCompletedEvent.noStore(trigger: .backgroundPoll))
+            return
+        }
         CatalogBackgroundTasks.scheduleNextPoll()
         do {
-            let changed = try await catalogRefreshService.poll()
-            analytics.capture(CatalogRefreshCompletedEvent.poll(changed: changed, trigger: .backgroundPoll))
-            if changed {
+            let outcome = try await catalogRefreshService.poll()
+            analytics.capture(CatalogRefreshCompletedEvent.poll(outcome: outcome, trigger: .backgroundPoll))
+            if outcome == .changed {
                 CatalogBackgroundTasks.scheduleReindex()
             }
         } catch APIError.notSignedIn {
@@ -559,15 +570,25 @@ final class AppDependencies {
     /// already-open cover, and a token bow-out from a superseded resolve,
     /// both fire no event — neither is a genuine new deep-link open).
     private func present(albumID: Int, parked: Bool) async {
-        // Issue #118 item 2: bail out whenever a cover is already showing —
-        // any album, not just this one. RootView's `fullScreenCover(item:)`
-        // only reacts to `router.deepLink` going nil -> non-nil, never to a
-        // value swap while already presented (see its doc comment), so
-        // resolving and setting `deepLink` to a *different* album here would
-        // silently overwrite the stored route with nothing visibly changing
-        // for the DJ — and used to fire `spotlight_deeplink_opened` for a
-        // presentation nobody ever saw. The old check (`router.deepLink?.id
-        // == albumID`) only caught the same-album re-tap; this subsumes it.
+        // Issue #118 item 2: refuse whenever a cover is already showing — any
+        // album, not just this one. The old check (`router.deepLink?.id ==
+        // albumID`) caught only the same-album re-tap, so a tap for a
+        // *different* album resolved, overwrote the stored route, and fired
+        // `spotlight_deeplink_opened`.
+        //
+        // **This is the app's own decision, not an inference from SwiftUI.**
+        // `RootView`'s comment claims `fullScreenCover(item:)` ignores an
+        // identity swap while presented; that claim is unverified (see it for
+        // the provenance), so the fix deliberately does not depend on it —
+        // under either SwiftUI behaviour the second tap now changes nothing
+        // and records nothing, which is what makes the event honest.
+        //
+        // Swapping the cover to the newly-tapped album would be better UX, and
+        // is a tracked follow-up rather than a line here, because it cannot be
+        // done by writing `deepLink` in place: `nil` and the new route in one
+        // main-actor turn coalesce under Observation, so SwiftUI's body only
+        // ever sees the final value and no dismissal is observed. It needs the
+        // cover's `onDismiss` to drive the second presentation.
         guard router.deepLink == nil else { return }
         presentationToken += 1
         let token = presentationToken
