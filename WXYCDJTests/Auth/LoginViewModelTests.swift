@@ -360,7 +360,30 @@ struct LoginViewModelTests {
     /// can't start while a verify is in flight, so `resendCode()` is a no-op
     /// (no request, no error, no analytics) for as long as
     /// `auth.state == .signingIn`.
-    @Test func resendIsBlockedWhileAVerifyIsInFlight() async throws {
+    @Test func resendIsBlockedWhileAVerifyIsInFlight() async {
+        await withVerifyInFlight { viewModel, session, analytics, auth in
+            #expect(auth.state == .signingIn)
+            #expect(viewModel.canResendCode == false)
+
+            await viewModel.resendCode()  // must be a no-op while blocked
+            #expect(session.recordedRequests.count == 2)  // send + the parked verify; no resend
+            #expect(analytics.captures.isEmpty)  // no bogus sign_in_failed/completed recorded
+        }
+    }
+
+    /// Drive a fresh view model to the awaiting-code stage, park a
+    /// `submitCode()` verify mid-flight, and hand the parked state to `body`.
+    ///
+    /// Both issue-#118-item-5 gate tests need this identical choreography, and
+    /// it is intricate enough — a purpose-built session double that answers a
+    /// stub prefix and then hangs, a manual sleeper to clear the resend
+    /// cooldown, and a cancellation-based release — that two copies would mean
+    /// keeping the park/release dance in sync by hand. Releasing the parked
+    /// task happens here rather than in each test, so neither can forget it and
+    /// leak a suspended task into the rest of this `.serialized` suite.
+    private func withVerifyInFlight(
+        _ body: @MainActor (LoginViewModel, StubThenHangSession, SpyAnalytics, AuthService) async -> Void
+    ) async {
         let session = StubThenHangSession(stubs: [
             StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success":true}"#.utf8)),
         ])
@@ -378,12 +401,7 @@ struct LoginViewModelTests {
         let verify = Task { await viewModel.submitCode() }
         await session.waitUntilHung()  // the sign-in-with-otp request is now parked
 
-        #expect(auth.state == .signingIn)
-        #expect(viewModel.canResendCode == false)
-
-        await viewModel.resendCode()  // must be a no-op while blocked
-        #expect(session.recordedRequests.count == 2)  // send + the parked verify; no resend
-        #expect(analytics.captures.isEmpty)  // no bogus sign_in_failed/completed recorded
+        await body(viewModel, session, analytics, auth)
 
         verify.cancel()
         _ = await verify.value
@@ -396,35 +414,17 @@ struct LoginViewModelTests {
     /// `auth.lastError` in exactly the window `settle(.otp)` reads it as the
     /// sign-in's own outcome. (Disabling the stage-change affordances is the
     /// wider fix, tracked separately; this closes the write.)
-    @Test func codeRequestIsBlockedWhileAVerifyIsInFlight() async throws {
-        let session = StubThenHangSession(stubs: [
-            StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success":true}"#.utf8)),
-        ])
-        let sleeper = ManualSleeper()
-        let auth = makeAuth(session: session)
-        let analytics = SpyAnalytics()
-        let viewModel = LoginViewModel(auth: auth, analytics: analytics, sleep: { await sleeper.sleep($0) })
-        viewModel.identifier = "juana@wxyc.org"
+    @Test func codeRequestIsBlockedWhileAVerifyIsInFlight() async {
+        await withVerifyInFlight { viewModel, session, analytics, auth in
+            // Back out to the identifier stage while the verify is still in flight.
+            viewModel.changeIdentifier()
+            #expect(auth.state == .signingIn)
+            #expect(viewModel.canRequestCode == false)
 
-        await viewModel.requestCode()  // consumes the one stub; stage -> awaitingCode
-        viewModel.code = "123456"
-        sleeper.elapse()
-        await waitUntil { viewModel.canResendCode }
-
-        let verify = Task { await viewModel.submitCode() }
-        await session.waitUntilHung()  // the sign-in-with-otp request is now parked
-
-        // Back out to the identifier stage while the verify is still in flight.
-        viewModel.changeIdentifier()
-        #expect(auth.state == .signingIn)
-        #expect(viewModel.canRequestCode == false)
-
-        await viewModel.requestCode()  // must be a no-op while blocked
-        #expect(session.recordedRequests.count == 2)  // send + the parked verify
-        #expect(analytics.captures.isEmpty)
-
-        verify.cancel()
-        _ = await verify.value
+            await viewModel.requestCode()  // must be a no-op while blocked
+            #expect(session.recordedRequests.count == 2)  // send + the parked verify
+            #expect(analytics.captures.isEmpty)
+        }
     }
 
     /// The identifier stage is now the *first* screen a bounced-out DJ sees, so
