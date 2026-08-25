@@ -36,6 +36,7 @@
 		7C11010D9FB09DAA10462645 /* SentryErrorReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59035BBED9A73C38FDBC78BE /* SentryErrorReporter.swift */; };
 		7D3075788489ACEC916D66F8 /* SpyErrorReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9209D2D25B4421AC75229E13 /* SpyErrorReporter.swift */; };
 		81513052CA87F8B7780CA459 /* SerializedValueStrings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 283A1AB11D2D5858F9C131D0 /* SerializedValueStrings.swift */; };
+		82C54E54C8A317D5AF16C66E /* ForegroundReentryTrackerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B05B6962F5741E33A79063 /* ForegroundReentryTrackerTests.swift */; };
 		8426DBD5B1C30B7ADE1F33F6 /* SpyAnalytics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07C11CAB2A04C0CE20AF1A3A /* SpyAnalytics.swift */; };
 		87657943589225BAA0E65A7B /* StubRequestSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85944AD2D64ED468BE70FB80 /* StubRequestSession.swift */; };
 		8BAB76DFE51CBFC74EEF967B /* AlbumDetailFallbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF8B854E5058AB00D7FC28B /* AlbumDetailFallbackTests.swift */; };
@@ -89,6 +90,7 @@
 /* Begin PBXFileReference section */
 		0062FB8AD63F74D7FE9C64A7 /* LoginViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginViewModel.swift; sourceTree = "<group>"; };
 		01796789400F09B47AE5C41C /* WXYCAPIModels */ = {isa = PBXFileReference; lastKnownFileType = folder; name = WXYCAPIModels; path = Packages/WXYCAPIModels; sourceTree = SOURCE_ROOT; };
+		01B05B6962F5741E33A79063 /* ForegroundReentryTrackerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundReentryTrackerTests.swift; sourceTree = "<group>"; };
 		07C11CAB2A04C0CE20AF1A3A /* SpyAnalytics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpyAnalytics.swift; sourceTree = "<group>"; };
 		08B568981D92EC8060CDFD01 /* AppDependenciesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDependenciesTests.swift; sourceTree = "<group>"; };
 		0D7C2891032C948BCCAB8104 /* WXYCDJ.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = WXYCDJ.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -257,6 +259,7 @@
 				8E5BB2C6A6D78D45FBE8B7E8 /* AlbumRouteTests.swift */,
 				08B568981D92EC8060CDFD01 /* AppDependenciesTests.swift */,
 				B38E61706048E1E49FD89944 /* ConnectivityWiringTests.swift */,
+				01B05B6962F5741E33A79063 /* ForegroundReentryTrackerTests.swift */,
 				1FD0E661440B5825AA5F5B40 /* RouterDeepLinkTests.swift */,
 				54E53B2B0DF8CCAB1C3786E0 /* SpotlightClientStateToleranceTests.swift */,
 				4E5887C2E74E8E91637799F7 /* SpotlightFieldResolutionTests.swift */,
@@ -518,6 +521,7 @@
 				0842289CBA7AB50CF069C892 /* ConnectivityWiringTests.swift in Sources */,
 				B8251C7A4243342264B016E2 /* ErrorReportingTests.swift in Sources */,
 				206AE6A2C11520297BE28845 /* Fixtures.swift in Sources */,
+				82C54E54C8A317D5AF16C66E /* ForegroundReentryTrackerTests.swift in Sources */,
 				D7683BE5C5C0E395CC4122E8 /* LoginViewModelTests.swift in Sources */,
 				CFB3DC8DE93C68D38B76CA75 /* PostHogPrivacyPipelineTests.swift in Sources */,
 				E7A9C8D05D95D4EBCB17F9A6 /* RouterDeepLinkTests.swift in Sources */,
