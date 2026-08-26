@@ -16,7 +16,6 @@ import CoreSpotlight
 import Foundation
 import Testing
 @testable import WXYCAPI
-import struct WXYCAPIModels.CalendarDate
 
 @Suite("CatalogSpotlight")
 struct CatalogSpotlightTests {

@@ -14,7 +14,6 @@
 import Foundation
 import Testing
 @testable import WXYCAPI
-import struct WXYCAPIModels.CalendarDate
 
 @Suite("Date-only decode retirement")
 struct DateOnlyDecodeRetirementTests {

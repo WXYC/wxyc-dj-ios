@@ -10,13 +10,6 @@
 //
 
 import Foundation
-// Targeted import, matching TrackMatchHint.swift / SignInResponse.swift rather
-// than a blanket `import WXYCAPIModels`. Since the 1.47.0 contract advance that
-// module declares five names WXYCAPI also declares (EmailSignInRequest,
-// LookupEmailRequest/Response, SendLoginCodeRequest, OTPSignInRequest), and a
-// same-module declaration shadows an imported one *silently* -- see issue #129.
-// Naming the single type keeps those out of scope entirely.
-import struct WXYCAPIModels.CalendarDate
 
 /// A rotation record's expiry, as the client can actually know it: **three**
 /// states, not two.
@@ -85,11 +78,27 @@ public enum RotationKillDate: Sendable, Hashable {
 /// Encodes as the **bare wire value** — a `"YYYY-MM-DD"` string, or null — not
 /// as an enum envelope. That is not cosmetic: ``SQLiteCatalogStore`` persists
 /// each ``CatalogRow`` as a `JSONCoders`-encoded blob, so this encoding *is* the
-/// on-disk format for the clone. Emitting the bare value keeps a clone written
-/// by any build readable by any other, and keeps a row re-encoded from disk
-/// byte-identical to the row the server sent — including an ``unreadable(_:)``
-/// value, which round-trips verbatim rather than being normalized away by a
-/// client that couldn't parse it.
+/// on-disk format for the clone. Emitting the bare value is what keeps a clone
+/// written by any build readable by any other — an enum envelope would make the
+/// two formats mutually unreadable — and an ``unreadable(_:)`` value round-trips
+/// verbatim rather than being normalized away by a client that couldn't parse
+/// it.
+///
+/// It is **not** byte-identical to what the server sent, in two reachable cases,
+/// and neither is a defect worth closing — but both are worth knowing before
+/// treating a re-encoded blob as a copy of the response:
+///
+/// - An ``expires(_:)`` re-encodes through `CalendarDate.description`, so a
+///   value that reached ``init(wireValue:)`` as a *timestamp* is persisted as
+///   its leading day (`"2026-07-01T20:00:00-04:00"` → `"2026-07-01"`). That is
+///   the prefix tolerance in ``RotationPredicate/calendarDay(from:)`` showing
+///   through, and the discarded time-of-day is precisely what the compare must
+///   never consult, so normalizing on the way to disk loses nothing this type
+///   is allowed to use.
+/// - ``noExpiry`` encodes an explicit `null`, where the previous `String?`
+///   property's synthesized `encodeIfPresent` omitted the key. Both decode back
+///   to ``noExpiry`` via `decodeIfPresent`, so old and new clone blobs stay
+///   mutually readable — which is the property that actually matters.
 extension RotationKillDate: Codable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()
@@ -183,16 +192,22 @@ enum RotationPredicate {
     /// Taking the prefix rather than demanding an exact-width match is what
     /// keeps a full timestamp (`"2026-06-23T20:00:00-04:00"`) comparable against
     /// a bare day without either reinterpreting it through a time zone or
-    /// failing closed on a legitimately-in-rotation record — the server has
-    /// never sent that shape for this column, but the one caller is a hedge
-    /// against a projection that doesn't exist yet, so the wire shape is the
-    /// thing not to assume.
+    /// failing closed on a legitimately-in-rotation record. The server has never
+    /// sent that shape for either rotation column, and `/library/info`'s block is
+    /// a hedge against a projection that doesn't exist yet — so the wire shape is
+    /// the thing not to assume.
     ///
-    /// Note this is deliberately **more lenient than `CalendarDate`'s own
-    /// decoder**, which requires exactly ten bytes and would reject that
-    /// timestamp outright. The leniency is confined here, to the one path whose
-    /// value never passed through a `CalendarDate` decode — everywhere else the
-    /// strict form is what we want.
+    /// This is deliberately **more lenient than `CalendarDate`'s own decoder**,
+    /// which requires exactly ten bytes and would reject that timestamp
+    /// outright, so know how far the leniency now reaches. There are three
+    /// callers, and it is no longer confined to the hedge: ``RotationKillDate``'s
+    /// `init(wireValue:)` (so it covers ``CatalogRow``'s catalog-export decode —
+    /// and, through that type's `Codable`, the value persisted to the clone,
+    /// which is normalized to its leading day),
+    /// ``AlbumInfo/Rotation/isInRotation(today:)``, and
+    /// ``WXYCDateFormatting/dateOnly(fromISOString:locale:)``. All three want the
+    /// same answer to the same question — "what calendar day is this?" — which is
+    /// why they share one parse rather than each picking a strictness.
     static func calendarDay(from raw: String) -> CalendarDate? {
         guard raw.count >= 10 else { return nil }
         let day = Array(raw.prefix(10))

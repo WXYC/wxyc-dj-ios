@@ -47,10 +47,6 @@
 //
 
 import Foundation
-// Targeted import, matching TrackMatchHint.swift / SignInResponse.swift rather
-// than a blanket `import WXYCAPIModels` -- see RotationPredicate.swift and
-// issue #129 for why naming the single type matters here.
-import struct WXYCAPIModels.CalendarDate
 
 /// One row of the WXYC library catalog as served by `GET /library/catalog`
 /// (BS#1468) for offline cloning — a query-independent snapshot of the core
@@ -103,8 +99,10 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
     /// ``isInRotation(asOf:timeZone:)``, never by reading this directly.
     public let rotationBin: String?
 
-    /// Date the current rotation record expires. `nil` when the record has no
-    /// kill date — which means **no expiry**, not "unknown".
+    /// When the current rotation record expires — as ``RotationKillDate``'s
+    /// **three** states, not a `CalendarDate?`'s two. Absent is `.noExpiry`; a
+    /// readable day is `.expires`; anything else is `.unreadable`, retained
+    /// verbatim.
     ///
     /// The server emits `"YYYY-MM-DD"` from a deliberate `::text` cast over a
     /// Postgres `date` column: a stable calendar day, never a parser-dependent
@@ -113,20 +111,21 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
     /// timezone-free compare it has always been, now without the padded-string
     /// precondition that used to be enforced only by a doc comment.
     ///
-    /// **This is the one field on this type that decodes strictly**, and the
-    /// asymmetry with ``artworkURL`` / ``rotationBin`` next to it is deliberate.
-    /// Those two are free-text columns that can be dirty in the ordinary course
-    /// of business (a Discogs URL, a bin value added server-side ahead of this
-    /// app), so they are decoded permissively rather than dropping a row. A
-    /// malformed value *here* cannot come from a `date` column via `::text` —
-    /// it would be a Backend-Service defect — and `CalendarDate`'s own contract
-    /// says as much: a malformed date is a server bug, so it throws rather than
-    /// repairing. Being loud is also the more useful behaviour: the throw
-    /// surfaces as `APIError.decoding` carrying the NDJSON line number, which
-    /// `AppDependencies.refreshCatalog` reports to Sentry, where a tolerated
-    /// value would instead mis-badge one album silently and forever. The cost is
-    /// bounded because ``APIClient/decodeNDJSON`` already fails closed: the
-    /// fetch fails, the last-good clone survives, and the next refresh retries.
+    /// **This field decodes as tolerantly as ``artworkURL`` and ``rotationBin``
+    /// beside it**, and that uniformity is deliberate. Typing it `CalendarDate?`
+    /// and letting the strict generated decoder throw was the obvious reading of
+    /// issue #79, and it is the wrong trade here: ``APIClient/decodeNDJSON``
+    /// fails the **whole fetch** on any throwing line, so one malformed kill
+    /// date would cost the entire on-device clone refresh rather than one
+    /// album's badge. Such a value cannot come from a `date` column via `::text`
+    /// — it would be a Backend-Service defect — but "cannot happen" is a
+    /// property of today's server, and the cost of being wrong about it is the
+    /// whole clone.
+    ///
+    /// Tolerating it is **not** the same as ignoring it: an unreadable value
+    /// fails **closed** at ``RotationPredicate/isInRotation(bin:killDate:today:)``
+    /// (treated as expired), which is why the third case exists rather than
+    /// folding into the `nil` that means "no expiry". See ``RotationKillDate``.
     public let rotationKillDate: RotationKillDate
 
     /// The readable expiry day, or `nil` when there is none **or** the server
