@@ -21,7 +21,9 @@ public struct AlbumSearchResult: Sendable, Codable, Hashable {
     public var genreName: String
     public var label: String
     public var labelId: Int?
-    /** The library row's surrogate key (BS#1963), NOT NULL in the database since migration 0137. Optional here (never required) so the live openapi-compliance deploy gate stays green across the publish -> BS-deploy window, matching the CatalogExportRow and BulkResolveInput precedent.  */
+    /** The WXYC catalog artist id, sharing the `library.artist_id` keyspace. Optional here (never required): it lands ahead of the Backend-Service change that populates it (BS#2227), so a consumer compiled against this field must still tolerate its absence until that deploys.  */
+    public var artistId: Int?
+    /** The library row's surrogate key (BS#1963), NOT NULL in the database since migration 0137. Optional here (never required) because the column is emitted per-projection, not globally: NOT NULL is a claim about the column, while `required` is a promise that the key appears on the wire, and WXYC/Backend-Service#2167 is open precisely because the LML search-proxy rows do not emit it explicitly yet. Promoting this to required once every projection returning the schema provably emits it is worth doing, and needs a per-projection audit rather than a text edit. Matches the CatalogExportRow and BulkResolveInput precedent.  */
     public var legacyReleaseId: Int?
     public var albumDist: Double?
     public var artistDist: Double?
@@ -49,7 +51,7 @@ public struct AlbumSearchResult: Sendable, Codable, Hashable {
     /** Populated by Backend's catalog search when an artist-alias match (from `artist_search_alias`) drove this release into the results, per artist-search-alias plan PR 5. Sibling field to `matched_via` (which is track-title provenance). Empty or absent on normal artist/album hits. Backward-compatible — existing consumers ignore the field.  */
     public var matchedViaAlias: [ArtistMatchHint]?
 
-    public init(id: Int, addDate: Date, albumTitle: String, artistName: String, codeLetters: String, codeNumber: Int, codeArtistNumber: Int, formatName: String, genreName: String, label: String, labelId: Int? = nil, legacyReleaseId: Int? = nil, albumDist: Double? = nil, artistDist: Double? = nil, rotationBin: RotationBin? = nil, rotationId: Int? = nil, plays: Int? = nil, onStreaming: Bool? = nil, albumArtist: String? = nil, dateLost: Date? = nil, dateFound: Date? = nil, artworkUrl: String? = nil, discogsUnavailable: Bool? = nil, discogsUnavailableNote: String? = nil, lastDiscogsRecheckAt: Date? = nil, matchedVia: [TrackMatchHint]? = nil, matchedViaAlias: [ArtistMatchHint]? = nil) {
+    public init(id: Int, addDate: Date, albumTitle: String, artistName: String, codeLetters: String, codeNumber: Int, codeArtistNumber: Int, formatName: String, genreName: String, label: String, labelId: Int? = nil, artistId: Int? = nil, legacyReleaseId: Int? = nil, albumDist: Double? = nil, artistDist: Double? = nil, rotationBin: RotationBin? = nil, rotationId: Int? = nil, plays: Int? = nil, onStreaming: Bool? = nil, albumArtist: String? = nil, dateLost: Date? = nil, dateFound: Date? = nil, artworkUrl: String? = nil, discogsUnavailable: Bool? = nil, discogsUnavailableNote: String? = nil, lastDiscogsRecheckAt: Date? = nil, matchedVia: [TrackMatchHint]? = nil, matchedViaAlias: [ArtistMatchHint]? = nil) {
         self.id = id
         self.addDate = addDate
         self.albumTitle = albumTitle
@@ -61,6 +63,7 @@ public struct AlbumSearchResult: Sendable, Codable, Hashable {
         self.genreName = genreName
         self.label = label
         self.labelId = labelId
+        self.artistId = artistId
         self.legacyReleaseId = legacyReleaseId
         self.albumDist = albumDist
         self.artistDist = artistDist
@@ -91,6 +94,7 @@ public struct AlbumSearchResult: Sendable, Codable, Hashable {
         case genreName = "genre_name"
         case label
         case labelId = "label_id"
+        case artistId = "artist_id"
         case legacyReleaseId = "legacy_release_id"
         case albumDist = "album_dist"
         case artistDist = "artist_dist"
@@ -124,6 +128,7 @@ public struct AlbumSearchResult: Sendable, Codable, Hashable {
         try container.encode(genreName, forKey: .genreName)
         try container.encode(label, forKey: .label)
         try container.encodeIfPresent(labelId, forKey: .labelId)
+        try container.encodeIfPresent(artistId, forKey: .artistId)
         try container.encodeIfPresent(legacyReleaseId, forKey: .legacyReleaseId)
         try container.encodeIfPresent(albumDist, forKey: .albumDist)
         try container.encodeIfPresent(artistDist, forKey: .artistDist)

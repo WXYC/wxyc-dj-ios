@@ -249,7 +249,23 @@ rm -f "$STAGE_DIR/Models/HealthCheckResponse.swift"
 # dead class, RequestTask is stripped from the vendored copy below (a
 # scripted, reproducible transform -- never a hand-edit of the committed
 # tree).
-INFRA_KEEP=(Models.swift Validation.swift JSONValue.swift CodableHelper.swift OpenAPIMutex.swift OpenISO8601DateFormatter.swift)
+# CalendarDate.swift is the one entry here that is NOT openapi-generator
+# output. It is hand-authored upstream at wxyc-shared's
+# openapi-config/swift-support/CalendarDate.swift and copied into the
+# generator's Infrastructure/ directory by that repo's `postgenerate:swift`
+# hook (scripts/copy-swift-support-files.js), so by the time this script
+# reads $GENERATED_ROOT it is indistinguishable from the rest -- which is
+# exactly why it belongs on this list rather than in some second mechanism.
+# It is load-bearing, not optional: swift6.yaml maps `format: date` to
+# CalendarDate, so every model with such a property (CatalogExportRow,
+# Concert, KillRotationRequest, Rotation, RotationEntry, RotationWithAlbum)
+# references a type that is only in scope if this file is staged. Dropping
+# it does not fail here -- the existence check below passes, and the count
+# guard at the bottom counts a directory built by looping over this very
+# array, so it is equal by construction and cannot notice an absent name.
+# The symptom would be `cannot find type 'CalendarDate' in scope` in
+# whatever target links the package next.
+INFRA_KEEP=(Models.swift Validation.swift JSONValue.swift CodableHelper.swift OpenAPIMutex.swift OpenISO8601DateFormatter.swift CalendarDate.swift)
 log "Staging curated Infrastructure/ subset: ${INFRA_KEEP[*]}"
 mkdir -p "$STAGE_DIR/Infrastructure"
 for f in "${INFRA_KEEP[@]}"; do
@@ -321,6 +337,55 @@ STAGED_MODELS=$(find "$STAGE_DIR/Models" -name '*.swift' | wc -l | tr -d ' ')
 (( STAGED_MODELS > 0 )) || fail "0 Swift files generated into Models/ -- refusing to sync, which would have deleted the committed tree"
 STAGED_INFRA=$(find "$STAGE_DIR/Infrastructure" -name '*.swift' | wc -l | tr -d ' ')
 (( STAGED_INFRA == ${#INFRA_KEEP[@]} )) || fail "staged Infrastructure/ has $STAGED_INFRA files, expected ${#INFRA_KEEP[@]}"
+
+# The check above is a CONSISTENCY check, not a tripwire, and reading it as
+# one has already cost us a regression: $STAGE_DIR/Infrastructure is built by
+# looping over INFRA_KEEP, so its file count equals ${#INFRA_KEEP[@]} by
+# construction and the comparison can never fail. It catches a `cp` that
+# silently wrote nothing; it cannot catch the failure that actually matters,
+# which is the generator emitting a support file NOBODY has classified.
+#
+# That is not hypothetical. CalendarDate.swift arrived exactly this way
+# (wxyc-shared#358 mapped `format: date` to it and copied it into
+# Infrastructure/ from the postgenerate:swift hook). Because the keep-list is
+# an allow-list, an unclassified file is DROPPED rather than vendored, so the
+# symptom is `cannot find type 'CalendarDate' in scope` in whatever target
+# links the package next -- far from the script that caused it. And nothing
+# upstream reports it either: verify-api-types.sh regenerates from the pinned
+# sha in contract-version.json, so this repo's CI stays green against a
+# wxyc-shared that has already moved, right up until a PR bumps the pin.
+#
+# So classify every file the generator emitted. INFRA_KEEP is what we vendor;
+# INFRA_DROP is what we deliberately don't, each with a reason recorded in the
+# Infrastructure/ curation comment above and in CLAUDE.md's "Code Generation"
+# section. Anything in neither list is new output nobody has looked at, and
+# the right response is to stop and look at it -- not to guess.
+INFRA_DROP=(
+    # An unused URLSession HTTP client this models-only package never calls.
+    APIs.swift
+    APIHelper.swift
+    JSONDataEncoding.swift
+    JSONEncodingHelper.swift
+    SynchronizedDictionary.swift
+    URLSessionImplementations.swift
+    # Worse than unused: declares `extension String: @retroactive CodingKey`,
+    # whose String.init?(intValue:) wins overload resolution over
+    # String.init(_:) wherever String.init is passed as a bare function value
+    # over an Int -- `[1, 2, 3].map(String.init)` becomes `[nil, nil, nil]`,
+    # app-wide, no import required at the use site.
+    Extensions.swift
+)
+UNCLASSIFIED=()
+while IFS= read -r generated; do
+    name=$(basename "$generated")
+    for known in "${INFRA_KEEP[@]}" "${INFRA_DROP[@]}"; do
+        [[ "$name" == "$known" ]] && continue 2
+    done
+    UNCLASSIFIED+=("$name")
+done < <(find "$GENERATED_ROOT/Infrastructure" -name '*.swift' | sort)
+if (( ${#UNCLASSIFIED[@]} > 0 )); then
+    fail "generator emitted unclassified Infrastructure/ file(s): ${UNCLASSIFIED[*]} -- decide whether each belongs in INFRA_KEEP (vendored; Models/ needs it) or INFRA_DROP (deliberately excluded, with the reason recorded), then update CLAUDE.md's Code Generation section to match. Do NOT ignore this: an unclassified file is silently dropped, and the symptom is a 'cannot find type' error in whatever target links the package."
+fi
 
 # `--delete` at the $DEST_DIR root, not per-subdirectory: the whole vendored
 # tree is machine-owned (CLAUDE.md: never hand-edit anything under it), so
