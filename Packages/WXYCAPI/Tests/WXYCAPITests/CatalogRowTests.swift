@@ -14,6 +14,7 @@
 import Foundation
 import Testing
 @testable import WXYCAPI
+import struct WXYCAPIModels.CalendarDate
 
 @Suite("CatalogRow")
 struct CatalogRowTests {
@@ -37,7 +38,7 @@ struct CatalogRowTests {
         #expect(row.rotationBin == "H")
         #expect(row.rotationCohort == .heavy)
         // The 14th field — absent from AlbumSearchResult — must survive here.
-        #expect(row.rotationKillDate == "2026-07-01")
+        #expect(row.rotationKillDay == day("2026-07-01"))
     }
 
     @Test func retainsRawRotationKillDate() throws {
@@ -49,7 +50,7 @@ struct CatalogRowTests {
             CatalogRow.self,
             from: Data(Fixtures.juanaMolinaCatalogRow.utf8)
         )
-        #expect(row.rotationKillDate == "2026-07-01")
+        #expect(row.rotationKillDay == day("2026-07-01"))
     }
 
     @Test func callNumberReusesSharedFormatter() throws {
@@ -94,7 +95,7 @@ struct CatalogRowTests {
         let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
         #expect(row.rotationBin == "N")
         #expect(row.rotationCohort == nil)
-        #expect(row.isInRotation(localDay: "2026-06-22"))
+        #expect(row.isInRotation(today: day("2026-06-22")))
     }
 
     @Test func emptyRotationBinNormalizesToNilAndIsNotInRotation() throws {
@@ -104,7 +105,7 @@ struct CatalogRowTests {
         let raw = #"{"id":1,"artist_name":"y","album_title":"x","code_letters":"X","code_number":1,"code_artist_number":1,"genre_name":"Rock","format_name":"LP","rotation_bin":"","rotation_kill_date":null}"#
         let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
         #expect(row.rotationBin == nil)
-        #expect(row.isInRotation(localDay: "2026-06-22") == false)
+        #expect(row.isInRotation(today: day("2026-06-22")) == false)
     }
 
     @Test(arguments: ["not-a-date", "", "2026-6-2", "20260622", "twenty-twenty-six"])
@@ -130,7 +131,7 @@ struct CatalogRowTests {
         // which would drop the album from the offline clone entirely.
         #expect(row.albumTitle == "On Your Own Love Again")
         #expect(row.rotationBin == "H")
-        #expect(row.isInRotation(localDay: "2026-06-22") == false)
+        #expect(row.isInRotation(today: day("2026-06-22")) == false)
     }
 
     @Test func killDateAsAFullTimestampStillCompares() throws {
@@ -139,8 +140,8 @@ struct CatalogRowTests {
         // silently retire every rotation record at once.
         let raw = #"{"id":1,"artist_name":"y","album_title":"x","code_letters":"X","code_number":1,"code_artist_number":1,"genre_name":"Rock","format_name":"LP","rotation_bin":"H","rotation_kill_date":"2026-07-01T20:00:00-04:00"}"#
         let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
-        #expect(row.isInRotation(localDay: "2026-06-22"))
-        #expect(row.isInRotation(localDay: "2026-08-01") == false)
+        #expect(row.isInRotation(today: day("2026-06-22")))
+        #expect(row.isInRotation(today: day("2026-08-01")) == false)
     }
 
     @Test func decodesNullRotationFields() throws {
@@ -149,8 +150,13 @@ struct CatalogRowTests {
         let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
         #expect(row.rotationBin == nil)
         #expect(row.rotationCohort == nil)
-        #expect(row.rotationKillDate == nil)
-        #expect(row.isInRotation(localDay: "2026-06-22") == false)
+        // `.noExpiry`, specifically — not merely "no readable day". A null kill
+        // date means the record never expires, the opposite of an unreadable
+        // one, and `rotationKillDay` is nil for both; asserting on the case is
+        // what distinguishes them.
+        #expect(row.rotationKillDate == .noExpiry)
+        #expect(row.rotationKillDay == nil)
+        #expect(row.isInRotation(today: day("2026-06-22")) == false)
     }
 
     @Test func roundTripsThroughCodable() throws {
@@ -179,38 +185,38 @@ struct CatalogRowTests {
             from: try JSONCoders.encoder.encode(original)
         )
         #expect(roundTripped.rotationBin == "N")
-        #expect(roundTripped.isInRotation(localDay: "2026-06-22"))
+        #expect(roundTripped.isInRotation(today: day("2026-06-22")))
         #expect(roundTripped == original)
     }
 
     // MARK: - isInRotation core (deterministic local day)
 
     @Test func inRotationWhenBinSetAndNoKillDate() {
-        #expect(makeRow(bin: "H", killDate: nil).isInRotation(localDay: "2026-06-22"))
+        #expect(makeRow(bin: "H", killDate: nil).isInRotation(today: day("2026-06-22")))
     }
 
     @Test func inRotationWhenKillDateInFuture() {
-        #expect(makeRow(bin: "M", killDate: "2026-07-01").isInRotation(localDay: "2026-06-22"))
+        #expect(makeRow(bin: "M", killDate: "2026-07-01").isInRotation(today: day("2026-06-22")))
     }
 
     @Test func notInRotationWhenKillDateInPast() {
-        #expect(makeRow(bin: "H", killDate: "2026-06-01").isInRotation(localDay: "2026-06-22") == false)
+        #expect(makeRow(bin: "H", killDate: "2026-06-01").isInRotation(today: day("2026-06-22")) == false)
     }
 
     @Test func notInRotationWhenKillDateIsToday() {
         // Matches the server's `kill_date > CURRENT_DATE` filter (strict): a
         // record that expires today is already out.
-        #expect(makeRow(bin: "H", killDate: "2026-06-22").isInRotation(localDay: "2026-06-22") == false)
+        #expect(makeRow(bin: "H", killDate: "2026-06-22").isInRotation(today: day("2026-06-22")) == false)
     }
 
     @Test func notInRotationWhenNoBinEvenWithFutureKillDate() {
-        #expect(makeRow(bin: nil, killDate: "2027-01-01").isInRotation(localDay: "2026-06-22") == false)
+        #expect(makeRow(bin: nil, killDate: "2027-01-01").isInRotation(today: day("2026-06-22")) == false)
     }
 
     @Test func farFutureAndFarPastKillDatesCompareChronologically() {
         // Lexicographic == chronological holds across the full padded range.
-        #expect(makeRow(bin: "H", killDate: "9999-12-31").isInRotation(localDay: "2026-06-22"))
-        #expect(makeRow(bin: "H", killDate: "0001-01-01").isInRotation(localDay: "2026-06-22") == false)
+        #expect(makeRow(bin: "H", killDate: "9999-12-31").isInRotation(today: day("2026-06-22")))
+        #expect(makeRow(bin: "H", killDate: "0001-01-01").isInRotation(today: day("2026-06-22")) == false)
     }
 
     // MARK: - isInRotation(asOf:) — public, computes the padded local day itself
@@ -238,25 +244,34 @@ struct CatalogRowTests {
         #expect(row.isInRotation(asOf: justAfterMidnightUTC, timeZone: TimeZone(identifier: "America/New_York")!))
     }
 
-    // MARK: - localDay formatting
+    // MARK: - Deriving the client's local day
 
     @Test func localDayZeroPads() {
         var utc = Calendar(identifier: .gregorian)
         utc.timeZone = TimeZone(identifier: "UTC")!
         let jan5 = utc.date(from: DateComponents(year: 2026, month: 1, day: 5))!
-        #expect(RotationPredicate.localDay(jan5, timeZone: TimeZone(identifier: "UTC")!) == "2026-01-05")
+        // `RotationPredicate.localDay` used to build this padded string itself,
+        // because the compare downstream was lexicographic and only correct for
+        // the fixed-width form. `CalendarDate` holds the components, so padding
+        // is now only a rendering concern -- asserted on `description` for
+        // exactly that reason, not because anything compares the text.
+        #expect(CalendarDate(jan5, in: TimeZone(identifier: "UTC")!).description == "2026-01-05")
     }
 
     @Test func localDayShiftsWithTimeZone() {
         var utc = Calendar(identifier: .gregorian)
         utc.timeZone = TimeZone(identifier: "UTC")!
         let instant = utc.date(from: DateComponents(year: 2026, month: 6, day: 22, hour: 0, minute: 30))!
-        #expect(RotationPredicate.localDay(instant, timeZone: TimeZone(identifier: "UTC")!) == "2026-06-22")
-        #expect(RotationPredicate.localDay(instant, timeZone: TimeZone(identifier: "America/New_York")!) == "2026-06-21")
+        #expect(CalendarDate(instant, in: TimeZone(identifier: "UTC")!) == day("2026-06-22"))
+        #expect(CalendarDate(instant, in: TimeZone(identifier: "America/New_York")!) == day("2026-06-21"))
     }
 
     // MARK: - Helpers
 
+    /// `killDate` stays a `"YYYY-MM-DD"` literal so the rotation tables below
+    /// read like the wire; `day(_:)` narrows it. Unreadable values are exercised
+    /// through the decoder instead (see `unreadableKillDateFailsClosed…`), since
+    /// they can only arise on that path.
     private func makeRow(bin: String?, killDate: String?) -> CatalogRow {
         CatalogRow(
             id: 1,
@@ -272,7 +287,7 @@ struct CatalogRowTests {
             plays: 34,
             artworkURL: nil,
             rotationBin: bin,
-            rotationKillDate: killDate
+            rotationKillDate: killDate.map { day($0) }
         )
     }
 }

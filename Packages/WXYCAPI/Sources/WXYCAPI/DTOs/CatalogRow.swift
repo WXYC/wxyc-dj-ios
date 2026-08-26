@@ -25,20 +25,32 @@
 //  (unlike the AlbumSearchResult schema), so the two schemas aren't even
 //  making the same claim about that field.
 //
-//  The real, verified blocker: `rotation_kill_date` is `format: date` in
-//  api.yaml, so the generated type declares it `Date?`. This type
-//  deliberately keeps it `String?` (see ``rotationKillDate`` below) so
-//  expiry is a timezone-free lexicographic compare against a client-local
-//  `"YYYY-MM-DD"` string (``isInRotation(localDay:)``) — converting to
-//  `Date` would mean re-deriving that comparison through `Calendar`/
-//  `TimeZone` machinery this type was written specifically to avoid. See
-//  CLAUDE.md's "Code Generation" section.
+//  The blocker this comment used to name is CLOSED (issue #79).
+//  `rotation_kill_date` is `format: date`, which generated as `Date?` — an
+//  instant, so recovering the wire day from one means choosing a time zone —
+//  and this type kept it `String?` so expiry stayed a timezone-free compare.
+//  Since the pin moved to api.yaml 1.47.0 the generated property is
+//  `CalendarDate?`, which stores `(year, month, day)` and orders by that
+//  triple without consulting `Calendar`/`TimeZone`: the exact property the
+//  string was standing in for, so this type now uses it too.
+//
+//  What still blocks generation is decode tolerance a synthesized `Codable`
+//  cannot express — `artworkURL` is built from a raw `String` with empty→nil
+//  and `URL(string:)` applied by hand, and `rotationBin` normalizes a dirty
+//  `""` to nil — plus the affordances (`callNumber`, `isInRotation`,
+//  `detailFallback`) callers reach for. Five fields are also non-optional on
+//  the generated type where they're optional here. See CLAUDE.md's "Code
+//  Generation" section.
 //
 //  Created by Jake on 06/22/26.
 //  Copyright © 2026 WXYC. All rights reserved.
 //
 
 import Foundation
+// Targeted import, matching TrackMatchHint.swift / SignInResponse.swift rather
+// than a blanket `import WXYCAPIModels` -- see RotationPredicate.swift and
+// issue #129 for why naming the single type matters here.
+import struct WXYCAPIModels.CalendarDate
 
 /// One row of the WXYC library catalog as served by `GET /library/catalog`
 /// (BS#1468) for offline cloning — a query-independent snapshot of the core
@@ -91,11 +103,36 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
     /// ``isInRotation(asOf:timeZone:)``, never by reading this directly.
     public let rotationBin: String?
 
-    /// Date the current rotation record expires, as the raw `"YYYY-MM-DD"` the
-    /// server emits (a deliberate `::text` cast — a stable calendar date, not a
-    /// parser-dependent instant). Kept as a string so expiry is a timezone-free
-    /// lexicographic compare. `nil` when the record has no kill date.
-    public let rotationKillDate: String?
+    /// Date the current rotation record expires. `nil` when the record has no
+    /// kill date — which means **no expiry**, not "unknown".
+    ///
+    /// The server emits `"YYYY-MM-DD"` from a deliberate `::text` cast over a
+    /// Postgres `date` column: a stable calendar day, never a parser-dependent
+    /// instant. ``CalendarDate`` is the type-level statement of that — it holds
+    /// `(year, month, day)` and orders by the triple, so expiry stays the
+    /// timezone-free compare it has always been, now without the padded-string
+    /// precondition that used to be enforced only by a doc comment.
+    ///
+    /// **This is the one field on this type that decodes strictly**, and the
+    /// asymmetry with ``artworkURL`` / ``rotationBin`` next to it is deliberate.
+    /// Those two are free-text columns that can be dirty in the ordinary course
+    /// of business (a Discogs URL, a bin value added server-side ahead of this
+    /// app), so they are decoded permissively rather than dropping a row. A
+    /// malformed value *here* cannot come from a `date` column via `::text` —
+    /// it would be a Backend-Service defect — and `CalendarDate`'s own contract
+    /// says as much: a malformed date is a server bug, so it throws rather than
+    /// repairing. Being loud is also the more useful behaviour: the throw
+    /// surfaces as `APIError.decoding` carrying the NDJSON line number, which
+    /// `AppDependencies.refreshCatalog` reports to Sentry, where a tolerated
+    /// value would instead mis-badge one album silently and forever. The cost is
+    /// bounded because ``APIClient/decodeNDJSON`` already fails closed: the
+    /// fetch fails, the last-good clone survives, and the next refresh retries.
+    public let rotationKillDate: RotationKillDate
+
+    /// The readable expiry day, or `nil` when there is none **or** the server
+    /// sent something unparseable. Never branch rotation state on this — the two
+    /// `nil` cases are opposite answers; use ``isInRotation(asOf:timeZone:)``.
+    public var rotationKillDay: CalendarDate? { rotationKillDate.day }
 
     public init(
         id: Int,
@@ -111,7 +148,7 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
         plays: Int?,
         artworkURL: URL?,
         rotationBin: String?,
-        rotationKillDate: String?
+        rotationKillDate: CalendarDate?
     ) {
         self.id = id
         self.artistName = artistName
@@ -126,7 +163,7 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
         self.plays = plays
         self.artworkURL = artworkURL
         self.rotationBin = rotationBin
-        self.rotationKillDate = rotationKillDate
+        self.rotationKillDate = rotationKillDate.map(RotationKillDate.expires) ?? .noExpiry
     }
 
     enum CodingKeys: String, CodingKey {
@@ -173,7 +210,16 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
         // artwork_url treatment above.
         rotationBin = (try c.decodeIfPresent(String.self, forKey: .rotationBin))
             .flatMap { $0.isEmpty ? nil : $0 }
-        rotationKillDate = try c.decodeIfPresent(String.self, forKey: .rotationKillDate)
+        // Decoded as a raw string and narrowed here rather than as a
+        // `CalendarDate` directly: a strict decode would THROW on an unreadable
+        // value, and `APIClient.decodeNDJSON` fails the whole fetch on any
+        // throwing line, so one dirty kill date would cost the entire clone
+        // refresh instead of one album's badge. Narrowing keeps the tolerance
+        // this decoder applies to `artwork_url` and `rotation_bin` above while
+        // still typing the comparison -- see `RotationKillDate`.
+        rotationKillDate = RotationKillDate(
+            wireValue: try c.decodeIfPresent(String.self, forKey: .rotationKillDate)
+        )
     }
 
     /// The DJ-facing display cohort (`H`/`M`/`L`/`S`) for ``rotationBin``, or
@@ -207,18 +253,22 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
     /// The rule itself lives in ``RotationPredicate`` so this type and
     /// ``AlbumInfo/Rotation`` cannot answer differently for the same album.
     public func isInRotation(asOf now: Date = Date(), timeZone: TimeZone = .current) -> Bool {
-        isInRotation(localDay: RotationPredicate.localDay(now, timeZone: timeZone))
+        isInRotation(today: CalendarDate(now, in: timeZone))
     }
 
-    /// Pure core of ``isInRotation(asOf:timeZone:)``. `today` MUST be a
-    /// zero-padded `"YYYY-MM-DD"` local day (the output of
-    /// ``RotationPredicate/localDay(_:timeZone:)``); the lexicographic kill-date
-    /// compare is only equivalent to a chronological one for that fixed-width
-    /// form. Kept `internal` so external callers can't pass a malformed string —
-    /// they go through ``isInRotation(asOf:timeZone:)``, which builds `today`
-    /// correctly. Batch callers compute the day once with
-    /// ``RotationPredicate/localDay(_:timeZone:)`` and reuse it across rows.
-    func isInRotation(localDay today: String) -> Bool {
-        RotationPredicate.isInRotation(bin: rotationBin, killDay: rotationKillDate, today: today)
+    /// Pure core of ``isInRotation(asOf:timeZone:)``. `today` is the client's
+    /// local calendar day, which ``CalendarDate/init(_:in:)`` derives from an
+    /// instant and a zone.
+    ///
+    /// This used to take a zero-padded `"YYYY-MM-DD"` **string**, with a doc
+    /// comment insisting on that shape because the lexicographic compare was
+    /// only equivalent to a chronological one for the fixed-width form, and an
+    /// `internal` visibility to stop an outside caller passing something else.
+    /// `CalendarDate` makes the precondition unrepresentable instead of
+    /// restating it, so this stays `internal` purely to route callers through
+    /// the public overload — not because a malformed value is still possible.
+    /// Batch callers build the day once and reuse it across rows.
+    func isInRotation(today: CalendarDate) -> Bool {
+        RotationPredicate.isInRotation(bin: rotationBin, killDate: rotationKillDate, today: today)
     }
 }

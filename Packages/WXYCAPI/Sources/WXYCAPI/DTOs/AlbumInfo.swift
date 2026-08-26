@@ -27,6 +27,9 @@
 //
 
 import Foundation
+// Targeted import -- see RotationPredicate.swift / issue #129 for why this names
+// the single type rather than importing the module wholesale.
+import struct WXYCAPIModels.CalendarDate
 
 public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
     public let id: Int
@@ -192,23 +195,26 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
         /// render an expired record as in-rotation online while the clone
         /// correctly hid it.
         public func isInRotation(asOf now: Date = Date(), timeZone: TimeZone = .current) -> Bool {
-            isInRotation(localDay: RotationPredicate.localDay(now, timeZone: timeZone))
+            isInRotation(today: CalendarDate(now, in: timeZone))
         }
 
-        /// Pure core of ``isInRotation(asOf:timeZone:)``. `today` MUST be the
-        /// zero-padded `"YYYY-MM-DD"` local day
-        /// ``RotationPredicate/localDay(_:timeZone:)`` produces — the
-        /// lexicographic compare is equivalent to a chronological one only for
-        /// that fixed-width form — which is why this stays `internal` and callers
-        /// go through the public overload.
+        /// Pure core of ``isInRotation(asOf:timeZone:)``. `today` is the
+        /// client's local calendar day; `internal` so callers go through the
+        /// public overload, which derives it.
         ///
-        /// The rule itself is ``RotationPredicate/isInRotation(bin:killDay:today:)``,
-        /// shared with ``CatalogRow``. Because ``killDate`` is held raw, this
-        /// call is character-for-character the one ``CatalogRow`` makes — the two
-        /// paths reach the shared rule with the same kinds of value, not merely
-        /// with values converted to agree.
-        func isInRotation(localDay today: String) -> Bool {
-            RotationPredicate.isInRotation(bin: rotationBin, killDay: killDate, today: today)
+        /// The rule is still ``RotationPredicate``'s, shared with ``CatalogRow``
+        /// — but this reaches it through the **raw-string** overload, because
+        /// ``killDate`` is deliberately held as the un-narrowed wire value
+        /// (see its doc comment) where ``CatalogRow/rotationKillDate`` decodes
+        /// to a ``CalendarDate``. That overload delegates to the same
+        /// comparison, so the two paths still cannot answer differently for the
+        /// same album; what it adds is the parse and the fail-closed decision an
+        /// unparsed value needs. The asymmetry is the point rather than a wart:
+        /// the export's column is a Postgres `date` via `::text` and can be
+        /// typed, while this block's shape is unknown enough that api.yaml no
+        /// longer declares it at all.
+        func isInRotation(today: CalendarDate) -> Bool {
+            RotationPredicate.isInRotation(bin: rotationBin, killDate: RotationKillDate(wireValue: killDate), today: today)
         }
     }
 
