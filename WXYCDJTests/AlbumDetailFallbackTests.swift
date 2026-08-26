@@ -16,7 +16,6 @@ import Foundation
 import Testing
 import WXYCAPI
 @testable import WXYCDJ
-import struct WXYCAPIModels.CalendarDate
 
 @Suite("AlbumDetail offline catalog fallback")
 struct AlbumDetailFallbackTests {

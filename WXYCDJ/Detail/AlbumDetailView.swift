@@ -315,10 +315,17 @@ struct AlbumDetailView: View {
     private func rotationSection(_ rotation: AlbumInfo.Rotation) -> some View {
         // Rotation dates are the raw `"YYYY-MM-DD"` wire strings (see
         // AlbumInfo.Rotation.killDate for why they are not decoded to `Date`),
-        // so they render through the same `dateOnly(fromISOString:)` helper
-        // `offlineRotationSection` uses for the cloned row — GMT-anchored, and
+        // so they render through `dateOnly(fromISOString:)` — GMT-anchored, and
         // passing the value through verbatim if it somehow isn't a calendar
-        // date. Both sections now make character-for-character the same call.
+        // date.
+        //
+        // The two sections no longer make the identical call: `CatalogRow`
+        // narrows its kill date at decode, so `offlineRotationSection` renders a
+        // `CalendarDate` through `dateOnly(_:)` while this one renders a string.
+        // They still agree, because the string overload parses and then delegates
+        // to the typed one — one renderer, reached two ways. That is now the
+        // property to preserve when editing either helper; the old guarantee was
+        // that the call sites were textually the same, and it no longer holds.
         Section("Rotation") {
             HStack {
                 // A bin outside the H/M/L/S cohorts (issue #93's forward-compat

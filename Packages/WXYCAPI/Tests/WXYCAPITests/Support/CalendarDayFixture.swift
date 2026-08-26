@@ -11,7 +11,7 @@
 
 import Foundation
 import Testing
-import struct WXYCAPIModels.CalendarDate
+import WXYCAPI
 
 /// Builds a ``CalendarDate`` from a `"YYYY-MM-DD"` literal for test fixtures.
 ///

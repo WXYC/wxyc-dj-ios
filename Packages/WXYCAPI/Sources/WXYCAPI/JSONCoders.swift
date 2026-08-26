@@ -11,9 +11,6 @@
 //
 
 import Foundation
-// Targeted import -- see RotationPredicate.swift / issue #129 for why this names
-// the single type rather than importing the module wholesale.
-import struct WXYCAPIModels.CalendarDate
 
 enum JSONCoders {
     static let decoder: JSONDecoder = {

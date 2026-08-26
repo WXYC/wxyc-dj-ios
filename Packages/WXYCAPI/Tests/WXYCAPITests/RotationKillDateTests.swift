@@ -12,7 +12,6 @@
 import Foundation
 import Testing
 @testable import WXYCAPI
-import struct WXYCAPIModels.CalendarDate
 
 @Suite("RotationKillDate")
 struct RotationKillDateTests {
@@ -104,6 +103,21 @@ struct RotationKillDateTests {
         )
         #expect(decoded == original)
         #expect(decoded.wireValue == raw)
+    }
+
+    @Test func aTimestampIsPersistedAsItsLeadingDay() throws {
+        // The one case where a re-encoded row is NOT what the server sent. The
+        // prefix tolerance narrows a timestamp on the way in, so `wireValue`
+        // hands back the day and that is what lands in the clone blob. Pinned
+        // rather than left implicit because `roundTripsThroughCodable`'s
+        // arguments are all values that survive unchanged, so nothing else in
+        // this suite would notice if the normalization moved.
+        //
+        // Losing the time-of-day costs nothing this type may use: the compare is
+        // over (year, month, day) by construction.
+        let narrowed = RotationKillDate(wireValue: "2026-07-01T20:00:00-04:00")
+        let encoded = try JSONCoders.encoder.encode(narrowed)
+        #expect(String(decoding: encoded, as: UTF8.self) == "\"2026-07-01\"")
     }
 
     @Test func decodingNeverThrowsOnADirtyValue() throws {
