@@ -105,6 +105,16 @@ struct RotationKillDateTests {
         #expect(decoded.wireValue == raw)
     }
 
+    @Test func singleDigitMonthsAndDaysArePersistedZeroPadded() throws {
+        // The on-disk format is fixed-width `YYYY-MM-DD`. Nothing compares the
+        // text any more -- ordering is over (year, month, day) -- so this is
+        // purely about what lands in the clone blob and goes back on the wire.
+        // A `CatalogRowTests` case used to assert this against `CalendarDate`
+        // directly, which tested the vendored type rather than our use of it.
+        let encoded = try JSONCoders.encoder.encode(RotationKillDate(wireValue: "2026-01-05"))
+        #expect(String(decoding: encoded, as: UTF8.self) == "\"2026-01-05\"")
+    }
+
     @Test func aTimestampIsPersistedAsItsLeadingDay() throws {
         // The one case where a re-encoded row is NOT what the server sent. The
         // prefix tolerance narrows a timestamp on the way in, so `wireValue`

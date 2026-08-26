@@ -235,7 +235,7 @@ struct APIClientTests {
         #expect(rows.count == 2)
         #expect(rows.first?.id == 100)
         #expect(rows.first?.artistName == "Juana Molina")
-        #expect(rows.first?.rotationKillDay == day("2026-07-01"))
+        #expect(rows.first?.rotationKillDate.day == day("2026-07-01"))
         // Row 2's optionals are null on the wire — the lenient decode keeps the row.
         #expect(rows.last?.id == 200)
         #expect(rows.last?.rotationBin == nil)

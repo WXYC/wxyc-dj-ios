@@ -21,9 +21,13 @@ import WXYCAPI
 /// couldn't carry. It also keeps the call site as short as the string it
 /// replaces, which is what makes a table of rotation cases stay readable.
 ///
-/// Traps on a malformed literal — these are fixtures, not inputs, so a typo
-/// should fail the test that wrote it rather than silently yield `nil` and let
-/// an assertion pass against the wrong value.
+/// Records an `Issue` on a malformed literal and returns 1970-01-01 — these are
+/// fixtures, not inputs, so a typo should fail the test that wrote it rather
+/// than silently yield `nil` and let an assertion pass against the wrong value.
+/// It does **not** trap: the recorded issue is what fails the test, and the
+/// fallback keeps the return type non-optional. Expect a second, downstream
+/// assertion failure against 1970-01-01 alongside the recorded issue; the first
+/// one names the real problem.
 func day(
     _ literal: String,
     sourceLocation: SourceLocation = #_sourceLocation

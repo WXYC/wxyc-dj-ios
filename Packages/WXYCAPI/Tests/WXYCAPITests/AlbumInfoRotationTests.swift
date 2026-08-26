@@ -88,16 +88,15 @@ struct AlbumInfoRotationTests {
     }
 
     @Test func aZeroPaddedLowKillYearStaysChronological() throws {
-        // The lexicographic compare is equivalent to a chronological one only
-        // while both sides are fixed-width. The kill date is now taken verbatim,
-        // so padding is the server's to get right rather than something this
-        // type could regress — but `localDay` still *renders* the other side, and
-        // `calendarDay` still has to accept a padded low year rather than
-        // rejecting it as malformed. Padded, "0999-01-01" < "2026-06-22" (out of
-        // rotation); an unpadded "999-01-01" would sort above and flip it to in.
+        // Ordering is over (year, month, day) now, so a low year can no longer
+        // sort above a high one whatever the text width -- the old padded-string
+        // compare was equivalent to a chronological one only while both sides
+        // were fixed-width. What still matters is that the prefix parse ACCEPTS
+        // a padded low year rather than rejecting it as malformed, which would
+        // fail the record closed and drop it out of rotation for the wrong reason.
         #expect(try makeRotation(bin: "H", killDate: "0999-01-01").isInRotation(today: day("2026-06-22")) == false)
         // The shape check must not mistake a valid low year for garbage.
-        #expect(RotationPredicate.calendarDay(from: "0999-01-01") == day("0999-01-01"))
+        #expect(CalendarDate(leadingDayOf: "0999-01-01") == day("0999-01-01"))
     }
 
     @Test func isInRotationAsOfRespectsTheDeviceTimeZone() throws {
@@ -132,7 +131,7 @@ struct AlbumInfoRotationTests {
         #expect(info.rotation?.isInRotation(today: day("2026-06-22")) == true)
     }
 
-    @Test(arguments: ["not-a-date", "", "2026-6-2", "20260622", "twenty-twenty-six"])
+    @Test(arguments: ["not-a-date", "", "2026-6-2", "20260622", "twenty-twenty-six", "2026-02-30"])
     func unreadableKillDateFailsClosedRatherThanOpen(killDate: String) throws {
         // Now that kill_date is held raw rather than decoded, an unreadable value
         // no longer throws — so the safety property the old strict decode bought
@@ -188,6 +187,12 @@ struct AlbumInfoRotationTests {
         ("H", "not-a-date"),
         ("H", ""),
         ("H", "2026-6-2"),
+        // Shape-valid but not a real calendar day. A class of its own, and new
+        // with issue #79: it only became reachable once the parse started
+        // routing through CalendarDate's throwing init, so it passes the
+        // digit/dash check and is rejected a step later. Both types must still
+        // fail closed identically on it.
+        ("H", "2026-02-30"),
     ])
     func agreesWithCatalogRowOnTheSameRotationState(bin: String?, killDate: String?) throws {
         // Both types delegate to RotationPredicate, so this can no longer fail by

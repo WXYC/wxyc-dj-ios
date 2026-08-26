@@ -37,19 +37,20 @@ struct CatalogRowTests {
         #expect(row.rotationBin == "H")
         #expect(row.rotationCohort == .heavy)
         // The 14th field — absent from AlbumSearchResult — must survive here.
-        #expect(row.rotationKillDay == day("2026-07-01"))
+        #expect(row.rotationKillDate.day == day("2026-07-01"))
     }
 
-    @Test func retainsRawRotationKillDate() throws {
+    @Test func narrowsRotationKillDateToTheExpiresCase() throws {
         // Regression for the silent-loss bug: reusing AlbumSearchResult drops
         // rotation_kill_date (no such key), so the clone can't tell live
-        // rotation from expired. CatalogRow keeps it verbatim as the server's
-        // ::text "YYYY-MM-DD" — no Date round-trip, no parser dependence.
+        // rotation from expired. Asserts the *case*, not just the day, so it
+        // complements decodesNullRotationFields's `== .noExpiry` instead of
+        // repeating decodesFullExportRow's day assertion verbatim.
         let row = try JSONCoders.decoder.decode(
             CatalogRow.self,
             from: Data(Fixtures.juanaMolinaCatalogRow.utf8)
         )
-        #expect(row.rotationKillDay == day("2026-07-01"))
+        #expect(row.rotationKillDate == .expires(day("2026-07-01")))
     }
 
     @Test func callNumberReusesSharedFormatter() throws {
@@ -107,7 +108,7 @@ struct CatalogRowTests {
         #expect(row.isInRotation(today: day("2026-06-22")) == false)
     }
 
-    @Test(arguments: ["not-a-date", "", "2026-6-2", "20260622", "twenty-twenty-six"])
+    @Test(arguments: ["not-a-date", "", "2026-6-2", "20260622", "twenty-twenty-six", "2026-02-30"])
     func unreadableKillDateFailsClosedRatherThanOpen(killDate: String) throws {
         // The catalog export is the ONLY rotation source that runs in production
         // today — `/library/info` projects no rotation columns at all — so this
@@ -151,10 +152,10 @@ struct CatalogRowTests {
         #expect(row.rotationCohort == nil)
         // `.noExpiry`, specifically — not merely "no readable day". A null kill
         // date means the record never expires, the opposite of an unreadable
-        // one, and `rotationKillDay` is nil for both; asserting on the case is
+        // one, and `.day` is nil for both; asserting on the case is
         // what distinguishes them.
         #expect(row.rotationKillDate == .noExpiry)
-        #expect(row.rotationKillDay == nil)
+        #expect(row.rotationKillDate.day == nil)
         #expect(row.isInRotation(today: day("2026-06-22")) == false)
     }
 
@@ -213,7 +214,9 @@ struct CatalogRowTests {
     }
 
     @Test func farFutureAndFarPastKillDatesCompareChronologically() {
-        // Lexicographic == chronological holds across the full padded range.
+        // Ordering is over (year, month, day), so this holds regardless of the
+        // text's width -- it used to hold only because the padded strings made
+        // lexicographic == chronological.
         #expect(makeRow(bin: "H", killDate: "9999-12-31").isInRotation(today: day("2026-06-22")))
         #expect(makeRow(bin: "H", killDate: "0001-01-01").isInRotation(today: day("2026-06-22")) == false)
     }
@@ -241,28 +244,6 @@ struct CatalogRowTests {
         #expect(row.isInRotation(asOf: justAfterMidnightUTC, timeZone: TimeZone(identifier: "UTC")!) == false)
         // In New York, "today" is still the 21st -> kill (22nd) > today -> in rotation.
         #expect(row.isInRotation(asOf: justAfterMidnightUTC, timeZone: TimeZone(identifier: "America/New_York")!))
-    }
-
-    // MARK: - Deriving the client's local day
-
-    @Test func localDayZeroPads() {
-        var utc = Calendar(identifier: .gregorian)
-        utc.timeZone = TimeZone(identifier: "UTC")!
-        let jan5 = utc.date(from: DateComponents(year: 2026, month: 1, day: 5))!
-        // `RotationPredicate.localDay` used to build this padded string itself,
-        // because the compare downstream was lexicographic and only correct for
-        // the fixed-width form. `CalendarDate` holds the components, so padding
-        // is now only a rendering concern -- asserted on `description` for
-        // exactly that reason, not because anything compares the text.
-        #expect(CalendarDate(jan5, in: TimeZone(identifier: "UTC")!).description == "2026-01-05")
-    }
-
-    @Test func localDayShiftsWithTimeZone() {
-        var utc = Calendar(identifier: .gregorian)
-        utc.timeZone = TimeZone(identifier: "UTC")!
-        let instant = utc.date(from: DateComponents(year: 2026, month: 6, day: 22, hour: 0, minute: 30))!
-        #expect(CalendarDate(instant, in: TimeZone(identifier: "UTC")!) == day("2026-06-22"))
-        #expect(CalendarDate(instant, in: TimeZone(identifier: "America/New_York")!) == day("2026-06-21"))
     }
 
     // MARK: - Helpers
