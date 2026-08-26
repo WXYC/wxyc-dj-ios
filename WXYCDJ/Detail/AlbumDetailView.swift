@@ -355,11 +355,15 @@ struct AlbumDetailView: View {
     /// ``CatalogRow/isInRotation(asOf:timeZone:)``, so the row is known to be in
     /// rotation; a bin outside the `H`/`M`/`L`/`S` cohorts is still in rotation but
     /// has no badge, so render a plain "In rotation" label rather than collapsing
-    /// it to out-of-rotation. The kill date is the raw `"YYYY-MM-DD"`
-    /// string the export carries; ``WXYCDateFormatting/dateOnly(fromISOString:locale:)``
-    /// renders it in the same GMT-anchored abbreviated form as the online
-    /// ``rotationSection`` (no leaked ISO string), passing through verbatim if it
-    /// somehow isn't a calendar date.
+    /// it to out-of-rotation. Since issue #79 the export's kill date is narrowed
+    /// at decode to a ``CalendarDate`` (``CatalogRow/rotationKillDay``), so this
+    /// renders through ``WXYCDateFormatting/dateOnly(_:locale:)`` — the same
+    /// GMT-anchored abbreviated form the online ``rotationSection`` uses for its
+    /// still-raw string, so the two paths agree on screen. Reading
+    /// `rotationKillDay` also means an *unreadable* kill date renders no row at
+    /// all rather than leaking the dirty text, while still counting as expired in
+    /// ``CatalogRow/isInRotation(asOf:timeZone:)`` — this section only draws for
+    /// a row that predicate already called in-rotation.
     private func offlineRotationSection(_ row: CatalogRow) -> some View {
         Section("Rotation") {
             HStack {
@@ -371,8 +375,8 @@ struct AlbumDetailView: View {
                 }
                 Spacer()
             }
-            if let kill = row.rotationKillDate {
-                metadataRow("Kill date", value: WXYCDateFormatting.dateOnly(fromISOString: kill))
+            if let kill = row.rotationKillDay {
+                metadataRow("Kill date", value: WXYCDateFormatting.dateOnly(kill))
             }
         }
     }

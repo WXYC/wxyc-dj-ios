@@ -16,6 +16,7 @@ import Foundation
 import Testing
 import WXYCAPI
 @testable import WXYCDJ
+import struct WXYCAPIModels.CalendarDate
 
 @Suite("AlbumDetail offline catalog fallback")
 struct AlbumDetailFallbackTests {
@@ -23,7 +24,7 @@ struct AlbumDetailFallbackTests {
     /// rotation with a display cohort.
     private static func dogaRow(
         rotationBin: String? = "H",
-        rotationKillDate: String? = nil
+        rotationKillDate: CalendarDate? = nil
     ) -> CatalogRow {
         CatalogRow(
             id: 100,

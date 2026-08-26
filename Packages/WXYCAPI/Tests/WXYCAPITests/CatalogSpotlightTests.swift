@@ -16,6 +16,7 @@ import CoreSpotlight
 import Foundation
 import Testing
 @testable import WXYCAPI
+import struct WXYCAPIModels.CalendarDate
 
 @Suite("CatalogSpotlight")
 struct CatalogSpotlightTests {
@@ -190,7 +191,7 @@ struct CatalogSpotlightTests {
         plays: Int? = 34,
         artworkURL: URL? = URL(string: "https://img.discogs.com/doga.jpg"),
         rotationBin: String? = "H",
-        rotationKillDate: String? = "2026-07-01"
+        rotationKillDate: CalendarDate? = day("2026-07-01")
     ) -> CatalogRow {
         CatalogRow(
             id: id, artistName: artistName, albumTitle: albumTitle,
@@ -229,7 +230,7 @@ struct CatalogSpotlightTests {
         #expect(CatalogSpotlight.fingerprint(for: Self.fingerprintRow(onStreaming: false)) == base)
         #expect(CatalogSpotlight.fingerprint(for: Self.fingerprintRow(plays: 9_999)) == base)
         #expect(CatalogSpotlight.fingerprint(for: Self.fingerprintRow(rotationBin: "L")) == base)
-        #expect(CatalogSpotlight.fingerprint(for: Self.fingerprintRow(rotationKillDate: "2099-01-01")) == base)
+        #expect(CatalogSpotlight.fingerprint(for: Self.fingerprintRow(rotationKillDate: day("2099-01-01"))) == base)
         // The id is the map KEY, not fingerprinted content — same content, same fp.
         #expect(CatalogSpotlight.fingerprint(for: Self.fingerprintRow(id: 999)) == base)
     }

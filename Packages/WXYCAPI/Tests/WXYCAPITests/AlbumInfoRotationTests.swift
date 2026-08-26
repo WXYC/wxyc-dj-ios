@@ -61,14 +61,14 @@ struct AlbumInfoRotationTests {
         // to prevent, and this type now shares CatalogRow's posture.
         let rotation = try makeRotation(bin: "N", killDate: nil)
         #expect(rotation.rotationCohort == nil)
-        #expect(rotation.isInRotation(localDay: "2026-06-22"))
+        #expect(rotation.isInRotation(today: day("2026-06-22")))
     }
 
     @Test func notInRotationWhenBinIsEmpty() throws {
         // The empty string normalizes to nil on decode, so it reaches the
         // predicate as "no assignment" rather than satisfying the bin guard —
         // the tie between the decode normalization and the rotation answer.
-        #expect(try makeRotation(bin: "", killDate: nil).isInRotation(localDay: "2026-06-22") == false)
+        #expect(try makeRotation(bin: "", killDate: nil).isInRotation(today: day("2026-06-22")) == false)
     }
 
     // MARK: - The kill date, held raw and compared against the client's day
@@ -95,9 +95,9 @@ struct AlbumInfoRotationTests {
         // `calendarDay` still has to accept a padded low year rather than
         // rejecting it as malformed. Padded, "0999-01-01" < "2026-06-22" (out of
         // rotation); an unpadded "999-01-01" would sort above and flip it to in.
-        #expect(try makeRotation(bin: "H", killDate: "0999-01-01").isInRotation(localDay: "2026-06-22") == false)
+        #expect(try makeRotation(bin: "H", killDate: "0999-01-01").isInRotation(today: day("2026-06-22")) == false)
         // The shape check must not mistake a valid low year for garbage.
-        #expect(RotationPredicate.calendarDay(from: "0999-01-01") == "0999-01-01")
+        #expect(RotationPredicate.calendarDay(from: "0999-01-01") == day("0999-01-01"))
     }
 
     @Test func isInRotationAsOfRespectsTheDeviceTimeZone() throws {
@@ -129,7 +129,7 @@ struct AlbumInfoRotationTests {
         let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
         #expect(info.rotation?.addDate == nil)
         #expect(info.rotation?.rotationBin == "H")
-        #expect(info.rotation?.isInRotation(localDay: "2026-06-22") == true)
+        #expect(info.rotation?.isInRotation(today: day("2026-06-22")) == true)
     }
 
     @Test(arguments: ["not-a-date", "", "2026-6-2", "20260622", "twenty-twenty-six"])
@@ -151,7 +151,7 @@ struct AlbumInfoRotationTests {
         let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
         // The album still decodes — losing rotation must never cost the screen.
         #expect(info.albumTitle == "Edits")
-        #expect(info.rotation?.isInRotation(localDay: "2026-06-22") == false)
+        #expect(info.rotation?.isInRotation(today: day("2026-06-22")) == false)
     }
 
     @Test func killDateAsAFullTimestampStillCompares() throws {
@@ -167,8 +167,8 @@ struct AlbumInfoRotationTests {
             }
             """
         let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
-        #expect(info.rotation?.isInRotation(localDay: "2026-06-22") == true)
-        #expect(info.rotation?.isInRotation(localDay: "2026-08-01") == false)
+        #expect(info.rotation?.isInRotation(today: day("2026-06-22")) == true)
+        #expect(info.rotation?.isInRotation(today: day("2026-08-01")) == false)
     }
 
     // MARK: - Parity with CatalogRow
@@ -198,6 +198,6 @@ struct AlbumInfoRotationTests {
         // decoders so each applies its own normalization rather than the test's.
         let rotation = try makeRotation(bin: bin, killDate: killDate)
         let row = try makeRow(bin: bin, killDate: killDate)
-        #expect(rotation.isInRotation(localDay: "2026-06-22") == row.isInRotation(localDay: "2026-06-22"))
+        #expect(rotation.isInRotation(today: day("2026-06-22")) == row.isInRotation(today: day("2026-06-22")))
     }
 }
