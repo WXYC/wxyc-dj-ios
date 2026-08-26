@@ -18,6 +18,6 @@ public enum DeviceCodeParser {
            !code.isEmpty {
             return code
         }
-        return trimmed   // QR was a bare code, not a URL
+        return nil   // QR was a bare code, not a URL
     }
 }

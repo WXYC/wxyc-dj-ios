@@ -28,7 +28,7 @@ struct DeviceCodeParserTests {
         
         let code = DeviceCodeParser.userCode(fromScanned: scanned)
         
-        #expect(code == "ABCD-1234")
+        #expect(code == nil)
     }
     @Test func deviceParserScannedIsURLWithNoUserCode() throws {
         //sample scanned URL
@@ -36,7 +36,7 @@ struct DeviceCodeParserTests {
         
         let code = DeviceCodeParser.userCode(fromScanned: scanned)
         
-        #expect(code == "https://dj.wxyc.org")
+        #expect(code == nil)
     }
     @Test func deviceParserScannedIsWhiteSpace() throws {
         //sample scanned URL

@@ -12,47 +12,41 @@ struct DeviceAuthView: View {
     
     
     @Environment(AppDependencies.self) private var deps
+    @Environment(AuthService.self) private var auth
     @State private var viewModel: DeviceAuthViewModel?
     @Binding var scannedCode: String?
-    @State var userCode: String
+    //@State var userCode: String
     //Should I initilize userCode up here?
-    
-    var message: String
+
+    @State var message: String = "Unknown code"
     
     //so this is just the viewModel, but you still need to add the view with the buttons and everything
     var body: some View {
-        NavigationStack {
-            Group {
-                if let viewModel {
-                    if let userCode = viewModel.processCode(scannedCode: scannedCode) {
-                        content(for: viewModel, with: userCode)
-                    }
-                    else {
-                        /*Insert a "Unrecognized code pop up here"*/
-                    }
+        Group {
+            if let viewModel {
+                // This safely checks AND extracts the userCode in one line!
+                if let userCode = viewModel.processCode(scannedCode: scannedCode) {
+                    content(for: viewModel, with: userCode)
                 } else {
-                    ProgressView()
+                    // Note: Make sure to pass your binding here!
+                    UpdateView(message: $message)
                 }
-                    
+            } else {
+                ProgressView()
             }
-      //      .navigationTitle("WXYC DJ")
         }
+      //      .navigationTitle("WXYC DJ")
         .onAppear {
             if viewModel == nil {
                 viewModel = DeviceAuthViewModel(api: deps.api)
             }
         }
-        .onChange(of: message) {
-            if message != nil { // for now we'll just display a view with the message and an x button
-                SigninSuccessView()
-            }
-        }
     }
+        
+
     
     @ViewBuilder
     private func content(for viewModel: DeviceAuthViewModel, with userCode: String) -> some View {
-       // switch viewModel.state {
-       // case .valid:
         Section {
             HStack {
                 Image(systemName: "globe")
@@ -79,7 +73,7 @@ struct DeviceAuthView: View {
         }
             Section {
                 Button {
-                    Task { await viewModel.approve(userCode: userCode) }
+                    Task { await message = viewModel.approve(userCode: userCode) }
                 } label: {
              Text("Approve")
                  .bold()
@@ -89,21 +83,18 @@ struct DeviceAuthView: View {
                  .foregroundColor(.white)
                  .cornerRadius(12)
                     }
-                .disabled(!viewModel.canSubmit) //need to find an equivalent way to disable buttons after pressing, don't want1s users to be able to spam calls to service?
+                //need to find an equivalent way to disable buttons after pressing, don't want1s users to be able to spam calls to service?
                 Button {
-                    Task { await viewModel.deny() }
+                    Task { await message = viewModel.deny(userCode: userCode) }
                 } label: {
              Text("Reject")
                  .frame(maxWidth: .infinity)
                  .padding()
                  .foregroundColor(.red)
                     }
-                .disabled(!viewModel.canSubmit)
                 }
             }
-        //add a message variable or a message code tuple, and pull up a screen w/ the message
-        
-        
+
         //other cases if we choose to go with cases
         /*
         case .loading:
@@ -133,9 +124,17 @@ struct DeviceAuthView: View {
 
 //A purely swiftUI gemini-made mock-up of the device auth view
 
-struct SigninSuccessView: View {
+struct UpdateView: View {
+    @Binding var message: String
     var body: some View {
         //Insert a screen with a checkmark and an exit button
-        Text
+        VStack{
+            Text(message)
+            Button("Dismiss") {
+                .onDismiss()
+            }
+        }
     }
 }
+ 
+
