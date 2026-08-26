@@ -131,7 +131,7 @@ struct UpdateView: View {
         VStack{
             Text(message)
             Button("Dismiss") {
-                .onDismiss()
+              //  .onDismiss()
             }
         }
     }

@@ -10,7 +10,6 @@ import AVFoundation
 
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
-    let qrOutput: AVCaptureMetadataOutput
     
     func makeUIView(context: Context) -> UIView {
         let view = UIView(frame: .zero)

@@ -9,6 +9,153 @@ import AVFoundation
 import SwiftUI
 import Combine
 
+
+@MainActor
+@Observable
+class CameraManager {
+    var capturedCode: String?
+    var isSessionRunning = false
+    var authorizationStatus: AVAuthorizationStatus = .notDetermined
+    
+    private let cameraService = CameraService()
+    /*
+    init(capturedCode: String? = nil, isSessionRunning: Bool = false, authorizationStatus: AVAuthorizationStatus, session: AVCaptureSession) {
+        self.capturedCode = capturedCode
+        self.isSessionRunning = isSessionRunning
+        self.authorizationStatus = authorizationStatus
+        self.session = session
+    }
+     */
+    
+    var session: AVCaptureSession {
+        cameraService.session
+    }
+    
+    func checkAuthorization() {
+        Task {
+            let status = AVCaptureDevice.authorizationStatus(for: .video)
+            switch status {
+            case .authorized:
+                self.authorizationStatus = .authorized
+                self.startCamera()
+                
+            case .notDetermined:
+                self.authorizationStatus = .notDetermined
+                
+                // Using the modern async version eliminates the closure and 'self' errors
+                let granted = await AVCaptureDevice.requestAccess(for: .video)
+                self.authorizationStatus = granted ? .authorized : .denied
+                if granted {
+                    self.startCamera()
+                }
+                
+            case .denied, .restricted:
+                self.authorizationStatus = .denied
+            @unknown default:
+                self.authorizationStatus = .denied
+            }
+        }
+    }
+    
+    private func startCamera() {
+        Task {
+            // Create a stream to yield results. The continuation is inherently Sendable.
+            let stream = AsyncStream<String> { continuation in
+                Task {
+                    // Pass a closure that ONLY captures the continuation, not 'self'
+                    let success = await cameraService.setupSession { resultString in
+                        continuation.yield(resultString)
+                    }
+                    
+                    if success {
+                        await cameraService.startSession()
+                        // Ensure we update the Published property on the MainActor
+                        await MainActor.run {
+                            self.isSessionRunning = true
+                        }
+                    }
+                }
+            }
+            
+            // Loop over the stream safely on the MainActor
+            for await code in stream {
+                self.capturedCode = code
+            }
+        }
+    }
+}
+
+
+actor CameraService {
+    nonisolated(unsafe) let session = AVCaptureSession()
+    var qrOutput = AVCaptureMetadataOutput()
+    private let metadataObjectsQueue = DispatchQueue(label: "metadata objects queue")
+    
+    private var scannerDelegate: QRScannerDelegate?
+    
+    func setupSession(onResult: @escaping @Sendable (String) -> Void) -> Bool {
+        session.beginConfiguration()
+        session.sessionPreset = .high
+        
+        guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+              let input = try? AVCaptureDeviceInput(device: camera),
+              session.canAddInput(input) else {
+            session.commitConfiguration()
+            return false
+        }
+        
+        session.addInput(input)
+        
+        if session.canAddOutput(qrOutput) {
+            session.addOutput(qrOutput)
+            
+            let delegate = QRScannerDelegate(onResult: onResult)
+            self.scannerDelegate = delegate
+            
+            qrOutput.setMetadataObjectsDelegate(delegate, queue: metadataObjectsQueue)
+            qrOutput.metadataObjectTypes = [.qr]
+        }
+        
+        session.commitConfiguration()
+        return true
+    }
+    
+    func startSession() {
+        if !session.isRunning {
+            session.startRunning()
+        }
+    }
+    
+    func stopSession() {
+        if session.isRunning {
+            session.stopRunning()
+        }
+    }
+}
+
+final class QRScannerDelegate: NSObject, AVCaptureMetadataOutputObjectsDelegate, @unchecked Sendable {
+    private let onResult: @Sendable (String) -> Void
+    
+    init(onResult: @escaping @Sendable (String) -> Void) {
+        self.onResult = onResult
+        super.init()
+    }
+    
+    func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
+        guard !metadataObjects.isEmpty,
+              let metadataObj = metadataObjects[0] as? AVMetadataMachineReadableCodeObject,
+              metadataObj.type == .qr,
+              let stringValue = metadataObj.stringValue else {
+            onResult("No QR code is detected")
+            return
+        }
+        
+        onResult(stringValue)
+    }
+}
+
+
+/*
 @Observable
 class CameraManager: NSObject, ObservableObject, AVCaptureMetadataOutputObjectsDelegate{
     var capturedCode: String?
@@ -113,4 +260,4 @@ class CameraManager: NSObject, ObservableObject, AVCaptureMetadataOutputObjectsD
         }
     }
 }
-
+*/

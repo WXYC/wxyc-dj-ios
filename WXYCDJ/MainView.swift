@@ -71,7 +71,7 @@ struct MainView: View {
                  }
                 Button { showSheet = true
                  } label: {
-                     Label("QR Code Scanner", systemImage: /*insert qr symbol thing*/)
+                     Label("QR Code Scanner", systemImage: "person")
                  }
                 Button("Sign Out", role: .destructive) { /*insert symbol thing*/
                     Task { await auth.signOut() }
