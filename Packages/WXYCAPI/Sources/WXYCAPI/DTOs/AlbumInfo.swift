@@ -119,22 +119,32 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
         /// Date this rotation record expires, as the raw `"YYYY-MM-DD"` the wire
         /// carries — **not** a decoded `Date`.
         ///
-        /// The two row types deliberately **stop agreeing here**, and the
-        /// asymmetry is the point rather than an oversight:
+        /// The two row types **stop agreeing here**:
         /// ``CatalogRow/rotationKillDate`` narrows at decode into a
-        /// ``RotationKillDate``, because it is a real, shipping projection whose
-        /// column shape is known; this one stays a `String?` and converts at the
+        /// ``RotationKillDate``; this one stays a `String?` and converts at the
         /// call in ``isInRotation(asOf:timeZone:)``. Both reach the *same*
         /// predicate with the same ``RotationKillDate``, so they cannot answer
         /// differently — which is the invariant that actually matters, and the
         /// one the issue-#95 parity matrix pins.
         ///
-        /// Holding the string is worth the asymmetry because this whole type is
-        /// a hedge against a `/library/info` rotation projection that does not
-        /// exist yet. Every field here is `decodeIfPresent` so that a shape we
-        /// guessed wrong degrades instead of failing the whole `AlbumInfo`, and
-        /// a `String?` is the shape with nothing left to get wrong: whatever
-        /// arrives survives decode intact and is judged once, at the call.
+        /// **The asymmetry is a leftover, not a design.** An earlier version of
+        /// this comment defended it on decode tolerance — that a `String?` has
+        /// "nothing left to get wrong" where narrowing might throw. That is
+        /// false: `RotationKillDate(wireValue:)` cannot throw, and `CatalogRow`
+        /// decodes the same `try c.decodeIfPresent(String.self, …)` before
+        /// narrowing, so the two have byte-identical throw surfaces. The
+        /// remaining difference — that a parseable *timestamp* keeps its exact
+        /// wire bytes here and is normalized to its leading day there — has no
+        /// consumer, because `AlbumInfo` is decode-only in production and is
+        /// never persisted or re-encoded, where ``CatalogRow`` is a SQLite clone
+        /// blob.
+        ///
+        /// Making this a ``RotationKillDate`` too is the right end state and is
+        /// tracked separately, because it pairs with renaming the type to
+        /// something field-neutral so the sibling ``addDate`` — same shape, same
+        /// tolerance need — can use it instead of re-deriving the raw-string
+        /// plus render-time-parse shape. Doing only the `killDate` half here
+        /// would leave that migration halfway.
         ///
         /// A decoded `Date` would be strictly worse for the same reason it is
         /// wrong on ``CatalogRow``. A `Date` is an *instant*, not a calendar
@@ -209,17 +219,14 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
         /// client's local calendar day; `internal` so callers go through the
         /// public overload, which derives it.
         ///
-        /// The rule is still ``RotationPredicate``'s, shared with ``CatalogRow``
-        /// — but this reaches it through the **raw-string** overload, because
-        /// ``killDate`` is deliberately held as the un-narrowed wire value
-        /// (see its doc comment) where ``CatalogRow/rotationKillDate`` decodes
-        /// to a ``CalendarDate``. That overload delegates to the same
-        /// comparison, so the two paths still cannot answer differently for the
-        /// same album; what it adds is the parse and the fail-closed decision an
-        /// unparsed value needs. The asymmetry is the point rather than a wart:
-        /// the export's column is a Postgres `date` via `::text` and can be
-        /// typed, while this block's shape is unknown enough that api.yaml no
-        /// longer declares it at all.
+        /// The rule is ``RotationPredicate``'s, shared with ``CatalogRow`` —
+        /// **one** entry point, deliberately not an overload per representation
+        /// (see its doc). What differs is only where the narrowing happens:
+        /// ``CatalogRow/rotationKillDate`` is already a ``RotationKillDate`` by
+        /// the time it gets here, while ``killDate`` is still the raw wire
+        /// value, so this call site converts with `RotationKillDate(wireValue:)`
+        /// first. Both then compare the identical way, so the two paths cannot
+        /// answer differently for the same album.
         func isInRotation(today: CalendarDate) -> Bool {
             RotationPredicate.isInRotation(bin: rotationBin, killDate: RotationKillDate(wireValue: killDate), today: today)
         }

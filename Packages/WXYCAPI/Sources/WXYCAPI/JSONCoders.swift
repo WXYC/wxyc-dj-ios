@@ -115,7 +115,7 @@ public enum WXYCDateFormatting {
     ///
     /// Delegates to ``dateOnly(_:locale:)`` after parsing, so the two paths
     /// cannot render the same day differently. Parsing goes through
-    /// ``RotationPredicate/calendarDay(from:)``, which is prefix-tolerant, so a
+    /// ``CalendarDate/init(leadingDayOf:)``, which is prefix-tolerant, so a
     /// full timestamp renders as its leading day rather than falling through to
     /// the raw form.
     ///
@@ -124,7 +124,7 @@ public enum WXYCDateFormatting {
     /// value, the same fail-soft posture as the row-survival decoding in
     /// ``CatalogRow``.
     public static func dateOnly(fromISOString raw: String, locale: Locale = .current) -> String {
-        guard let day = RotationPredicate.calendarDay(from: raw) else { return raw }
+        guard let day = CalendarDate(leadingDayOf: raw) else { return raw }
         return dateOnly(day, locale: locale)
     }
 }

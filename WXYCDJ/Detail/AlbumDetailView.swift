@@ -363,11 +363,11 @@ struct AlbumDetailView: View {
     /// rotation; a bin outside the `H`/`M`/`L`/`S` cohorts is still in rotation but
     /// has no badge, so render a plain "In rotation" label rather than collapsing
     /// it to out-of-rotation. Since issue #79 the export's kill date is narrowed
-    /// at decode to a ``CalendarDate`` (``CatalogRow/rotationKillDay``), so this
+    /// at decode to a ``RotationKillDate``, so this
     /// renders through ``WXYCDateFormatting/dateOnly(_:locale:)`` — the same
     /// GMT-anchored abbreviated form the online ``rotationSection`` uses for its
     /// still-raw string, so the two paths agree on screen. Reading
-    /// `rotationKillDay` also means an *unreadable* kill date renders no row at
+    /// `rotationKillDate.day` also means an *unreadable* kill date renders no row at
     /// all rather than leaking the dirty text, while still counting as expired in
     /// ``CatalogRow/isInRotation(asOf:timeZone:)`` — this section only draws for
     /// a row that predicate already called in-rotation.
@@ -382,7 +382,7 @@ struct AlbumDetailView: View {
                 }
                 Spacer()
             }
-            if let kill = row.rotationKillDay {
+            if let kill = row.rotationKillDate.day {
                 metadataRow("Kill date", value: WXYCDateFormatting.dateOnly(kill))
             }
         }

@@ -40,3 +40,61 @@ import struct WXYCAPIModels.CalendarDate
 /// which is the property ``RotationPredicate``'s expiry compare needs and the
 /// one a zero-padded `"YYYY-MM-DD"` string used to stand in for (issue #79).
 public typealias CalendarDate = WXYCAPIModels.CalendarDate
+
+extension CalendarDate {
+    /// The leading calendar day of an ISO-8601 date or date-time, or `nil` when
+    /// the value isn't one.
+    ///
+    /// Deliberately **more lenient than `CalendarDate`'s own `Decodable`**,
+    /// which demands exactly ten bytes and would reject a full timestamp
+    /// outright. Taking the prefix is what keeps
+    /// `"2026-06-23T20:00:00-04:00"` comparable against a bare day without
+    /// either reinterpreting it through a time zone or failing closed on a
+    /// legitimately-in-rotation record. The server has never sent that shape for
+    /// either rotation column, and `/library/info`'s rotation block is a hedge
+    /// against a projection that doesn't exist yet — so the wire shape is
+    /// precisely the thing not to assume.
+    ///
+    /// It lives here, beside the strict decoder it relaxes, rather than on
+    /// ``RotationPredicate``: nothing about it is rotation-specific, and hanging
+    /// a general `String -> CalendarDate?` parse off the rotation rule left a
+    /// package-root render helper (``WXYCDateFormatting/dateOnly(fromISOString:locale:)``)
+    /// reaching into a `DTOs/` domain namespace to parse a date.
+    ///
+    /// Scans UTF-8 bytes and accumulates digits directly — no `[Character]`
+    /// array, no intermediate `String`s, no `Int(String)`. That is not
+    /// premature: this runs once per row carrying a kill date on the full
+    /// `GET /library/catalog` NDJSON decode **and** again on
+    /// `SQLiteCatalogStore.ensureSearchIndex()`'s whole-clone re-decode, so the
+    /// per-call allocation the previous form paid was multiplied by ~17k.
+    ///
+    /// Real-calendar validation (days-in-month, leap years) stays delegated to
+    /// the throwing `init(year:month:day:)`, so `"2026-02-30"` is rejected here
+    /// exactly as it would be on the wire rather than compared as a
+    /// plausible-looking triple.
+    public init?(leadingDayOf raw: String) {
+        var year = 0, month = 0, dayOfMonth = 0, offset = 0
+        for byte in raw.utf8 {
+            if offset == 10 { break }
+            if offset == 4 || offset == 7 {
+                guard byte == UInt8(ascii: "-") else { return nil }
+            } else {
+                // ASCII digits specifically. `Character.isNumber` would also
+                // accept other Unicode digit forms, which pass a shape check and
+                // then parse oddly or not at all.
+                guard byte >= UInt8(ascii: "0"), byte <= UInt8(ascii: "9") else { return nil }
+                let digit = Int(byte - UInt8(ascii: "0"))
+                if offset < 4 { year = year * 10 + digit }
+                else if offset < 7 { month = month * 10 + digit }
+                else { dayOfMonth = dayOfMonth * 10 + digit }
+            }
+            offset += 1
+        }
+        // Short values fall out here rather than needing a length pre-check: a
+        // `raw.count` on the way in would walk the WHOLE string for graphemes
+        // when only the first ten bytes can matter.
+        guard offset == 10 else { return nil }
+        guard let parsed = try? CalendarDate(year: year, month: month, day: dayOfMonth) else { return nil }
+        self = parsed
+    }
+}

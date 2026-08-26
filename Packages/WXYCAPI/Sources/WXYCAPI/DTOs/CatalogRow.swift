@@ -128,11 +128,6 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
     /// folding into the `nil` that means "no expiry". See ``RotationKillDate``.
     public let rotationKillDate: RotationKillDate
 
-    /// The readable expiry day, or `nil` when there is none **or** the server
-    /// sent something unparseable. Never branch rotation state on this — the two
-    /// `nil` cases are opposite answers; use ``isInRotation(asOf:timeZone:)``.
-    public var rotationKillDay: CalendarDate? { rotationKillDate.day }
-
     public init(
         id: Int,
         artistName: String,

@@ -2,8 +2,9 @@
 //  RotationPredicate.swift
 //  WXYCAPI
 //
-//  The one client-side rotation rule, shared by every row type that carries a
-//  rotation record, so the online and offline paths cannot answer differently.
+//  RotationKillDate -- a rotation record's expiry as the client can know it --
+//  plus the one client-side rotation rule that reads it, shared by every row type
+//  carrying a rotation record so the online and offline paths cannot differ.
 //
 //  Created by Jake on 08/17/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -47,17 +48,20 @@ public enum RotationKillDate: Sendable, Hashable {
     /// that parses is ``expires``; anything else is ``unreadable``.
     public init(wireValue raw: String?) {
         guard let raw else { self = .noExpiry; return }
-        guard let day = RotationPredicate.calendarDay(from: raw) else {
+        guard let day = CalendarDate(leadingDayOf: raw) else {
             self = .unreadable(raw)
             return
         }
         self = .expires(day)
     }
 
-    /// The readable day, if there is one. `nil` for **both** ``noExpiry`` and
-    /// ``unreadable`` — so never branch rotation state on this; call
-    /// ``RotationPredicate/isInRotation(bin:killDate:today:)``, which
-    /// distinguishes them.
+    /// The readable day, if there is one — for **display only**.
+    ///
+    /// `nil` for **both** ``noExpiry`` and ``unreadable``, which are opposite
+    /// answers, so never branch rotation state on it. Ask the row instead:
+    /// ``CatalogRow/isInRotation(asOf:timeZone:)`` or
+    /// ``AlbumInfo/Rotation/isInRotation(asOf:timeZone:)`` (the shared rule
+    /// behind both is `internal`, so those are the reachable entry points).
     public var day: CalendarDate? {
         if case .expires(let day) = self { return day }
         return nil
@@ -91,7 +95,7 @@ public enum RotationKillDate: Sendable, Hashable {
 /// - An ``expires(_:)`` re-encodes through `CalendarDate.description`, so a
 ///   value that reached ``init(wireValue:)`` as a *timestamp* is persisted as
 ///   its leading day (`"2026-07-01T20:00:00-04:00"` → `"2026-07-01"`). That is
-///   the prefix tolerance in ``RotationPredicate/calendarDay(from:)`` showing
+///   the prefix tolerance in ``CalendarDate/init(leadingDayOf:)`` showing
 ///   through, and the discarded time-of-day is precisely what the compare must
 ///   never consult, so normalizing on the way to disk loses nothing this type
 ///   is allowed to use.
@@ -184,53 +188,5 @@ enum RotationPredicate {
         case .unreadable: return false
         case .expires(let day): return day > today
         }
-    }
-
-    /// The leading calendar day of an ISO-8601 date or date-time, or `nil` when
-    /// the value isn't one.
-    ///
-    /// Taking the prefix rather than demanding an exact-width match is what
-    /// keeps a full timestamp (`"2026-06-23T20:00:00-04:00"`) comparable against
-    /// a bare day without either reinterpreting it through a time zone or
-    /// failing closed on a legitimately-in-rotation record. The server has never
-    /// sent that shape for either rotation column, and `/library/info`'s block is
-    /// a hedge against a projection that doesn't exist yet — so the wire shape is
-    /// the thing not to assume.
-    ///
-    /// This is deliberately **more lenient than `CalendarDate`'s own decoder**,
-    /// which requires exactly ten bytes and would reject that timestamp
-    /// outright, so know how far the leniency now reaches. There are three
-    /// callers, and it is no longer confined to the hedge: ``RotationKillDate``'s
-    /// `init(wireValue:)` (so it covers ``CatalogRow``'s catalog-export decode —
-    /// and, through that type's `Codable`, the value persisted to the clone,
-    /// which is normalized to its leading day),
-    /// ``AlbumInfo/Rotation/isInRotation(today:)``, and
-    /// ``WXYCDateFormatting/dateOnly(fromISOString:locale:)``. All three want the
-    /// same answer to the same question — "what calendar day is this?" — which is
-    /// why they share one parse rather than each picking a strictness.
-    static func calendarDay(from raw: String) -> CalendarDate? {
-        guard raw.count >= 10 else { return nil }
-        let day = Array(raw.prefix(10))
-        for (offset, character) in day.enumerated() {
-            if offset == 4 || offset == 7 {
-                guard character == "-" else { return nil }
-            } else {
-                // ASCII `0`-`9` specifically: `Character.isNumber` also accepts
-                // other Unicode digit forms, which would pass the shape check
-                // and then fail (or worse, succeed oddly) on the parse below.
-                guard ("0"..."9").contains(character) else { return nil }
-            }
-        }
-        guard let year = Int(String(day[0..<4])),
-              let month = Int(String(day[5..<7])),
-              let dayOfMonth = Int(String(day[8..<10]))
-        else { return nil }
-        // CalendarDate's throwing init owns real-calendar-day validation
-        // (correct days-in-month, leap years), so "2026-02-30" is rejected here
-        // exactly as it would be on the wire rather than being compared as a
-        // plausible-looking triple. Going through the public init rather than
-        // constructing a JSON string to feed the decoder keeps this a parse, not
-        // a round-trip.
-        return try? CalendarDate(year: year, month: month, day: dayOfMonth)
     }
 }
