@@ -44,21 +44,24 @@ packages:
     path: Packages/WXYCAPIModels
   # The shared better-auth wire client (WXYC/wiki plans/wxyc-swift-auth.md,
   # Phase C). Packages/WXYCAPI depends on it in its own Package.swift; this
-  # entry is the SAME shape of belt-and-braces as WXYCAPIModels above and is
-  # here for the same observed reason -- a nested local package's transitive
-  # product is not reliably picked up for every link product of a consuming
-  # app target. Declaring it directly on WXYCDJ makes the app's debug dylib
-  # (the link product where that gap showed up for WXYCAPIModels) link the
-  # framework explicitly rather than by inference.
+  # entry mirrors the WXYCAPIModels belt-and-braces above PRE-EMPTIVELY, not
+  # in response to a failure observed here -- the debug-dylib undefined-symbol
+  # gap documented above was seen for WXYCAPIModels, and this declaration
+  # assumes the same nested-local-package transitive-link behaviour applies to
+  # a remote package. Note the OTHER half of the WXYCAPIModels rationale does
+  # NOT transfer: no WXYCAPI type re-exports a WXYCAuth type, so the app does
+  # not genuinely depend on this module -- it is a link-graph precaution only.
+  # If a future toolchain makes the transitive link reliable, this entry
+  # (unlike WXYCAPIModels') can simply be deleted.
   #
-  # `from:` rather than an exact pin, matching Sentry/PostHog below. The
-  # resolution is tracked reproducibly in two committed files:
-  # Packages/WXYCAPI/Package.resolved pins the `swift test` CLI runs, and
-  # WXYCDJ.xcodeproj/.../swiftpm/Package.resolved (tracked via the .gitignore
-  # negation) pins the xcodebuild app builds. wxyc-swift-auth's release tags
-  # are IMMUTABLE by its Tag Stability Policy -- the inverse of the moving
-  # `gha/v1` model used elsewhere in the org -- so a version can move forward
-  # within the range but can never change meaning under a fixed pin.
+  # `from:` rather than an exact pin, matching Sentry/PostHog below: safe
+  # because wxyc-swift-auth's release tags are IMMUTABLE by its Tag Stability
+  # Policy -- the inverse of the moving `gha/v1` model used elsewhere in the
+  # org -- so a resolved version can move forward within the range but can
+  # never change meaning. This entry pins the xcodebuild app builds via the
+  # tracked workspace Package.resolved; the `swift test` CLI runs are pinned
+  # by Packages/WXYCAPI/Package.resolved. See CLAUDE.md's "Dependency pins"
+  # for how the two relate.
   #
   # NOT added to WXYCDJTests: no test imports WXYCAuth yet, and the test
   # bundle reaches the framework through the app dylib it loads. When C2 needs
