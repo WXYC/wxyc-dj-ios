@@ -45,6 +45,7 @@ final class FakeAudioSession: AudioSessionProtocol, @unchecked Sendable {
         var setActiveCalls: [SetActiveCall] = []
         var pendingActivateError: (any Error)?
         var persistActivateError = false
+        var pendingDeactivateError: (any Error)?
         var deactivationsHeld = false
         var isBlockingOnHold = false
     }
@@ -92,6 +93,16 @@ final class FakeAudioSession: AudioSessionProtocol, @unchecked Sendable {
             st.pendingActivateError = nil
             st.persistActivateError = false
         }
+    }
+
+    /// The next `setActive(false, ...)` call throws `error`, then reverts to
+    /// succeeding -- `mediaserverd` refusing a handback. There is no
+    /// persistent variant on purpose: `AudioSessionCoordinator` leaves
+    /// `isActivated` set on a failed handback precisely so the *next*
+    /// `deactivate()` retries, and a permanently failing session would
+    /// measure nothing but that retry never terminating.
+    func failNextDeactivation(with error: any Error) {
+        state.withLock { $0.pendingDeactivateError = error }
     }
 
     /// Blocks the *next* `setActive(false, …)` call until
@@ -153,7 +164,18 @@ final class FakeAudioSession: AudioSessionProtocol, @unchecked Sendable {
                 deactivationGate.wait()
                 state.withLock { $0.isBlockingOnHold = false }
             }
-            state.withLock { $0.setActiveCalls.append(SetActiveCall(active: false, options: options)) }
+            // Recorded before the throw, for the same reason the activation
+            // branch records first: a refused handback is still an attempt,
+            // and the retry tests count attempts.
+            let error = state.withLock { st -> (any Error)? in
+                st.setActiveCalls.append(SetActiveCall(active: false, options: options))
+                let error = st.pendingDeactivateError
+                st.pendingDeactivateError = nil
+                return error
+            }
+            if let error {
+                throw error
+            }
         }
     }
 }

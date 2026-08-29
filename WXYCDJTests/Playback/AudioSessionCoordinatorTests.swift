@@ -16,7 +16,9 @@
 //  hasn't happened yet or a handback that hasn't finished: it cancels a
 //  pending bounded retry, it cancels an activation deferred behind a
 //  handback, and a second deactivate() inside the handback window coalesces
-//  into the first rather than stacking a duplicate setActive(false, …).
+//  into the first rather than stacking a duplicate setActive(false, …) --
+//  and is then re-driven rather than dropped in the two cases where that
+//  first handback returns having released nothing, stale or refused.
 //
 //  Created by Jake Bromberg on 08/29/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -264,6 +266,77 @@ struct AudioSessionCoordinatorTests {
         #expect(session.deactivateCallCount == 1, "the second deactivate() stacked a duplicate setActive(false, …)")
         #expect(!coordinator.isActivated)
         #expect(session.activateCallCount == 1)
+    }
+
+    // The two tests above pin the *coalescing* half of that guard -- that the
+    // second call doesn't stack a duplicate handback. These two pin its other
+    // half: that the coalesced request is re-driven rather than dropped. The
+    // distinction is not academic. Deleting drainRequestedDeactivation()
+    // leaves every other test in this file green, because in all of them the
+    // in-flight handback ultimately succeeds and the re-driven deactivate()
+    // then early-returns on `guard isActivated`. Both cases below are ones
+    // where the in-flight handback returns without handing anything back --
+    // stale, then failed -- which is exactly when the coalesced request is
+    // the only thing left that would ever release the session.
+
+    @Test("a handback that declines as stale re-drives the request that coalesced into it")
+    func staleHandbackReDrivesTheCoalescedRequest() async {
+        let session = FakeAudioSession()
+        let coordinator = AudioSessionCoordinator(session: session)
+
+        #expect(coordinator.activate())
+
+        // All four calls land in one synchronous turn, so the handback queued
+        // by the first deactivate() cannot run until they have: it captures
+        // generation 1; the activate() reactivates under generation 2 (the
+        // session lock is free -- the handback hasn't started); and the
+        // second deactivate() finds deactivationInFlight still set, so it is
+        // recorded as the coalesced request rather than scheduling its own.
+        coordinator.deactivate()
+        #expect(coordinator.activate())
+        coordinator.deactivate()
+
+        // Two settles, not two calls: the stale handback, then the one the
+        // drain re-drives. See deactivationSettledCount's doc comment.
+        await waitUntil { coordinator.deactivationSettledCount == 2 }
+
+        // Without the re-drive the first handback declines as stale, nothing
+        // picks the request back up, and the session is left ACTIVE after the
+        // caller's last instruction was deactivate().
+        #expect(!coordinator.isActivated, "the coalesced request was dropped when the handback went stale")
+        #expect(session.deactivateCallCount == 1, "expected exactly one real handback, under the new generation")
+        #expect(
+            session.setActiveCalls.last == FakeAudioSession.SetActiveCall(active: false, options: .notifyOthersOnDeactivation),
+            "the re-driven handback dropped .notifyOthersOnDeactivation"
+        )
+        #expect(session.activateCallCount == 2)
+    }
+
+    @Test("a handback that fails with a request coalesced into it retries rather than leaving the session active")
+    func failedHandbackReDrivesTheCoalescedRequest() async {
+        let session = FakeAudioSession()
+        let coordinator = AudioSessionCoordinator(session: session)
+
+        #expect(coordinator.activate())
+
+        session.holdDeactivations()
+        session.failNextDeactivation(with: NSError(domain: "test.handback", code: 1))
+        coordinator.deactivate()
+        await waitUntil { session.isBlockingOnHold }
+
+        // Lands inside the handback window and coalesces into the in-flight
+        // call -- which is about to be refused, so it hands nothing back.
+        coordinator.deactivate()
+
+        session.releaseDeactivations()
+        await waitUntil { coordinator.deactivationSettledCount == 2 }
+
+        // isActivated deliberately stays set on a refused handback so that the
+        // next deactivate() retries. The caller already issued its last one,
+        // so the drain is what supplies that next call -- without it the retry
+        // this design depends on simply never happens.
+        #expect(!coordinator.isActivated, "the retry a refused handback relies on never happened")
+        #expect(session.deactivateCallCount == 2, "expected the refused handback and exactly one retry")
     }
 }
 
