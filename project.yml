@@ -54,11 +54,16 @@ packages:
   # If a future toolchain makes the transitive link reliable, this entry
   # (unlike WXYCAPIModels') can simply be deleted.
   #
-  # `from:` rather than an exact pin, matching Sentry/PostHog below: safe
-  # because wxyc-swift-auth's release tags are IMMUTABLE by its Tag Stability
-  # Policy -- the inverse of the moving `gha/v1` model used elsewhere in the
-  # org -- so a resolved version can move forward within the range but can
-  # never change meaning. This entry pins the xcodebuild app builds via the
+  # `minorVersion:` (upToNextMinor), NOT the `from:`/majorVersion used by
+  # Sentry/PostHog below -- those are 1.0+, where a major range is what SemVer
+  # actually promises. wxyc-swift-auth is deliberately 0.x until Phase E cuts
+  # 1.0, because its API is expected to churn until both apps have adopted, and
+  # a major range over 0.x would admit every one of those releases. Immutable
+  # release tags don't rescue that: they guarantee a tag keeps pointing at one
+  # commit, not that the next tag is source-compatible. Keep the two range
+  # styles in this file in step with Packages/WXYCAPI/Package.swift -- they
+  # describe the same dependency and a divergence resolves two different
+  # versions. This entry pins the xcodebuild app builds via the
   # tracked workspace Package.resolved; the `swift test` CLI runs are pinned
   # by Packages/WXYCAPI/Package.resolved. See CLAUDE.md's "Dependency pins"
   # for how the two relate.
@@ -72,7 +77,7 @@ packages:
   # code goes through WXYCAPI, exactly as with WXYCAPIModels.
   WXYCAuth:
     url: https://github.com/WXYC/wxyc-swift-auth.git
-    from: 0.1.0
+    minorVersion: 0.1.0
   # Crash/error reporting (issue #106). `upToNextMajorVersion` -- the same
   # range style wxyc-ios-64/WXYC.xcodeproj declares for the same package --
   # rather than an exact pin, so a patch release (bug fixes on a
