@@ -146,10 +146,18 @@ final class AudioSessionCoordinator {
     /// budget behaviour 2 exists to protect.
     private(set) var activationRetryAttempts = 0
 
-    /// Bumped once per `deactivate()` call, after its detached deactivation
-    /// and any resulting resume have both finished. Exposed so tests can wait
-    /// for a scheduled deactivation to fully settle instead of guessing a
-    /// duration.
+    /// Bumped once per *scheduled* handback that reached its continuation,
+    /// after the detached deactivation and any resulting resume or re-drive
+    /// have finished. Exposed so tests can wait for a scheduled deactivation
+    /// to settle instead of guessing a duration.
+    ///
+    /// Deliberately not one per `deactivate()` call: a call that
+    /// short-circuits on `isActivated`, or that coalesces into an in-flight
+    /// handback, schedules nothing and so bumps nothing -- while a call whose
+    /// continuation re-drives a coalesced request bumps twice, once per
+    /// scheduled handback. Wait on the number of handbacks expected, never on
+    /// the number of calls made, or the barrier can resolve while a re-driven
+    /// `setActive(false, ...)` is still in flight.
     private(set) var deactivationSettledCount = 0
 
     /// Whether a scheduled handback is between its `deactivate()` and its
@@ -230,7 +238,9 @@ final class AudioSessionCoordinator {
 
     /// Hands the session back to the system, off the caller's turn.
     ///
-    /// A no-op if the session isn't currently believed active. Otherwise
+    /// Withdraws the caller's standing intent unconditionally; only the
+    /// handback itself is skipped when the session isn't currently believed
+    /// active -- see the fourth paragraph. Otherwise
     /// captures the generation it was activated under and performs the real
     /// `setActive(false, …)` on a detached task (behaviour 3). If `activate()`
     /// wins a race and reactivates before that task runs, the captured
