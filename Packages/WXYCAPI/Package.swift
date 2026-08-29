@@ -21,12 +21,22 @@ let package = Package(
         // one appears for this package if you open it directly in Xcode: see
         // CLAUDE.md's "Dependency pins" for which wins and what to delete.
         //
-        // `from:` rather than an exact pin, matching Sentry/PostHog in
-        // project.yml. Safe here specifically because wxyc-swift-auth's release
-        // tags are IMMUTABLE by its Tag Stability Policy -- the inverse of the
-        // moving `gha/v1` model used elsewhere in the org. A resolved version
-        // can move forward within the range; it can never change meaning.
-        .package(url: "https://github.com/WXYC/wxyc-swift-auth.git", from: "0.1.0"),
+        // `.upToNextMinor`, NOT the `from:` that Sentry/PostHog use in
+        // project.yml. That precedent does not transfer: both of those are
+        // 1.0+, where a major-version range is exactly what SemVer's
+        // compatibility promise covers. wxyc-swift-auth is deliberately 0.x --
+        // its own CLAUDE.md keeps it there until BOTH apps have adopted and
+        // Phase E cuts 1.0, precisely because the API is expected to churn
+        // during this window -- and `from: "0.1.0"` resolves to
+        // `0.1.0 ..< 1.0.0`, i.e. it would treat every one of those churning
+        // 0.x releases as compatible.
+        //
+        // Immutable release tags do NOT make that safe, and an earlier version
+        // of this comment claimed they did. The Tag Stability Policy guarantees
+        // a tag keeps pointing at the same commit; it says nothing about the
+        // NEXT tag being source-compatible with this one. Those are different
+        // properties, and only the second is what a version range rests on.
+        .package(url: "https://github.com/WXYC/wxyc-swift-auth.git", .upToNextMinor(from: "0.1.0")),
     ],
     targets: [
         .target(

@@ -855,7 +855,7 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/WXYC/wxyc-swift-auth.git";
 			requirement = {
-				kind = upToNextMajorVersion;
+				kind = upToNextMinorVersion;
 				minimumVersion = 0.1.0;
 			};
 		};
