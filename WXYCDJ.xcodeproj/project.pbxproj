@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		03F3E3A822BE477EA3B592F2 /* BinViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2AF8E1527B384853905A17C /* BinViewModelTests.swift */; };
+		04E366C5F5A6EC0E044E78B3 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = 59F9CDD6B06DDC7D219C24CC /* PostHog */; };
 		0842289CBA7AB50CF069C892 /* ConnectivityWiringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38E61706048E1E49FD89944 /* ConnectivityWiringTests.swift */; };
 		08E228FB46EFDFE100855DC3 /* SearchViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F34A2AEC7805A7689F66950F /* SearchViewModelTests.swift */; };
 		093ED6295B6CD7D54A4EB979 /* SignInControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFD157573B6C34E811716A49 /* SignInControls.swift */; };
@@ -50,7 +51,7 @@
 		ABA5F662B7377F106722B223 /* DeepLinkAlbumCover.swift in Sources */ = {isa = PBXBuildFile; fileRef = E85422FA59D8966C8BE74197 /* DeepLinkAlbumCover.swift */; };
 		B427ABFA72D740CDC87D0B35 /* SpotlightClientStateToleranceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54E53B2B0DF8CCAB1C3786E0 /* SpotlightClientStateToleranceTests.swift */; };
 		B8251C7A4243342264B016E2 /* ErrorReportingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 625908D0FE2D8DAE291C5ACC /* ErrorReportingTests.swift */; };
-		B88B5FB6257A51CEA2F298C4 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = CAE4859575FEA3C453FB3BBD /* Sentry */; };
+		B88B5FB6257A51CEA2F298C4 /* WXYCAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 1D40C39E3DC54B8B851E4886 /* WXYCAuth */; };
 		B8E5954EACEC2C58ECA73504 /* SentryTestHostGuardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29A702EF631E197FBC6DE322 /* SentryTestHostGuardTests.swift */; };
 		B90C6447D3F4DC7F4B4A4DC1 /* TrackMatchBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30DE4EC11A66379C3F9D35AE /* TrackMatchBadge.swift */; };
 		B94E9B3D6BB30F1879565A75 /* BuildEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8214FB30FB9D316CE34EAA61 /* BuildEnvironment.swift */; };
@@ -60,7 +61,7 @@
 		CFB3DC8DE93C68D38B76CA75 /* PostHogPrivacyPipelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEB16A7270FD38558B38C23A /* PostHogPrivacyPipelineTests.swift */; };
 		D2381394B0DA8CEF7A189AB7 /* AlbumDetailArtworkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6B324303A15FD85AB7D1AA2 /* AlbumDetailArtworkTests.swift */; };
 		D7683BE5C5C0E395CC4122E8 /* LoginViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 919B7DF6ECD14279DA5ED0D2 /* LoginViewModelTests.swift */; };
-		DB144AF8F4E124E35678C08D /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = 59F9CDD6B06DDC7D219C24CC /* PostHog */; };
+		DB144AF8F4E124E35678C08D /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = CAE4859575FEA3C453FB3BBD /* Sentry */; };
 		DD5133F0A74A1B9B1FC5CD4F /* AlbumRouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E5BB2C6A6D78D45FBE8B7E8 /* AlbumRouteTests.swift */; };
 		DD5DDFB1BA751BBAF0D3F016 /* BlockingRequestSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2910CFA60AD178B436EFCF3E /* BlockingRequestSession.swift */; };
 		DE23DEAE7EBBA64D451CF154 /* PostHogAnalytics.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1E85D82632406DEF7C64DF7 /* PostHogAnalytics.swift */; };
@@ -165,8 +166,9 @@
 			files = (
 				3EF4159CBD4FEB6E808B311D /* WXYCAPI in Frameworks */,
 				3598518CDC204DBB5BB14F15 /* WXYCAPIModels in Frameworks */,
-				B88B5FB6257A51CEA2F298C4 /* Sentry in Frameworks */,
-				DB144AF8F4E124E35678C08D /* PostHog in Frameworks */,
+				B88B5FB6257A51CEA2F298C4 /* WXYCAuth in Frameworks */,
+				DB144AF8F4E124E35678C08D /* Sentry in Frameworks */,
+				04E366C5F5A6EC0E044E78B3 /* PostHog in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -417,6 +419,7 @@
 			packageProductDependencies = (
 				D9511138D2A3FB7A0F39D282 /* WXYCAPI */,
 				E36547ECFBCE3DA8505F75C2 /* WXYCAPIModels */,
+				1D40C39E3DC54B8B851E4886 /* WXYCAuth */,
 				CAE4859575FEA3C453FB3BBD /* Sentry */,
 				59F9CDD6B06DDC7D219C24CC /* PostHog */,
 			);
@@ -455,6 +458,7 @@
 			packageReferences = (
 				E85E95518A3C8B8AA49AA3EE /* XCRemoteSwiftPackageReference "posthog-ios" */,
 				D11270CAC83A53F779B30107 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
+				9B59593906E4AC96F963C14C /* XCRemoteSwiftPackageReference "wxyc-swift-auth" */,
 				5503822269D010855CC6E2B3 /* XCLocalSwiftPackageReference "Packages/WXYCAPI" */,
 				B72CCFD1E77E5979D96CF235 /* XCLocalSwiftPackageReference "Packages/WXYCAPIModels" */,
 			);
@@ -847,6 +851,14 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		9B59593906E4AC96F963C14C /* XCRemoteSwiftPackageReference "wxyc-swift-auth" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/WXYC/wxyc-swift-auth.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.1.0;
+			};
+		};
 		D11270CAC83A53F779B30107 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/getsentry/sentry-cocoa.git";
@@ -866,6 +878,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		1D40C39E3DC54B8B851E4886 /* WXYCAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9B59593906E4AC96F963C14C /* XCRemoteSwiftPackageReference "wxyc-swift-auth" */;
+			productName = WXYCAuth;
+		};
 		59F9CDD6B06DDC7D219C24CC /* PostHog */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = E85E95518A3C8B8AA49AA3EE /* XCRemoteSwiftPackageReference "posthog-ios" */;
