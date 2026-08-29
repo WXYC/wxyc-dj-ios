@@ -3,7 +3,10 @@
 //  WXYCDJTests
 //
 //  An AudioSessionProtocol double for AudioSessionCoordinatorTests (issue
-//  #137). Records every call so tests can assert on them, and can be told to
+//  #137). Records every call -- including the options each one carried, since
+//  `.notifyOthersOnDeactivation` is the single most user-visible property of
+//  the handback path and the one an extraction is most likely to drop
+//  silently -- so tests can assert on them, and can be told to
 //  fail the next (or every) setActive(true, …) call to model a
 //  CannotInterruptOthers failure. holdDeactivations()/releaseDeactivations()
 //  block a setActive(false, …) call on a real DispatchSemaphore -- deliberate,
@@ -31,10 +34,15 @@ final class FakeAudioSession: AudioSessionProtocol, @unchecked Sendable {
         let options: AVAudioSession.CategoryOptions
     }
 
+    /// One `setActive` call, options included.
+    struct SetActiveCall: Equatable {
+        let active: Bool
+        let options: AVAudioSession.SetActiveOptions
+    }
+
     private struct State {
         var categoryCalls: [CategoryCall] = []
-        var activateCallCount = 0
-        var deactivateCallCount = 0
+        var setActiveCalls: [SetActiveCall] = []
         var pendingActivateError: (any Error)?
         var persistActivateError = false
         var deactivationsHeld = false
@@ -45,8 +53,14 @@ final class FakeAudioSession: AudioSessionProtocol, @unchecked Sendable {
     private let deactivationGate = DispatchSemaphore(value: 0)
 
     var categoryCalls: [CategoryCall] { state.withLock { $0.categoryCalls } }
-    var activateCallCount: Int { state.withLock { $0.activateCallCount } }
-    var deactivateCallCount: Int { state.withLock { $0.deactivateCallCount } }
+
+    /// Every `setActive` call in order, so a test can pin the options as well
+    /// as the count. Both counters below are derived from it rather than
+    /// tracked alongside it, so they can't drift apart from what was
+    /// recorded.
+    var setActiveCalls: [SetActiveCall] { state.withLock { $0.setActiveCalls } }
+    var activateCallCount: Int { setActiveCalls.filter(\.active).count }
+    var deactivateCallCount: Int { setActiveCalls.filter { !$0.active }.count }
 
     /// Whether a `setActive(false, …)` call is currently parked on
     /// `deactivationGate`, waiting for `releaseDeactivations()`. A test polls
@@ -113,8 +127,11 @@ final class FakeAudioSession: AudioSessionProtocol, @unchecked Sendable {
 
     func setActive(_ active: Bool, options: AVAudioSession.SetActiveOptions) throws {
         if active {
+            // Recorded before the throw, so a failed activation still counts
+            // as an attempt -- which is what the bounded-retry budget test
+            // measures.
             let error = state.withLock { st -> (any Error)? in
-                st.activateCallCount += 1
+                st.setActiveCalls.append(SetActiveCall(active: true, options: options))
                 let error = st.pendingActivateError
                 if !st.persistActivateError {
                     st.pendingActivateError = nil
@@ -136,7 +153,7 @@ final class FakeAudioSession: AudioSessionProtocol, @unchecked Sendable {
                 deactivationGate.wait()
                 state.withLock { $0.isBlockingOnHold = false }
             }
-            state.withLock { $0.deactivateCallCount += 1 }
+            state.withLock { $0.setActiveCalls.append(SetActiveCall(active: false, options: options)) }
         }
     }
 }
