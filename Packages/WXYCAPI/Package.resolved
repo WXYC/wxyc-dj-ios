@@ -1,0 +1,15 @@
+{
+  "originHash" : "d0b16c56308887714a5bd5e07451698bb462c7f11a01a964bf2429805a525900",
+  "pins" : [
+    {
+      "identity" : "wxyc-swift-auth",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/WXYC/wxyc-swift-auth.git",
+      "state" : {
+        "revision" : "ef2716afe9341bf7c4bdcf2043999199b12fd006",
+        "version" : "0.1.0"
+      }
+    }
+  ],
+  "version" : 3
+}
