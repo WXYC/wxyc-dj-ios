@@ -10,7 +10,7 @@ The local directory is `wxyc-dj-ios`; the Xcode project, scheme, and Swift modul
 - iOS **18.4+** target. iPhone-only (`TARGETED_DEVICE_FAMILY = 1`).
 - SwiftUI throughout; no UIKit unless asked.
 - TDD per `wxyc-ios-64/CLAUDE.md`: failing test → minimum implementation → refactor.
-- **Do not introduce third-party packages without asking first.** The rule stands; two packages have cleared it so far. The app uses Foundation, SwiftUI, Security (Keychain), two local packages — `WXYCAPI` (hand-written) and `WXYCAPIModels` (vendored generator output — see "Code Generation") — and two remote packages, both linked to the **app target only**: **`sentry-cocoa`** (`from: 8.58.4`, issue #106, asked for and approved) and **`posthog-ios`** (`from: 3.69.6`, issue #108, asked for and approved). Regenerating `WXYCAPIModels` needs `git`, `npm`/`node`, `java`, and `rsync` on `PATH`, but only when the contract pin moves; an ordinary build needs none of them.
+- **Do not introduce third-party packages without asking first.** The rule stands; two third-party packages have cleared it so far. The app uses Foundation, SwiftUI, Security (Keychain), two local packages — `WXYCAPI` (hand-written) and `WXYCAPIModels` (vendored generator output — see "Code Generation") — and three remote packages. Two are third-party and linked to the **app target only**: **`sentry-cocoa`** (`from: 8.58.4`, issue #106, asked for and approved) and **`posthog-ios`** (`from: 3.69.6`, issue #108, asked for and approved). The third is first-party and is **not** app-target-only: **`wxyc-swift-auth`** (`.upToNextMinor(from: 0.1.0)`, product `WXYCAuth`), the org's shared better-auth wire client, which `Packages/WXYCAPI` depends on in its own `Package.swift` and which `project.yml` *additionally* links onto the `WXYCDJ` app target as a pre-emptive mirror of the `WXYCAPIModels` belt-and-braces — a nested local package's transitive product is not reliably picked up for every link product of the app target, though that gap was observed for `WXYCAPIModels`, not for this package. It is governed by [`WXYC/wiki` `plans/wxyc-swift-auth.md`](https://github.com/WXYC/wiki/blob/main/plans/wxyc-swift-auth.md). Its release tags are **immutable** (the inverse of the org's moving `gha/v1` model), but note what that does and doesn't buy: it guarantees a tag keeps pointing at one commit, **not** that the next tag is source-compatible — so it is not on its own a licence for a wide range. The range is `.upToNextMinor` rather than the `from:` the two third-party packages use, because those are 1.0+ where a major range is what SemVer promises, while this one is deliberately 0.x until Phase E cuts 1.0 precisely because its API is expected to churn until both apps have adopted. Its arrival changes how this repo pins and builds — see "Dependency pins" below. Regenerating `WXYCAPIModels` additionally needs `npm`/`node`, `java`, and `rsync` on `PATH`, but only when the contract pin moves.
 
 Follows the canonical rules in `../wxyc-ios-64/CLAUDE.md` — read it for SwiftUI idioms (`Task.sleep(for:)`, `foregroundStyle`, `clipShape(.rect(cornerRadius:))`, `Tab` API, `NavigationStack` + `navigationDestination(for:)`, `localizedStandardContains`, etc.). Repeat-rules are not duplicated here.
 
@@ -221,6 +221,16 @@ Two bundles, both Swift Testing (not XCTest):
 - **`WXYCDJTests`** in `WXYCDJTests/` — app-target tests for view models and other code that has to `@testable import WXYCDJ`. Runs via `xcodebuild test` against a booted iOS simulator.
 
 Test fixtures use WXYC-representative artists — Juana Molina / DOGA, Jessica Pratt / On Your Own Love Again, Chuquimamani-Condori / Edits. **Do not** introduce mainstream substitutes (Queen, Radiohead, The Beatles); the canonical pool is `wxyc-shared/src/test-utils/wxyc-example-data.json`.
+
+## Dependency pins
+
+`wxyc-swift-auth` is this repo's first remote dependency below the app target (the app itself has had sentry-cocoa and posthog-ios since #106/#108), and three things follow.
+
+**Two committed resolved files, and nothing keeps them in step.** `Packages/WXYCAPI/Package.resolved` is the pin of record for `swift test --package-path Packages/WXYCAPI`; `WXYCDJ.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved` (tracked via the `.gitignore` negation) pins the `xcodebuild` app builds. They are two independently-written files that happen to resolve the same graph, so a bump that touches one and not the other is a silent divergence — no check catches it, a reviewer has to. Move both together.
+
+**A third, untracked one can appear.** `.gitignore` excludes `.swiftpm/`, so opening `Packages/WXYCAPI` **directly** in Xcode writes `.swiftpm/xcode/…/Package.resolved`, which drifts unseen. The two committed files are authoritative — delete the untracked one rather than reconciling it.
+
+**A clean checkout no longer builds offline.** The first build of either the package or the app fetches `wxyc-swift-auth` over the network, so `swift test --package-path Packages/WXYCAPI` — CI's first step and the first line of the pre-flight below — now needs network where it previously did not.
 
 ## CI / pre-push checks
 
