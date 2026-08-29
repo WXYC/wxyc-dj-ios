@@ -5,15 +5,24 @@
 //  Drives AudioSessionCoordinator (issue #137) through its three ported
 //  behaviours against FakeAudioSession: the category is configured lazily
 //  and at most once; a CannotInterruptOthers failure retries up to the
-//  bounded budget then gives up; a self-handback (this coordinator's own
-//  in-flight deactivation) defers activation without spending that budget
-//  and resumes once the handback completes; a deactivation whose generation
-//  goes stale before it runs is a no-op, while a fresh one deactivates once.
+//  bounded budget then gives up while a hard failure spends none of it; a
+//  self-handback (this coordinator's own in-flight deactivation) defers
+//  activation without spending that budget and resumes once the handback
+//  completes; a deactivation whose generation goes stale before it runs is a
+//  no-op, while a fresh one deactivates once, passing
+//  .notifyOthersOnDeactivation.
+//
+//  Plus the three guards a deactivate() has to hold over an activation that
+//  hasn't happened yet or a handback that hasn't finished: it cancels a
+//  pending bounded retry, it cancels an activation deferred behind a
+//  handback, and a second deactivate() inside the handback window coalesces
+//  into the first rather than stacking a duplicate setActive(false, …).
 //
 //  Created by Jake Bromberg on 08/29/26.
 //  Copyright © 2026 WXYC. All rights reserved.
 //
 
+import Foundation
 import Testing
 @testable import WXYCDJ
 
@@ -125,8 +134,13 @@ struct AudioSessionCoordinatorTests {
         await waitUntil { coordinator.deactivationSettledCount == 1 }
 
         #expect(!coordinator.isActivated)
-        #expect(session.deactivateCallCount == 1)
-        #expect(session.activateCallCount == 1)
+        // The options, not just the counts: `.notifyOthersOnDeactivation` is
+        // what tells every other audio app on the device it may resume, and
+        // it is the detail an extraction drops most quietly.
+        #expect(session.setActiveCalls == [
+            FakeAudioSession.SetActiveCall(active: true, options: []),
+            FakeAudioSession.SetActiveCall(active: false, options: .notifyOthersOnDeactivation)
+        ])
     }
 
     @Test("deactivate() without a prior activate() is a no-op")
@@ -141,6 +155,115 @@ struct AudioSessionCoordinatorTests {
         await Task.yield()
         #expect(coordinator.deactivationSettledCount == 0)
         #expect(session.deactivateCallCount == 0)
+    }
+
+    @Test("a non-'!int' activation failure gives up immediately rather than spending the retry budget")
+    func hardActivationFailureDoesNotScheduleARetry() async {
+        let session = FakeAudioSession()
+        session.failNextActivation(with: NSError(domain: "org.wxyc.dj.test", code: -1))
+        let coordinator = AudioSessionCoordinator(session: session, maxRetryAttempts: 4, retryDelay: .milliseconds(5))
+
+        #expect(coordinator.activate() == false)
+        #expect(!coordinator.activationPending, "a hard failure must not arm a deferred activation")
+
+        // Well past maxRetryAttempts * retryDelay, and the fake reverts to
+        // succeeding after the one scripted failure -- so a wrongly-scheduled
+        // retry wouldn't just tick, it would *activate*, which is exactly the
+        // outcome the .failed arm exists to withhold.
+        try? await Task.sleep(for: .milliseconds(60))
+
+        #expect(session.activateCallCount == 1, "a hard failure must not schedule the bounded retry")
+        #expect(coordinator.activationRetryAttempts == 0)
+        #expect(!coordinator.isActivated)
+    }
+
+    @Test("deactivate() during a pending bounded retry cancels the activation instead of doing nothing")
+    func deactivateDuringPendingRetryCancelsTheDeferredActivation() async {
+        let session = FakeAudioSession()
+        session.failAllActivations(with: FakeAudioSession.cannotInterruptOthersError())
+        let coordinator = AudioSessionCoordinator(session: session, maxRetryAttempts: 4, retryDelay: .milliseconds(5))
+
+        #expect(coordinator.activate() == false)
+        #expect(coordinator.activationPending, "the CannotInterruptOthers failure should have armed the bounded retry")
+        #expect(!coordinator.isActivated, "the deferred state under test is one where isActivated is still false")
+
+        // The other app releases the session, so every later attempt would
+        // succeed...
+        session.stopFailingActivations()
+        // ...but the caller withdrew its request first. deactivate() has
+        // nothing to hand back here -- cancelling the pending activation is
+        // its entire job on this path, and the isActivated guard must not
+        // short-circuit past it.
+        coordinator.deactivate()
+        #expect(!coordinator.activationPending, "deactivate() left a deferred activation armed")
+
+        try? await Task.sleep(for: .milliseconds(60))
+
+        #expect(session.activateCallCount == 1, "the bounded retry activated a session the caller had asked to release")
+        #expect(coordinator.activationRetryAttempts == 0)
+        #expect(!coordinator.isActivated)
+        #expect(session.deactivateCallCount == 0, "there was no active session to hand back")
+    }
+
+    @Test("deactivate() during a handback cancels the activation deferred behind it, leaving the session inactive")
+    func deactivateDuringHandbackCancelsTheDeferredResume() async {
+        let session = FakeAudioSession()
+        let coordinator = AudioSessionCoordinator(session: session)
+
+        #expect(coordinator.activate())
+
+        session.holdDeactivations()
+        coordinator.deactivate()
+        await waitUntil { session.isBlockingOnHold }
+
+        // An activate() lands mid-handback and parks on its completion.
+        #expect(coordinator.activate() == false)
+        #expect(coordinator.activationPending)
+
+        // The caller changes its mind again before the handback finishes.
+        // Nothing else can cancel this deferral: the handback's continuation
+        // re-drives it unconditionally otherwise.
+        coordinator.deactivate()
+
+        session.releaseDeactivations()
+        await waitUntil { coordinator.deactivationSettledCount == 1 }
+        try? await Task.sleep(for: .milliseconds(20))
+
+        #expect(!coordinator.isActivated, "the deferred activation re-activated a session the caller had asked to release")
+        #expect(session.activateCallCount == 1, "expected no re-activation after the handback")
+        #expect(session.deactivateCallCount == 1)
+    }
+
+    @Test("a second deactivate() inside the handback window coalesces instead of stacking a duplicate handback")
+    func secondDeactivateDuringHandbackDoesNotStackASecondSetActiveFalse() async {
+        let session = FakeAudioSession()
+        let coordinator = AudioSessionCoordinator(session: session)
+
+        #expect(coordinator.activate())
+
+        session.holdDeactivations()
+        coordinator.deactivate()
+        await waitUntil { session.isBlockingOnHold }
+
+        // isActivated is still true here -- it is cleared only once the
+        // handback is *confirmed*, which is why it cannot serve as the
+        // in-flight guard and why this second call would otherwise queue a
+        // second detached task: one that blocks a cooperative-pool thread on
+        // sessionLock for the rest of the handback, then passes its own
+        // generation check (only an activation bumps the generation) and
+        // re-fans the resume notification to every other audio app.
+        #expect(coordinator.isActivated)
+        coordinator.deactivate()
+
+        session.releaseDeactivations()
+        await waitUntil { coordinator.deactivationSettledCount == 1 }
+        // A stacked handback would be unblocked by the same release and land
+        // shortly after the first settles, so give it room to show up.
+        try? await Task.sleep(for: .milliseconds(50))
+
+        #expect(session.deactivateCallCount == 1, "the second deactivate() stacked a duplicate setActive(false, …)")
+        #expect(!coordinator.isActivated)
+        #expect(session.activateCallCount == 1)
     }
 }
 
