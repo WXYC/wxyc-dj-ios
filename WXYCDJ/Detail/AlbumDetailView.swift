@@ -755,14 +755,35 @@ struct AlbumDetailView: View {
         }
     }
 
-    /// `cloneRow` restricted to artwork's own precedence gate — `nil` when the
-    /// header already has a cover from a higher-precedence source, exactly the
+    /// `cloneRow` restricted to artwork's own precedence gate — exactly the
     /// value `cloneRow` itself held before issue #136 made the underlying read
-    /// unconditional. Keeps `preferredArtworkURL`/`artworkRetiredSource`'s
-    /// issue-#83/#86 behavior byte-for-byte unchanged while `cloneRow` itself
-    /// is now always populated for the digital-audio badge.
+    /// unconditional, so `preferredArtworkURL`/`artworkRetiredSource` keep
+    /// their issue-#83/#86 behavior while `cloneRow` is now always populated
+    /// for the digital-audio badge.
+    ///
+    /// **`infoFailed` is half the gate, not a nicety.** Before #136 the clone
+    /// was read when `shouldReadCloneForArtwork` said so **or** on `loadAll`'s
+    /// `infoFailed` retry, and both populated the single `cloneRow` the
+    /// artwork precedence walked. Gating only on the first disjunct silently
+    /// drops the clone from the candidate list in the `infoFailed` +
+    /// cover-bearing-`fallback` case — a failed `/library/info` whose search
+    /// row carries a dead CDN link would fall straight through to LML's
+    /// label-logo-prone art, which is the #83 defect this precedence exists
+    /// to prevent.
+    ///
+    /// Pure + `static` so that gate is testable without rendering, like every
+    /// other decision on this screen; the earlier computed-property form sat
+    /// outside that tier, which is why no test caught the omission.
+    nonisolated static func artworkCloneRow(
+        cloneRow: CatalogRow?,
+        fallback: AlbumSearchResult?,
+        infoFailed: Bool
+    ) -> CatalogRow? {
+        (shouldReadCloneForArtwork(fallback: fallback) || infoFailed) ? cloneRow : nil
+    }
+
     private var artworkCloneRow: CatalogRow? {
-        Self.shouldReadCloneForArtwork(fallback: fallback) ? cloneRow : nil
+        Self.artworkCloneRow(cloneRow: cloneRow, fallback: fallback, infoFailed: infoFailed)
     }
 
     /// O(1) read of the on-device catalog clone. `nil` when there's no store,
