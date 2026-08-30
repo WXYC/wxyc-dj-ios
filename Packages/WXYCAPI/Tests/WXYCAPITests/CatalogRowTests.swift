@@ -14,6 +14,7 @@
 import Foundation
 import Testing
 @testable import WXYCAPI
+import WXYCAPIModels
 
 @Suite("CatalogRow")
 struct CatalogRowTests {
@@ -157,6 +158,49 @@ struct CatalogRowTests {
         #expect(row.rotationKillDate == .noExpiry)
         #expect(row.rotationKillDate.day == nil)
         #expect(row.isInRotation(today: day("2026-06-22")) == false)
+    }
+
+    // MARK: - has_digital_audio (issue #136)
+
+    @Test func decodesHasDigitalAudioTrue() throws {
+        let raw = #"{"id":1,"artist_name":"y","album_title":"x","code_letters":"X","code_number":1,"code_artist_number":1,"genre_name":"Rock","format_name":"LP","has_digital_audio":true}"#
+        let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
+        #expect(row.hasDigitalAudio == true)
+    }
+
+    @Test func absentHasDigitalAudioDecodesToFalse() throws {
+        // A Backend that hasn't deployed #2320 yet omits the key entirely; a
+        // pre-existing on-disk clone (encoded before this field existed) must
+        // still decode as "no digital audio" rather than throwing.
+        let raw = #"{"id":1,"artist_name":"y","album_title":"x","code_letters":"X","code_number":1,"code_artist_number":1,"genre_name":"Rock","format_name":"LP"}"#
+        let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
+        #expect(row.hasDigitalAudio == false)
+    }
+
+    @Test func hasDigitalAudioRoundTripsThroughTheStoreEncoder() throws {
+        let original = try JSONCoders.decoder.decode(
+            CatalogRow.self,
+            from: Data(#"{"id":1,"artist_name":"y","album_title":"x","code_letters":"X","code_number":1,"code_artist_number":1,"genre_name":"Rock","format_name":"LP","has_digital_audio":true}"#.utf8)
+        )
+        let roundTripped = try JSONCoders.decoder.decode(
+            CatalogRow.self,
+            from: try JSONCoders.encoder.encode(original)
+        )
+        #expect(roundTripped.hasDigitalAudio == true)
+        #expect(roundTripped == original)
+    }
+
+    /// `CatalogRow` ↔ `CatalogExportRow` field-list parity, scoped to `has_digital_audio`
+    /// (issue #136 review) rather than a naive full set-equality check: `CatalogRow`
+    /// already omits five export fields it deliberately doesn't need
+    /// (`legacy_release_id`, `alternate_artist_name`, `album_artist`,
+    /// `cross_reference_names`, `popularity` — see the type's own doc comment), so a
+    /// bare `Set(CatalogRow.CodingKeys) == Set(CatalogExportRow.CodingKeys)` cannot
+    /// pass and never has. What matters for this ticket is that the *new* field made
+    /// it across the generation boundary under the same wire key on both sides.
+    @Test func hasDigitalAudioKeyMatchesTheGeneratedExportSchema() {
+        #expect(CatalogRow.CodingKeys.hasDigitalAudio.stringValue == "has_digital_audio")
+        #expect(WXYCAPIModels.CatalogExportRow.CodingKeys.hasDigitalAudio.stringValue == "has_digital_audio")
     }
 
     @Test func roundTripsThroughCodable() throws {

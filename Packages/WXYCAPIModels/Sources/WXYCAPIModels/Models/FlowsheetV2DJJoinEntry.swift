@@ -19,6 +19,7 @@ public struct FlowsheetV2DJJoinEntry: Sendable, Codable, Hashable {
     public var playOrder: Int
     public var addTime: Date
     public var entryType: EntryType
+    /** The public handle (`user.djName`) of the DJ who joined, never the DJ's legal name. Unlike the full BS#1371 chain, this does not consult a per-show override or the legacy tubafrenzy handle. */
     public var djName: String
 
     public init(id: Int, showId: Int?, playOrder: Int, addTime: Date, entryType: EntryType, djName: String) {

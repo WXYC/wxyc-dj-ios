@@ -154,7 +154,7 @@ struct AlbumDetailView: View {
                 if let url = Self.preferredArtworkURL(
                     info: info,
                     fallback: fallback,
-                    cloneRow: cloneRow,
+                    cloneRow: artworkCloneRow,
                     metadata: metadata,
                     failedURLs: failedArtworkURLs
                 ) {
@@ -194,7 +194,7 @@ struct AlbumDetailView: View {
                                     // retirement itself does, never on a
                                     // connectivity blip.
                                     if let source = Self.artworkRetiredSource(
-                                        for: url, info: info, fallback: fallback, cloneRow: cloneRow, metadata: metadata
+                                        for: url, info: info, fallback: fallback, cloneRow: artworkCloneRow, metadata: metadata
                                     ) {
                                         deps.analytics.capture(ArtworkURLRetiredEvent(source: source))
                                     }
@@ -218,6 +218,9 @@ struct AlbumDetailView: View {
                     .foregroundStyle(.secondary)
                 if let label = displayLabel, !label.isEmpty {
                     Text(label).foregroundStyle(.secondary)
+                }
+                if cloneRow?.hasDigitalAudio == true {
+                    DigitalAudioBadge()
                 }
             }
         }
@@ -711,28 +714,28 @@ struct AlbumDetailView: View {
         // it awaited later, a clone-sourced cover would land after LML's and
         // the header would visibly swap — the exact defect this screen's
         // artwork precedence exists to prevent.
-        let readsClone = Self.shouldReadCloneForArtwork(fallback: fallback)
-        // A `fallback` already names the artist/release, so metadata can be
-        // fetched in parallel with the catalog fetch — the case for every tab
-        // push: Search → Detail (the live/local search row) and, since issue
-        // #87, Bin → Detail (`BinEntry.detailFallback`; the bin projection and
-        // `/library/info` read `artists.artist_name` / `library.album_title`
-        // off the same joins, so the LML lookup keys are the same strings,
-        // just a round-trip earlier). Without one — a Spotlight deep link that
-        // missed the on-device clone — the catalog row is the only source of
-        // an artist name to look up with, so await it first.
+        //
+        // Issue #136: the read itself is now UNCONDITIONAL — `hasDigitalAudio`
+        // has no other source (neither `AlbumSearchResult` nor `AlbumDetail`
+        // carries it; #417 touched only `CatalogExportRow`), so gating the read
+        // on `shouldReadCloneForArtwork` would leave the digital-audio badge
+        // invisible on exactly the ordinary online Search → Detail path with a
+        // cover present — the albums most likely to have one. The read is an
+        // O(1) `row(id:)` by primary key already running concurrently with the
+        // network legs, so it costs nothing extra. Artwork's *use* of the
+        // result stays behind `shouldReadCloneForArtwork` via `artworkCloneRow`
+        // below, so the issue-#83/#86 precedence is untouched.
         if fallback != nil {
             async let infoTask: AlbumInfo? = loadInfo()
             async let metaTask: AlbumMetadata? = loadMetadata(artistName: fallback?.artistName,
                                                               releaseTitle: fallback?.albumTitle)
-            async let cloneTask: CatalogRow? = readsClone ? await loadCloneRow() : nil
+            async let cloneTask: CatalogRow? = loadCloneRow()
             let (loadedInfo, loadedMeta, loadedClone) = await (infoTask, metaTask, cloneTask)
             if let loadedInfo { info = loadedInfo }
             infoLoaded = true
             if let loadedMeta { metadata = loadedMeta }
             cloneRow = loadedClone
         } else {
-            // No fallback at all, so `readsClone` is unconditionally true here.
             async let infoTask: AlbumInfo? = loadInfo()
             async let cloneTask: CatalogRow? = loadCloneRow()
             let (loadedInfo, loadedClone) = await (infoTask, cloneTask)
@@ -743,12 +746,23 @@ struct AlbumDetailView: View {
                                                 releaseTitle: loadedInfo?.albumTitle)
             if let loadedMeta { metadata = loadedMeta }
         }
-        // A failed `/library/info` needs the clone for shelf data + rotation
-        // even when the live row already carried a cover (so the artwork read
-        // above was skipped).
+        // A failed `/library/info` needs the clone for shelf data + rotation;
+        // the unconditional read above already covers this in every case except
+        // a store/read failure on the first attempt, so this is now a retry,
+        // not the primary path.
         if infoFailed, cloneRow == nil {
             cloneRow = await loadCloneRow()
         }
+    }
+
+    /// `cloneRow` restricted to artwork's own precedence gate — `nil` when the
+    /// header already has a cover from a higher-precedence source, exactly the
+    /// value `cloneRow` itself held before issue #136 made the underlying read
+    /// unconditional. Keeps `preferredArtworkURL`/`artworkRetiredSource`'s
+    /// issue-#83/#86 behavior byte-for-byte unchanged while `cloneRow` itself
+    /// is now always populated for the digital-audio badge.
+    private var artworkCloneRow: CatalogRow? {
+        Self.shouldReadCloneForArtwork(fallback: fallback) ? cloneRow : nil
     }
 
     /// O(1) read of the on-device catalog clone. `nil` when there's no store,

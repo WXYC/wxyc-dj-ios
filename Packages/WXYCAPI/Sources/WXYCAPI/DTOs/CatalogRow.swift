@@ -128,6 +128,19 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
     /// folding into the `nil` that means "no expiry". See ``RotationKillDate``.
     public let rotationKillDate: RotationKillDate
 
+    /// Whether the digital archive (WXYC/Backend-Service#2320) has at least one
+    /// asset bound to this album — the badge the archive player client uses to
+    /// decide whether to offer playback before calling
+    /// `GET /digital-archive/albums/{id}/playback`. Absent on the wire decodes
+    /// to `false`, the same per-field tolerance ``artworkURL``/``rotationBin``
+    /// get: a Backend that hasn't deployed #2320 yet omits the key entirely,
+    /// and a pre-existing clone on disk (encoded before this field existed)
+    /// must still decode. The badge means "some audio available," not "the
+    /// whole album" — a stale badge (the clone refreshes on launch/foreground)
+    /// can only over- or under-badge; the endpoint's 200/404 is what actually
+    /// gates playback.
+    public let hasDigitalAudio: Bool
+
     public init(
         id: Int,
         artistName: String,
@@ -142,7 +155,8 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
         plays: Int?,
         artworkURL: URL?,
         rotationBin: String?,
-        rotationKillDate: CalendarDate?
+        rotationKillDate: CalendarDate?,
+        hasDigitalAudio: Bool = false
     ) {
         self.id = id
         self.artistName = artistName
@@ -158,6 +172,7 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
         self.artworkURL = artworkURL
         self.rotationBin = rotationBin
         self.rotationKillDate = rotationKillDate.map(RotationKillDate.expires) ?? .noExpiry
+        self.hasDigitalAudio = hasDigitalAudio
     }
 
     enum CodingKeys: String, CodingKey {
@@ -175,6 +190,7 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
         case artworkURL = "artwork_url"
         case rotationBin = "rotation_bin"
         case rotationKillDate = "rotation_kill_date"
+        case hasDigitalAudio = "has_digital_audio"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -214,6 +230,10 @@ public struct CatalogRow: Codable, Sendable, Hashable, Identifiable {
         rotationKillDate = RotationKillDate(
             wireValue: try c.decodeIfPresent(String.self, forKey: .rotationKillDate)
         )
+        // Absent -> false: a Backend that hasn't deployed #2320 yet omits the
+        // key entirely, and a pre-existing on-disk clone (encoded before this
+        // field existed) must still decode rather than losing the whole row.
+        hasDigitalAudio = try c.decodeIfPresent(Bool.self, forKey: .hasDigitalAudio) ?? false
     }
 
     /// The DJ-facing display cohort (`H`/`M`/`L`/`S`) for ``rotationBin``, or

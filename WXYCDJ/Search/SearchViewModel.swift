@@ -37,9 +37,15 @@ final class SearchViewModel {
     /// the `.results` state to show a quiet "Showing saved library" note when
     /// results came from the on-device clone.
     private(set) var source: LibrarySearchOutcome.Source = .server
+    /// Album ids from the current `results` page that the on-device clone
+    /// marks as having digital audio (issue #136) — one batch
+    /// ``CatalogStore/rows(ids:)`` read per page, not a per-row store hit.
+    /// `SearchResultRow` reads membership synchronously off this set.
+    private(set) var digitalAudioIDs: Set<Int> = []
 
     private let search: LibrarySearch
     private let api: APIClient
+    private let catalogStore: (any CatalogStore)?
     /// The app's product-analytics seam (issue #108). Defaults to
     /// ``NoOpAnalytics`` so every existing construction site keeps compiling
     /// unchanged; `SearchView` passes `deps.analytics`.
@@ -48,9 +54,15 @@ final class SearchViewModel {
     private static let minQueryLength = 2
     private static let debounce: Duration = .milliseconds(300)
 
-    init(search: LibrarySearch, api: APIClient, analytics: any Analytics = NoOpAnalytics()) {
+    init(
+        search: LibrarySearch,
+        api: APIClient,
+        catalogStore: (any CatalogStore)? = nil,
+        analytics: any Analytics = NoOpAnalytics()
+    ) {
         self.search = search
         self.api = api
+        self.catalogStore = catalogStore
         self.analytics = analytics
     }
 
@@ -87,6 +99,22 @@ final class SearchViewModel {
             resultCount: outcome.results.count,
             queryLength: q.count
         ))
+        await hydrateDigitalAudioIDs(for: outcome.results)
+    }
+
+    /// One batch `CatalogStore.rows(ids:)` read for the page (issue #136),
+    /// behind the same debounce-cancellation check `performSearch` already
+    /// applies to `results`/`state` — a superseded search must not clobber the
+    /// badge set for the query the DJ actually sees. `nil` store (no clone) or
+    /// an empty page both leave `digitalAudioIDs` empty rather than throwing.
+    private func hydrateDigitalAudioIDs(for results: [AlbumSearchResult]) async {
+        guard let catalogStore, !results.isEmpty else {
+            digitalAudioIDs = []
+            return
+        }
+        let rows = (try? await catalogStore.rows(ids: results.map(\.id))) ?? [:]
+        if Task.isCancelled { return }
+        digitalAudioIDs = Set(rows.values.filter(\.hasDigitalAudio).map(\.id))
     }
 
     func addToBin(_ row: AlbumSearchResult) async -> Bool {

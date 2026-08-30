@@ -12,6 +12,7 @@ public struct ScheduleShift: Sendable, Codable, Hashable {
     public static let dayRule = NumericRule<Int>(minimum: 0, exclusiveMinimum: false, maximum: 6, exclusiveMaximum: false, multipleOf: nil)
     public var id: Int
     public var djId: Int
+    /** The DJ's public on-air handle, never the DJ's legal name. Per the declared/actual mismatch noted above (BS#2224), no current handler populates this from a verified `dj_name`-bearing source — this description states the intent for when that gap closes, not today's implemented behavior. */
     public var djName: String
     /** Day of the week 0 = Monday, 6 = Sunday */
     public var day: Int

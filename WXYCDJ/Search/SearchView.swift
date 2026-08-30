@@ -44,7 +44,12 @@ struct SearchView: View {
         .toolbar { signOutMenu }
         .onAppear {
             if viewModel == nil {
-                viewModel = SearchViewModel(search: deps.librarySearch, api: deps.api, analytics: deps.analytics)
+                viewModel = SearchViewModel(
+                    search: deps.librarySearch,
+                    api: deps.api,
+                    catalogStore: deps.catalogStore,
+                    analytics: deps.analytics
+                )
             }
         }
     }
@@ -106,7 +111,7 @@ struct SearchView: View {
                         // Carry the live row as the route's fallback so the detail
                         // header renders instantly while /library/info + LML load.
                         NavigationLink(value: AlbumRoute(id: row.id, fallback: row)) {
-                            SearchResultRow(row: row) {
+                            SearchResultRow(row: row, hasDigitalAudio: viewModel.digitalAudioIDs.contains(row.id)) {
                                 Task { _ = await viewModel.addToBin(row) }
                             }
                         }

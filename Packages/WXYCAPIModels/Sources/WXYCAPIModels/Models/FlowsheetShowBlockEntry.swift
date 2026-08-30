@@ -17,6 +17,7 @@ public struct FlowsheetShowBlockEntry: Sendable, Codable, Hashable {
     public var day: String
     /** Time string (e.g., \"14:00\") */
     public var time: String
+    /** The DJ's public on-air handle, never the DJ's legal name — same already-resolved `flowsheet.dj_name` value as `FlowsheetEntryFields.dj_name` (BS#1371). Not currently `$ref`'d by any operation in this document; kept accurate in case that changes. */
     public var djName: String
     public var isStart: Bool
 
