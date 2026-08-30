@@ -201,6 +201,48 @@ struct AlbumDetailArtworkTests {
         #expect(!AlbumDetailView.shouldReadCloneForArtwork(fallback: Self.dogaSearchRow()))
     }
 
+    // Issue #136 made `loadAll`'s clone read unconditional so the digital-audio
+    // badge has a source, and `artworkCloneRow` is what keeps artwork seeing
+    // only what it saw before. The `infoFailed` arm below is the one that got
+    // missed on the first pass: the pre-#136 code populated `cloneRow` on the
+    // `infoFailed` retry too, so gating on `shouldReadCloneForArtwork` alone
+    // narrowed the candidate list rather than preserving it.
+    @Test("artwork ignores the clone when the search row already carries a cover")
+    func artworkCloneHiddenBehindACoveredRow() {
+        #expect(
+            AlbumDetailView.artworkCloneRow(
+                cloneRow: Self.dogaCloneRow(),
+                fallback: Self.dogaSearchRow(),
+                infoFailed: false
+            ) == nil
+        )
+    }
+
+    @Test("artwork sees the clone when the search row is artless")
+    func artworkCloneVisibleBehindAnArtlessRow() {
+        #expect(
+            AlbumDetailView.artworkCloneRow(
+                cloneRow: Self.dogaCloneRow(),
+                fallback: Self.dogaSearchRow(artworkURL: nil),
+                infoFailed: false
+            ) != nil
+        )
+    }
+
+    @Test("artwork still sees the clone when /library/info failed under a cover-bearing row")
+    func artworkCloneVisibleWhenInfoFailed() {
+        // Drop `|| infoFailed` from `artworkCloneRow` and this is the test that
+        // fails: a dead search-row cover would then fall through to LML's
+        // label logo instead of the clone.
+        #expect(
+            AlbumDetailView.artworkCloneRow(
+                cloneRow: Self.dogaCloneRow(),
+                fallback: Self.dogaSearchRow(),
+                infoFailed: true
+            ) != nil
+        )
+    }
+
     @Test("no artwork anywhere yields nil")
     func noneYieldsNil() throws {
         let url = AlbumDetailView.preferredArtworkURL(
