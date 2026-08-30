@@ -173,6 +173,21 @@ public final class APIClient: Sendable {
         try await getJSON("/library/info", query: [URLQueryItem(name: "album_id", value: String(albumId))])
     }
 
+    /// GET /digital-archive/albums/{id}/playback (#417) — the archive player's
+    /// playback manifest for `albumId`. A 404 (no bound digital audio) surfaces
+    /// as `APIError.http(status: 404, ...)`, same `.http` classification
+    /// `loadMetadata` already treats as routine, for the view to render "no
+    /// audio" rather than an error.
+    ///
+    /// Every rendition `url` is a bearer credential until the manifest's
+    /// `expires_at` — the merged operation states the cache/logging posture
+    /// explicitly. This method must never let that URL reach `os_log` or be
+    /// embedded in an `NSError` `userInfo`; it decodes the manifest and hands it
+    /// straight back, nothing more.
+    public func albumPlayback(albumId: Int) async throws -> DigitalArchivePlaybackManifest {
+        try await getJSON("/digital-archive/albums/\(albumId)/playback", query: [])
+    }
+
     /// GET /proxy/metadata/album — LML-enriched release record: year, label,
     /// genres/styles, streaming URLs, tracklist, Discogs/Wikipedia URLs.
     public func albumMetadata(artistName: String, releaseTitle: String?, trackTitle: String? = nil) async throws -> AlbumMetadata {

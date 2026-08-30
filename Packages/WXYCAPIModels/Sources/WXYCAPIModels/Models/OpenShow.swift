@@ -13,7 +13,7 @@ public struct OpenShow: Sendable, Codable, Hashable {
     public var id: Int
     /** NULL for legacy/tubafrenzy-originated shows and for any show whose DJ account was deleted (`ON DELETE SET NULL`). Such a show can still be closed via `force-end`.  */
     public var primaryDjId: String?
-    /** The public DJ handle, resolved through the standard chain (per-show override, then the linked account's handle, then the legacy tubafrenzy handle). Never a real name. NULL when unresolvable.  */
+    /** The DJ's public on-air handle, never the DJ's legal name. Same PII-safe resolution chain as `FlowsheetEntryFields.dj_name` (BS#1371): per-show override -> the DJ's chosen handle -> the legacy tubafrenzy handle -> `null` when unresolvable.  */
     public var djName: String?
     public var showName: String?
     public var startTime: Date

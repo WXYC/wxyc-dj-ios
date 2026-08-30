@@ -11,6 +11,7 @@ public struct OnAirDJ: Sendable, Codable, Hashable {
 
     /** The DJ's better-auth `auth_user.id` (an opaque `varchar(255)` string), or `null` for a legacy/tubafrenzy-mirrored show whose on-air DJ has no Backend-Service account (their identity is `legacy_dj_name`, surfaced on `/flowsheet/djs-on-air` with a null id). Historically mistyped as `integer`; corrected to the nullable string it is at runtime (BS#1547). */
     public var id: String?
+    /** The DJ's public on-air handle, never the DJ's legal name. For a DJ with a Backend-Service account, the DJ's chosen handle (`user.djName`); for a legacy/tubafrenzy-mirrored show with no account, the full PII-safe chain (BS#1371) down to `shows.legacy_dj_name`. */
     public var djName: String
 
     public init(id: String?, djName: String) {

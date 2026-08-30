@@ -29,6 +29,18 @@ public protocol CatalogStore: Sendable {
     /// The cloned row for `id`, or `nil` if absent. O(1) for the deep-link path.
     func row(id: Int) async throws -> CatalogRow?
 
+    /// The cloned rows for `ids`, keyed by id — the digital-archive badge's one
+    /// batch read per search-result page, rather than one ``row(id:)`` await per
+    /// row (issue #136). Ids absent from the clone are simply absent from the
+    /// result; this never throws for a missing id, only for a genuine store
+    /// failure.
+    ///
+    /// Has a **protocol-extension default** (a loop over ``row(id:)``) so every
+    /// existing inline `CatalogStore` conformance — the test doubles that predate
+    /// this method — keeps compiling without adopting it; only
+    /// ``SQLiteCatalogStore`` overrides it with a single `WHERE id IN (…)` query.
+    func rows(ids: [Int]) async throws -> [Int: CatalogRow]
+
     /// Number of cloned rows.
     func count() async throws -> Int
 
@@ -54,4 +66,17 @@ public protocol CatalogStore: Sendable {
     /// rank), capped at `limit`. Track titles are **not** indexed — the clone
     /// carries none — so offline track-title search is out of scope.
     func search(query: String, limit: Int) async throws -> [CatalogRow]
+}
+
+public extension CatalogStore {
+    /// Default ``rows(ids:)``: one ``row(id:)`` await per id. Fine for a small
+    /// test double; ``SQLiteCatalogStore`` overrides it with a single query
+    /// rather than N round trips through the actor.
+    func rows(ids: [Int]) async throws -> [Int: CatalogRow] {
+        var result: [Int: CatalogRow] = [:]
+        for id in ids {
+            if let row = try await row(id: id) { result[id] = row }
+        }
+        return result
+    }
 }

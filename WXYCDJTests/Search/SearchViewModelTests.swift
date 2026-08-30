@@ -16,6 +16,7 @@
 //
 
 import Foundation
+import os
 import Testing
 @testable import WXYCAPI
 @testable import WXYCDJ
@@ -37,7 +38,7 @@ struct SearchViewModelTests {
             catalogStore: store,
             connectivity: ConnectivityMonitor(initiallyOnline: online)
         )
-        return SearchViewModel(search: search, api: client, analytics: analytics)
+        return SearchViewModel(search: search, api: client, catalogStore: store, analytics: analytics)
     }
 
     @Test func emptyQueryStaysIdleAndIssuesNoRequest() async throws {
@@ -81,6 +82,76 @@ struct SearchViewModelTests {
         #expect(viewModel.source == .server)
         #expect(viewModel.results.count == 1)
         #expect(viewModel.results.first?.artistName == "Juana Molina")
+    }
+
+    // MARK: - Issue #136: digital-audio badge hydration
+
+    @Test func settledSearchHydratesDigitalAudioIDsFromOneBatchRead() async throws {
+        let (client, session) = try await SignedInClient.make()
+        defer { Self.removeStore() }
+        do {
+            let store = try await Self.makeStore(rows: [
+                Self.juanaCatalogRow.withDigitalAudio(true),
+            ])
+            let viewModel = Self.makeViewModel(client, store: store)
+            session.enqueue(StubRequestSession.Stub(
+                statusCode: 200,
+                body: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
+            ))
+
+            viewModel.query = "ju"
+            try await Self.waitForSettle(viewModel)
+
+            #expect(viewModel.digitalAudioIDs == [100])
+        }
+    }
+
+    @Test func settledSearchLeavesDigitalAudioIDsEmptyWhenCloneSaysNo() async throws {
+        let (client, session) = try await SignedInClient.make()
+        defer { Self.removeStore() }
+        do {
+            let store = try await Self.makeStore(rows: [Self.juanaCatalogRow])
+            let viewModel = Self.makeViewModel(client, store: store)
+            session.enqueue(StubRequestSession.Stub(
+                statusCode: 200,
+                body: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
+            ))
+
+            viewModel.query = "ju"
+            try await Self.waitForSettle(viewModel)
+
+            #expect(viewModel.digitalAudioIDs.isEmpty)
+        }
+    }
+
+    /// A debounce-superseded search must not hydrate `digitalAudioIDs` for
+    /// results the DJ never saw — the same post-await `Task.isCancelled` guard
+    /// `performSearch` already applies to `results`/`state`/analytics, mirrored
+    /// from `searchSupersededMidFlightCapturesOnlyTheServedOne`. Both requests
+    /// resolve to the same fixture body, so the final `digitalAudioIDs` value
+    /// would look identical whether or not the guard fired -- what actually
+    /// proves the guard is the **count** of `rows(ids:)` calls, exactly one
+    /// (the surviving search), not two (one per request).
+    @Test func supersededSearchDoesNotHydrateDigitalAudioIDs() async throws {
+        let (client, blocking) = try await SignedInClient.makeBlocking(
+            responseBody: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
+        )
+        let store = CountingCatalogStore(rows: [Self.juanaCatalogRow.withDigitalAudio(true)])
+        let viewModel = Self.makeViewModel(client, store: store)
+
+        viewModel.query = "ju"
+        // Park until the first search is genuinely on the wire.
+        await blocking.waitForFirstRequest()
+        // A follow-up keystroke cancels that in-flight task and starts a new
+        // search. Still >= minQueryLength, so this is a supersession, not an
+        // abandonment.
+        viewModel.query = "jua"
+        // Let the first (now-cancelled) request resume and the second run.
+        blocking.release()
+        try await Self.waitForSettle(viewModel)
+
+        #expect(store.rowsCallCount == 1)
+        #expect(viewModel.digitalAudioIDs == [100])
     }
 
     @Test func emptyResponseTransitionsToEmptyState() async throws {
@@ -333,6 +404,55 @@ struct SearchViewModelTests {
             try? fm.removeItem(at: URL(filePath: base + suffix))
         }
         storeURL = nil
+    }
+}
+
+/// A `CatalogStore` that counts `rows(ids:)` calls, so a supersession test can
+/// assert the guard fired by call count rather than by the (identical either
+/// way) final hydrated value. Lock-guarded `Sendable`, matching
+/// `WXYCAPITests/Support/SpyCatalogStore.swift`'s shape.
+private final class CountingCatalogStore: CatalogStore {
+    private let state: OSAllocatedUnfairLock<(rows: [Int: CatalogRow], rowsCalls: Int)>
+
+    init(rows: [CatalogRow]) {
+        state = OSAllocatedUnfairLock(initialState: (
+            rows: Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) }),
+            rowsCalls: 0
+        ))
+    }
+
+    var rowsCallCount: Int { state.withLock { $0.rowsCalls } }
+
+    func row(id: Int) -> CatalogRow? { state.withLock { $0.rows[id] } }
+    func count() -> Int { state.withLock { $0.rows.count } }
+    func lastModified() -> String? { nil }
+    func replace(rows: [CatalogRow], lastModified: String?) {
+        state.withLock { $0.rows = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) }) }
+    }
+    func search(query: String, limit: Int) -> [CatalogRow] { [] }
+
+    func rows(ids: [Int]) -> [Int: CatalogRow] {
+        state.withLock { st in
+            st.rowsCalls += 1
+            var result: [Int: CatalogRow] = [:]
+            for id in ids { if let row = st.rows[id] { result[id] = row } }
+            return result
+        }
+    }
+}
+
+private extension CatalogRow {
+    /// Same row with `hasDigitalAudio` overridden — a test-only convenience
+    /// so `juanaCatalogRow` doesn't need a second, near-duplicate literal.
+    func withDigitalAudio(_ value: Bool) -> CatalogRow {
+        CatalogRow(
+            id: id, artistName: artistName, albumTitle: albumTitle,
+            codeLetters: codeLetters, codeNumber: codeNumber, codeArtistNumber: codeArtistNumber,
+            label: label, genreName: genreName, formatName: formatName,
+            onStreaming: onStreaming, plays: plays, artworkURL: artworkURL,
+            rotationBin: rotationBin, rotationKillDate: rotationKillDate.day,
+            hasDigitalAudio: value
+        )
     }
 }
 

@@ -19,6 +19,7 @@ public struct FlowsheetV2ShowEndEntry: Sendable, Codable, Hashable {
     public var playOrder: Int
     public var addTime: Date
     public var entryType: EntryType
+    /** The DJ's public on-air handle, never the DJ's legal name. Same PII-safe resolution chain as `FlowsheetEntryFields.dj_name` (BS#1371). */
     public var djName: String
     public var timestamp: Date
 

@@ -14,6 +14,12 @@ import WXYCAPI
 
 struct SearchResultRow: View {
     let row: AlbumSearchResult
+    /// Whether the on-device catalog clone marks this album as having digital
+    /// audio (issue #136) — a plain value, hydrated once per results page by
+    /// `SearchViewModel`, not a per-row async store read: every other badge
+    /// this row renders is synchronous off the row value, and this one stays
+    /// consistent with that.
+    let hasDigitalAudio: Bool
     let onAdd: () -> Void
     @Environment(AppDependencies.self) private var deps
 
@@ -32,6 +38,9 @@ struct SearchResultRow: View {
                     }
                     if let bin = row.rotationBin {
                         RotationBadge(bin: bin)
+                    }
+                    if hasDigitalAudio {
+                        DigitalAudioBadge()
                     }
                 }
                 TrackMatchBadge(hints: row.matchedVia)
@@ -85,6 +94,22 @@ struct FormatCapsule: View {
             .padding(.vertical, 2)
             .background(.quaternary, in: .capsule)
             .foregroundStyle(.secondary)
+    }
+}
+
+/// "Digital audio available" badge (issue #136) — the on-device catalog
+/// clone's `has_digital_audio` flag, shown on a search row and the detail
+/// header. Purely informational: it decides where the archive player's Play
+/// control appears (WXYC/wxyc-dj-ios#138), not whether it does.
+struct DigitalAudioBadge: View {
+    var body: some View {
+        Image(systemName: "waveform")
+            .font(.caption2.bold())
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(.tint, in: .capsule)
+            .foregroundStyle(.white)
+            .accessibilityLabel("Digital audio available")
     }
 }
 

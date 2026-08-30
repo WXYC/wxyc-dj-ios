@@ -47,7 +47,7 @@ public struct FlowsheetEntryResponse: Sendable, Codable, Hashable {
     public var addTime: Date?
     /** Top-of-hour a breakpoint row marks (ISO 8601), sourced from tubafrenzy's RADIO_HOUR. Null on non-breakpoint rows and rows predating the producer rollout. Mirrors the V2 breakpoint entry. */
     public var radioHour: Date?
-    /** Resolved public display name of the DJ on the row's show. Nullable per the PII-safe resolution chain (BS#1371): user.djName -> shows.legacy_dj_name -> null; never the real-name PII column. */
+    /** The DJ's public on-air handle, never the DJ's legal name. Resolved through the PII-safe chain (BS#1371): per-show override -> the DJ's chosen handle (`user.djName`) -> the legacy tubafrenzy handle (`shows.legacy_dj_name`) -> `null`. */
     public var djName: String?
 
     public init(id: Int, playOrder: Int, showId: Int, albumId: Int? = nil, trackTitle: String? = nil, albumTitle: String? = nil, artistName: String? = nil, recordLabel: String? = nil, labelId: Int? = nil, rotationId: Int? = nil, rotationBin: RotationBin? = nil, requestFlag: Bool, segue: Bool? = nil, message: String? = nil, artworkUrl: String? = nil, discogsUrl: String? = nil, releaseYear: Int? = nil, discogsUnavailable: Bool? = nil, discogsUnavailableNote: String? = nil, spotifyUrl: String? = nil, appleMusicUrl: String? = nil, youtubeMusicUrl: String? = nil, bandcampUrl: String? = nil, soundcloudUrl: String? = nil, artistBio: String? = nil, artistWikipediaUrl: String? = nil, trackPosition: String? = nil, metadataStatus: MetadataStatus? = nil, entryType: FlowsheetEntryType? = nil, addTime: Date? = nil, radioHour: Date? = nil, djName: String? = nil) {

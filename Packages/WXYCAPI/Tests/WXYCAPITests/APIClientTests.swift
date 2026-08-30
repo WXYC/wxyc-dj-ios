@@ -112,6 +112,39 @@ struct APIClientTests {
         #expect(q.contains("album_id=100"))
     }
 
+    @Test func albumPlaybackDecodesManifestAndHitsTheIdRoute() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.digitalArchivePlaybackJSON.utf8)
+        ))
+
+        let manifest = try await client.albumPlayback(albumId: 100)
+
+        #expect(manifest.libraryId == 100)
+        #expect(manifest.tracks.count == 1)
+        let track = try #require(manifest.tracks.first)
+        #expect(track.provenance == .rotationUpload)
+        #expect(track.renditions.map(\.codec) == [.mp3, .flac])
+        #expect(session.recordedRequests.last?.url?.path == "/digital-archive/albums/100/playback")
+    }
+
+    @Test func albumPlaybackMissingManifestSurfacesAsHTTP404() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 404,
+            body: Data(#"{"message":"No digital audio bound to this album"}"#.utf8)
+        ))
+
+        do {
+            _ = try await client.albumPlayback(albumId: 100)
+            Issue.record("expected albumPlayback to throw on a 404")
+        } catch APIError.http(let status, let message) {
+            #expect(status == 404)
+            #expect(message == "No digital audio bound to this album")
+        }
+    }
+
     @Test func getBinDecodesTheBareArrayResponse() async throws {
         let (client, _, session) = try await Self.makeSignedInClient()
         session.enqueue(StubRequestSession.Stub(

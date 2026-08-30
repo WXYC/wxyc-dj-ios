@@ -69,6 +69,29 @@ struct SQLiteCatalogStoreTests {
         }
     }
 
+    @Test func rowsForIdsReturnsOneBatchOfMatchesKeyedById() async throws {
+        // Issue #136: the digital-archive badge's one batch read per
+        // search-result page. Overridden with a single `WHERE id IN (…)`
+        // query rather than the protocol default's N sequential `row(id:)`s.
+        let rows = try Self.fixtureRows()
+        try await Self.withStore { store in
+            try await store.replace(rows: rows, lastModified: nil)
+            let result = try await store.rows(ids: [100, 200, 999])
+            #expect(result.count == 2)
+            #expect(result[100] == rows[0])
+            #expect(result[200] == rows[1])
+            #expect(result[999] == nil)
+        }
+    }
+
+    @Test func rowsForEmptyIdsReturnsEmptyDictionary() async throws {
+        let rows = try Self.fixtureRows()
+        try await Self.withStore { store in
+            try await store.replace(rows: rows, lastModified: nil)
+            #expect(try await store.rows(ids: []).isEmpty)
+        }
+    }
+
     @Test func replaceDropsVanishedRows() async throws {
         let rows = try Self.fixtureRows()
         let juana = rows[0]   // id 100

@@ -174,6 +174,33 @@ enum Fixtures {
         }
         """
 
+    /// Wire body for `GET /digital-archive/albums/{id}/playback` (#417/#422) —
+    /// one track, two renditions, so both the codec enum and the per-track
+    /// `provenance` field (not manifest-level — see the schema doc comment) get
+    /// exercised. `expires_at` carries fractional seconds, mirroring the "with
+    /// or without fractions" tolerance `JSONCoders` already handles.
+    static let digitalArchivePlaybackJSON = """
+        {
+          "library_id": 100,
+          "expires_at": "2026-08-29T21:00:00.000Z",
+          "tracks": [
+            {
+              "file_id": 9001,
+              "provenance": "rotation_upload",
+              "disc_number": 1,
+              "track_number": 1,
+              "title": "la paradoja",
+              "duration_secs": 245.5,
+              "content_hash": "abc123",
+              "renditions": [
+                { "codec": "mp3", "bitrate_kbps": 320, "url": "https://cdn.example.org/doga/01.mp3" },
+                { "codec": "flac", "url": "https://cdn.example.org/doga/01.flac" }
+              ]
+            }
+          ]
+        }
+        """
+
     /// JWT with payload {"sub":"42","email":"juana@wxyc.org","role":"dj","exp": <Date>}
     /// Signature is a placeholder ("sig"); the client does not verify it.
     static func jwt(expiresIn seconds: TimeInterval = 600) -> String {
