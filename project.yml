@@ -106,6 +106,13 @@ targets:
         UIBackgroundModes:
           - fetch
           - processing
+          # `audio` is required by issue #138's acceptance criteria and lands
+          # here ahead of anything that plays: this build configures no audio
+          # session and renders no audio (the player is #145). App Store
+          # Review guideline 2.5.4 requires an app declaring this mode to
+          # actually play audible content in the background, so DO NOT cut an
+          # EXTERNAL TestFlight build from any commit between #138 and #145 --
+          # internal-only testing is fine, as is anything from #145 onward.
           - audio
         BGTaskSchedulerPermittedIdentifiers:
           - org.wxyc.dj.catalog.refresh
