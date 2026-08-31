@@ -41,6 +41,17 @@ enum SignedInClient {
         return (client, blocking)
     }
 
+    /// An `APIClient` whose **data** requests go through `dataSession`, with
+    /// the JWT exchange already settled on a separate stub. The general form
+    /// of ``makeBlocking(responseBody:)`` -- same trick, for a test that needs
+    /// a double of its own (issue #144's cancelled-refetch tests park a
+    /// request and then throw the way a cancelled `URLSession` fetch does).
+    @MainActor
+    static func make(dataSession: any RequestSession) async throws -> APIClient {
+        let auth = try await makeAuth(session: StubRequestSession())
+        return APIClient(configuration: configuration, session: dataSession, authService: auth)
+    }
+
     @MainActor
     private static func makeAuth(session: StubRequestSession) async throws -> AuthService {
         let storage = InMemoryTokenStorage()

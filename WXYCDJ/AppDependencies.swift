@@ -76,6 +76,16 @@ final class AppDependencies {
     /// event; only ``init()``, whose sole caller is `AppDelegate`, passes a
     /// real ``PostHogAnalytics`` explicitly.
     let analytics: any Analytics
+    /// Digital-archive playback state (issue #144): the queue, the transport,
+    /// rendition selection, and the manifest-expiry / media-403 policies.
+    /// Owned here and injected through ``View/wxycAppEnvironment(_:)`` beside
+    /// the other app-wide observables.
+    ///
+    /// Wired over ``InertPlaybackEngine`` until issue #145 lands
+    /// `AVQueuePlayerEngine` -- a one-line substitution here rather than a
+    /// composition-root change then. Nothing reaches it yet: this app ships no
+    /// transport UI until #145.
+    let playbackController: PlaybackController
     /// Cold-launch Spotlight deep-link state (issue #19 step 7), injected via
     /// `.environment` and bound to RootView's `fullScreenCover`. The resolution
     /// that turns a tapped `album.<id>` into a route lives here — on
@@ -171,6 +181,12 @@ final class AppDependencies {
         // catalog replace. Degrades to online-only (nil) if the file can't open.
         self.binStore = Self.openBinStore(at: binStoreURL, reporter: reporter)
         self.librarySearch = LibrarySearch(api: api, catalogStore: catalogStore, connectivity: connectivity)
+        self.playbackController = PlaybackController(
+            engine: InertPlaybackEngine(),
+            api: api,
+            audioSession: AudioSessionCoordinator(reporter: reporter),
+            reporter: reporter
+        )
     }
 
     /// Open the bin snapshot store at `url`, logging and degrading to `nil` on
@@ -231,6 +247,12 @@ final class AppDependencies {
         self.catalogRefreshService = catalogRefreshService
         self.binStore = nil
         self.librarySearch = LibrarySearch(api: api, catalogStore: catalogStore, connectivity: connectivity)
+        self.playbackController = PlaybackController(
+            engine: InertPlaybackEngine(),
+            api: api,
+            audioSession: AudioSessionCoordinator(reporter: reporter),
+            reporter: reporter
+        )
     }
 
     /// Build the configuration + auth + API client shared by every initializer.

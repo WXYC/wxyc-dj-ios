@@ -24,6 +24,7 @@
 //
 
 import AVFoundation
+import Observation
 import os
 
 /// Configures, activates, and deactivates the app's `AVAudioSession`.
@@ -73,7 +74,19 @@ import os
 /// `activate()`, and no `AsyncStream` on this seam: the handback resume is
 /// this coordinator's own business, finished inline once the deactivation's
 /// generation check has run.
+///
+/// `@Observable` for exactly one property, `isActivated` (issue #144). The
+/// prohibition above is on a *caller orchestrating the handback resume*, and
+/// a read-only observation point does not reintroduce that: `activate()`
+/// returning `false` means **deferred, not failed**, and both states that
+/// produce it self-resolve, so without a signal a `PlaybackController` that
+/// wants to know when the session is genuinely up has nothing to key on.
+/// Every other stored property is `@ObservationIgnored` -- they are this
+/// type's private bookkeeping, and `activationGeneration` in particular is
+/// read from a `nonisolated` context, which the macro's main-actor-isolated
+/// accessors could not serve.
 @MainActor
+@Observable
 final class AudioSessionCoordinator {
     /// Thrown by `activateLocked()` when this coordinator's own deactivation
     /// currently holds `sessionLock`. Not a session failure -- the caller
@@ -107,23 +120,28 @@ final class AudioSessionCoordinator {
     /// check that the two agree.
     private static let cannotInterruptOthersCode = Int(AVAudioSession.ErrorCode.cannotInterruptOthers.rawValue)
 
-    private nonisolated(unsafe) let session: any AudioSessionProtocol
+    @ObservationIgnored private nonisolated(unsafe) let session: any AudioSessionProtocol
     private let maxRetryAttempts: Int
     private let retryDelay: Duration
     private let log = Logger(subsystem: "org.wxyc.dj", category: "playback")
 
     /// Set once, on the first successful pass through `configureCategoryIfNeeded()` -- see behaviour 1.
-    private var categoryConfigured = false
+    @ObservationIgnored private var categoryConfigured = false
 
     /// Whether the session is currently believed active. Cleared only once a
     /// deactivation is *confirmed* (the generation check in behaviour 3
     /// passed and the handback succeeded), never merely attempted.
+    ///
+    /// The one observable property on this type (issue #144), so a consumer
+    /// can *watch* the deferred-activation ramp resolve rather than poll it or
+    /// be handed a callback. Read-only from outside, which is what keeps the
+    /// handback resume coordinator-internal -- see the type's doc comment.
     private(set) var isActivated = false
 
     /// Set while an activation is deferred behind either failure mode in
     /// behaviour 2, so the eventual retry or handback-resume knows there is
     /// something to finish.
-    private(set) var activationPending = false
+    @ObservationIgnored private(set) var activationPending = false
 
     /// The caller's standing instruction: set by `activate()`, cleared by
     /// `deactivate()`. The source gates its three activation re-drive points
@@ -135,16 +153,16 @@ final class AudioSessionCoordinator {
     /// after the caller explicitly asked for it to be released. Deliberately
     /// private: ADR 0008 fixes the consumer's surface at
     /// `activate()`/`deactivate()`, and this must work through those two.
-    private var activationIntended = false
+    @ObservationIgnored private var activationIntended = false
 
     /// The bounded retry loop for behaviour 2's `CannotInterruptOthers` case.
-    private var retryTask: Task<Void, Never>?
+    @ObservationIgnored private var retryTask: Task<Void, Never>?
 
     /// Counts only the bounded-retry loop's own attempts -- never the
     /// self-handback path. `activationRetryAttempts == 0` after a
     /// handback-driven resume is what proves that path never spent the
     /// budget behaviour 2 exists to protect.
-    private(set) var activationRetryAttempts = 0
+    @ObservationIgnored private(set) var activationRetryAttempts = 0
 
     /// Bumped once per *scheduled* handback that reached its continuation,
     /// after the detached deactivation and any resulting resume or re-drive
@@ -158,7 +176,7 @@ final class AudioSessionCoordinator {
     /// scheduled handback. Wait on the number of handbacks expected, never on
     /// the number of calls made, or the barrier can resolve while a re-driven
     /// `setActive(false, ...)` is still in flight.
-    private(set) var deactivationSettledCount = 0
+    @ObservationIgnored private(set) var deactivationSettledCount = 0
 
     /// Whether a scheduled handback is between its `deactivate()` and its
     /// continuation. `isActivated` cannot stand in for this: it is cleared
@@ -171,14 +189,14 @@ final class AudioSessionCoordinator {
     /// generation check and issues a duplicate real
     /// `setActive(false, .notifyOthersOnDeactivation)` -- re-fanning the
     /// resume notification to every other audio app on the device.
-    private var deactivationInFlight = false
+    @ObservationIgnored private var deactivationInFlight = false
 
     /// Whether a handback was asked for while one was already in flight. The
     /// request can't be served immediately and must not be dropped either:
     /// the in-flight one may yet decline as stale, in which case this request
     /// is the only thing left that would ever hand the session back.
     /// Consumed exactly once, by `drainRequestedDeactivation()`.
-    private var deactivationRequested = false
+    @ObservationIgnored private var deactivationRequested = false
 
     /// Serializes every `setActive` call against a deactivation this
     /// coordinator itself may have in flight. `activate()` only ever tries
@@ -186,20 +204,38 @@ final class AudioSessionCoordinator {
     /// -- see `HandbackInProgress`'s doc comment for why.
     private let sessionLock = OSAllocatedUnfairLock()
 
+    /// The app's diagnostic seam (issue #144), for the one wholly silent
+    /// degrade in this file -- see `deactivateLocked(ifGenerationIs:)`'s
+    /// `.failed` arm. `nonisolated let` of a `Sendable` existential, so the
+    /// `nonisolated` deactivation path can call it without hopping back to
+    /// the main actor mid-handback.
+    @ObservationIgnored private nonisolated let reporter: any ErrorReporter
+
     /// Bumped only by a successful `activateLocked()`, which is main-actor
     /// isolated, so the main actor is the sole writer and may read it
     /// unlocked. The deactivation path reads it from off the actor, under
     /// `sessionLock`, which is what makes a stale read impossible.
-    private nonisolated(unsafe) var activationGeneration = 0
+    @ObservationIgnored private nonisolated(unsafe) var activationGeneration = 0
 
+    /// - Parameters:
+    ///   - session: the session seam. Defaults to the process's shared
+    ///     `AVAudioSession` so the composition root can build the production
+    ///     coordinator without naming an AVFoundation type itself; tests pass
+    ///     `FakeAudioSession`.
+    ///   - reporter: defaults to ``NoOpErrorReporter`` -- the same
+    ///     defaulted-to-no-op injection `BinViewModel` and `LoginViewModel`
+    ///     use, so no existing construction site changes and no unit test
+    ///     fires a real event.
     init(
-        session: any AudioSessionProtocol,
+        session: any AudioSessionProtocol = AVAudioSession.sharedInstance(),
         maxRetryAttempts: Int = 4,
-        retryDelay: Duration = .milliseconds(250)
+        retryDelay: Duration = .milliseconds(250),
+        reporter: any ErrorReporter = NoOpErrorReporter()
     ) {
         self.session = session
         self.maxRetryAttempts = maxRetryAttempts
         self.retryDelay = retryDelay
+        self.reporter = reporter
     }
 
     // MARK: - Activation
@@ -389,15 +425,15 @@ final class AudioSessionCoordinator {
             // the next `deactivate()` retries -- which makes a *persistently*
             // failing handback invisible too.
             //
-            // CLAUDE.md's capture-site rule would put an
-            // `ErrorReporter.report` beside this log, since how often
-            // mediaserverd refuses a handback in the field is an aggregate
-            // question no single device's log can answer. It isn't wired here
-            // because this type takes no dependency beyond its session seam
-            // and has no consumer yet (ADR 0008); the injection point belongs
-            // with the `PlaybackController` that arrives in issue #138, where
-            // a reporter is already in scope.
+            // CLAUDE.md's capture-site rule puts an `ErrorReporter.report`
+            // beside this log, since how often mediaserverd refuses a handback
+            // in the field is an aggregate question no single device's log can
+            // answer. It is injected *here* rather than left to a consumer
+            // (issue #144, amending ADR 0008): this runs inside a detached
+            // task and `deactivate()` returns `Void`, so nothing outside this
+            // type can observe the failure at all.
             log.error("Failed to deactivate audio session: \(error)")
+            reporter.report(error, context: "AudioSessionCoordinator.deactivate", extra: [:])
             return false
         case .stale:
             log.info("Skipped deferred audio session deactivation; the session was re-activated")
