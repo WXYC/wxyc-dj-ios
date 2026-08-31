@@ -239,7 +239,7 @@ struct PlaybackInterruptionRouteHandlerTests {
 /// `deallocatingRemovesObservers`. Lock-guarded rather than relying on
 /// `NotificationCenter`'s inherited `Sendable` conformance, matching
 /// `SpyErrorReporter`/`SpyAnalytics`.
-private final class RemoveObserverCountingNotificationCenter: NotificationCenter {
+private final class RemoveObserverCountingNotificationCenter: NotificationCenter, @unchecked Sendable {
     private let removals = OSAllocatedUnfairLock(initialState: 0)
 
     var removeObserverCallCount: Int { removals.withLock { $0 } }

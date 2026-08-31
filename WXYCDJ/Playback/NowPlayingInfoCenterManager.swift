@@ -113,8 +113,11 @@ final class NowPlayingInfoCenterManager {
 
     /// Reflect the current playback state in MPNowPlayingInfoCenter.
     ///
-    /// The sole author of `MPNowPlayingInfoPropertyPlaybackRate` -- see
-    /// `lastKnownIsPlaying`. Nothing else may write that key.
+    /// The sole *source* of the value written to
+    /// `MPNowPlayingInfoPropertyPlaybackRate`, via `lastKnownIsPlaying`.
+    /// `updatePlaybackPosition` writes that key too, but only ever restates
+    /// this mirror -- it never derives a rate of its own. Nothing else may
+    /// decide what the rate is.
     func setPlaybackState(isPlaying: Bool) {
         lastKnownIsPlaying = isPlaying
         mutate { $0[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0 }

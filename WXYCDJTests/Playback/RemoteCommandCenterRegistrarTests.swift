@@ -50,11 +50,18 @@ struct RemoteCommandCenterRegistrarTests {
         #expect(registrar.registeredTargets.count == 5)
     }
 
-    /// Catches: `removeNoOpCommands()` failing to detach and clear — e.g.
-    /// dropping its `registeredTargets.removeAll()`, or the whole method,
-    /// which would leave issue #145 unable to strip the `.noSuchContent`
-    /// no-op off a command it can by then service.
-    @Test("removing detaches every retained target")
+    /// Catches: `removeNoOpCommands()` failing to **clear** the ledger — e.g.
+    /// dropping its `registeredTargets.removeAll()`, or the whole method.
+    ///
+    /// It deliberately does **not** claim to catch a dropped
+    /// `command.removeTarget(target)`: `MPRemoteCommand` exposes no public
+    /// target list and `MPRemoteCommandEvent` cannot be constructed (see this
+    /// file's header), so the detach itself is unobservable from a test. That
+    /// half is held by review, not by this assertion — deleting only the
+    /// `removeTarget` loop leaves this test green while leaving every
+    /// `.noSuchContent` no-op permanently attached, which is the defect the
+    /// retained tokens exist to prevent.
+    @Test("removing clears every retained target")
     func removalClearsEveryTarget() {
         let registrar = RemoteCommandCenterRegistrar()
         registrar.registerNoOpCommands()
@@ -73,6 +80,9 @@ struct RemoteCommandCenterRegistrarTests {
     @Test("unsupported transport commands are explicitly disabled")
     func unsupportedCommandsAreDisabled() {
         let center = MPRemoteCommandCenter.shared()
+        // The complement of the handled five over the WHOLE command centre,
+        // not just the six wxyc-ios-64 names: anything absent from both lists
+        // stays enabled at the framework default with no target.
         let unsupported: [(name: String, command: MPRemoteCommand)] = [
             ("stop", center.stopCommand),
             ("seekForward", center.seekForwardCommand),
@@ -80,6 +90,15 @@ struct RemoteCommandCenterRegistrarTests {
             ("skipForward", center.skipForwardCommand),
             ("skipBackward", center.skipBackwardCommand),
             ("changePlaybackPosition", center.changePlaybackPositionCommand),
+            ("changePlaybackRate", center.changePlaybackRateCommand),
+            ("changeRepeatMode", center.changeRepeatModeCommand),
+            ("changeShuffleMode", center.changeShuffleModeCommand),
+            ("rating", center.ratingCommand),
+            ("like", center.likeCommand),
+            ("dislike", center.dislikeCommand),
+            ("bookmark", center.bookmarkCommand),
+            ("enableLanguageOption", center.enableLanguageOptionCommand),
+            ("disableLanguageOption", center.disableLanguageOptionCommand),
         ]
         // Start from the framework default (everything enabled) so the
         // assertions below can only pass if registration wrote the flag.
