@@ -78,9 +78,13 @@ import os
 /// `@Observable` for exactly one property, `isActivated` (issue #144). The
 /// prohibition above is on a *caller orchestrating the handback resume*, and
 /// a read-only observation point does not reintroduce that: `activate()`
-/// returning `false` means **deferred, not failed**, and both states that
-/// produce it self-resolve, so without a signal a `PlaybackController` that
-/// wants to know when the session is genuinely up has nothing to key on.
+/// returning `false` means **deferred, not failed** on two of its three
+/// false-producing arms, and those two self-resolve, so without a signal a
+/// `PlaybackController` that wants to know when the session is genuinely up
+/// has nothing to key on. The third arm, `.failed`, arms neither a retry nor
+/// `activationPending` and can never set `isActivated` -- which is why a
+/// caller must discriminate on `activationPending` rather than treat every
+/// `false` as a deferral (see `hardActivationFailureDoesNotScheduleARetry`).
 /// Every other stored property is `@ObservationIgnored` -- they are this
 /// type's private bookkeeping, and `activationGeneration` in particular is
 /// read from a `nonisolated` context, which the macro's main-actor-isolated
