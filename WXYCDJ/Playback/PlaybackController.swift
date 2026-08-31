@@ -228,11 +228,14 @@ final class PlaybackController: PlaybackInterruptionContext {
     /// card: the Lock Screen renders working play/pause/next with nothing to
     /// say what is playing.
     ///
-    /// **A cleared card stays cleared only because of that cursor gate.** The
-    /// clear and the `engine.pause()` that provokes the engine's own
-    /// `.timeControl(false)` happen in the same main-actor turn, so the mirror
-    /// would otherwise re-commit a rate-only dictionary one turn after every
-    /// stop-while-playing. See the `.timeControl` arm.
+    /// **A cleared card stays cleared only because of that cursor gate.** Each
+    /// queue-ending exit is followed one main-actor turn later by the engine's
+    /// own `.timeControl(false)` — after `stop()`/`fail(_:)` because they call
+    /// `engine.pause()` in the same turn as the clear, and after the
+    /// end-of-queue arm, which calls no engine method, because `AVQueuePlayer`
+    /// moves `timeControlStatus` itself when `currentItem` goes nil. Without
+    /// the gate the mirror would re-commit a rate-only dictionary one turn
+    /// after every one of them. See the `.timeControl` arm.
     @ObservationIgnored private let nowPlaying: NowPlayingInfoCenterManager?
     @ObservationIgnored private let reporter: any ErrorReporter
     /// The bound on a deferred activation — see ``defaultActivationWaitLimit``.
@@ -499,11 +502,21 @@ final class PlaybackController: PlaybackInterruptionContext {
 
     /// Routes one engine event.
     ///
-    /// **Every arm is gated on there being a live cursor**, because an engine
-    /// tearing an item down reports on it *after* this controller has moved
-    /// on, and two of the four arms are writes that nothing would ever
-    /// correct. `.itemEnded` and `.firstFrame` carried their own guards from
-    /// the start; `.timeControl` and `.failed` are the two this closed later.
+    /// **Every arm refuses to act on a queue this controller has already left**,
+    /// because an engine tearing an item down reports on it *after* this
+    /// controller has moved on, and some of those writes are ones nothing would
+    /// ever correct. `.itemEnded` and `.failed` gate on a live cursor;
+    /// `.firstFrame` gates on `cuedAt`, which every queue-ending exit nils.
+    /// `.timeControl` is the one split arm: its `isPlaying` write is
+    /// deliberately **ungated** (a `false` can only agree with an empty queue,
+    /// and a later event can correct it), while its Lock Screen mirror is
+    /// cursor-gated because that surface is external and self-correcting.
+    /// See the arm itself for the argument.
+    ///
+    /// The gate is on cursor *liveness*, not queue *identity*: a stale event
+    /// yielded for album A and drained after the DJ has started album B still
+    /// passes. Closing that needs a queue generation the four-event seam does
+    /// not carry — [#150](https://github.com/WXYC/wxyc-dj-ios/issues/150).
     private func handle(_ event: PlaybackEngineEvent) {
         switch event {
         case .timeControl(let playing):
@@ -520,10 +533,13 @@ final class PlaybackController: PlaybackInterruptionContext {
             // event can correct, so an ungated `false` costs nothing. The Lock
             // Screen card is an *external* surface nothing will correct, and a
             // late `false` there does not merely restate a cleared card -- it
-            // resurrects one. Every queue-ending exit clears the card in the
-            // same main-actor turn it calls `engine.pause()`, and the real
-            // engine answers that pause with a KVO `.timeControl(false)` one
-            // turn later; `setPlaybackState` seeds `cachedInfo ?? [:]`, so it
+            // resurrects one. Every queue-ending exit clears the card, and a
+            // late `.timeControl(false)` follows each of them one turn later --
+            // `stop()` and `fail(_:)` because they call `engine.pause()` in the
+            // same main-actor turn as the clear, and the end-of-queue arm,
+            // which calls no engine method at all, because `AVQueuePlayer`'s
+            // `currentItem` going nil moves `timeControlStatus` on its own.
+            // `setPlaybackState` seeds `cachedInfo ?? [:]`, so it
             // would commit a dictionary holding nothing but a playback rate and
             // set `playbackState` back to `.paused`. End state after any stop
             // from playing: a blank card with `.paused` rather than `.stopped`,
@@ -768,6 +784,17 @@ final class PlaybackController: PlaybackInterruptionContext {
     /// wait is deliberately inside the interval: a DJ waiting on another app's
     /// session hand-back is waiting on playback, and this is the only value
     /// that would show it.
+    ///
+    /// One consequence to know: a **mid-track** pause→resume stamps an anchor
+    /// no `.firstFrame` will answer, since the engine fires that at most once
+    /// per cued item and this item already spent it. The anchor dangles until
+    /// the next ``moveToNextItem()`` or teardown overwrites it, and is benign
+    /// only because the next `.firstFrame` can't arrive without a `currentItem`
+    /// change, which the engine precedes on the same main queue with the
+    /// `.itemEnded` that restamps. That ordering is a property of the adapter's
+    /// GCD serialization, **not** something the four-event seam promises — so
+    /// treat it as a fact about `AVQueuePlayerEngine`, not a guarantee to lean
+    /// on if a second engine ever conforms.
     private func beginPlayback() {
         cuedAt = now()
         cancelActivationWait()
