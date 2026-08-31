@@ -5,9 +5,10 @@
 //  Turns a signed DigitalArchivePlaybackManifest into a queue and drives it
 //  over the PlaybackEngine seam (issue #144): rendition selection, the queue
 //  cursor, the requested-vs-actual transport split, the manifest-expiry
-//  policy, the one-shot refetch a media 403 earns, and the cue→first-frame
-//  interval issue #139 reports. No AVFoundation: everything here is a
-//  decision, and every decision is exercised against SpyPlaybackEngine.
+//  policy, the one-shot refetch a media 403 earns, the wait on a deferred
+//  audio-session activation, and the cue→first-frame interval issue #139
+//  reports. No AVFoundation: everything here is a decision, and every decision
+//  is exercised against SpyPlaybackEngine.
 //
 //  Created by Jake Bromberg on 08/30/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -27,12 +28,34 @@ enum PlaybackFailure: Equatable, Sendable {
     /// soon to be worth starting an album on. See
     /// ``PlaybackController/minimumManifestLifetime``.
     case manifestExpiring
+    /// The manifest carried **no tracks at all**.
+    ///
+    /// Deliberately distinct from ``noPlayableRendition``, which is "this app
+    /// can't play any of the formats on offer". An empty `tracks[]` means the
+    /// album has no bound `digital_asset_file` rows — the bind job hasn't run
+    /// for it, or its assets were cleared — which is a server-side fact about
+    /// coverage, not a client-side codec limitation. Folding the two together
+    /// makes an unbound album indistinguishable from an unplayable one, and
+    /// because this enum is closed and issue #139's `ArchivePlaybackFailureReason`
+    /// / issue #145's UI switch over it with no `default:`, a distinction not
+    /// drawn here can never be recovered downstream.
+    case emptyManifest
     /// No track in the manifest carried a rendition this app can play.
     case noPlayableRendition
     /// The engine gave up. Carries the engine's own closed classification.
     case engine(PlaybackEngineFailure)
     /// A media 403 earned a manifest refetch and the refetch itself failed.
     case refetchFailed
+    /// The audio session never came up within
+    /// ``PlaybackController/defaultActivationWaitLimit``.
+    ///
+    /// `AudioSessionCoordinator.activate()` returning `false` means *deferred*,
+    /// and both deferral states self-resolve — but neither is guaranteed to,
+    /// and ADR 0008 Amendment 1 rejects starting the engine anyway precisely
+    /// because that produces "no audio, no error, nothing to debug". This is
+    /// the explicit, diagnosable alternative: the queue is torn down, the
+    /// session handed back, and the give-up reported.
+    case audioSessionUnavailable
 }
 
 /// Owns the playback queue and the transport state the UI renders.
@@ -73,6 +96,23 @@ final class PlaybackController {
     /// and the reason this margin is not smaller.)
     nonisolated static let minimumManifestLifetime: TimeInterval = 600
 
+    /// How long this controller will wait for a **deferred** audio-session
+    /// activation before giving up and failing explicitly.
+    ///
+    /// `AudioSessionCoordinator.activate()` is synchronous and returns `false`
+    /// for *deferred, not failed* (ADR 0008 Amendment 1). Two things produce
+    /// that, and this bound covers both with margin: the coordinator's own
+    /// bounded retry against another app holding the session
+    /// (`maxRetryAttempts` 4 × `retryDelay` 250 ms = **1 s**), and its
+    /// self-handback resume, which waits out a `setActive(false, …)` XPC round
+    /// trip measured at **~1 s on device**. Three seconds leaves room for one
+    /// of those to overlap the other (a handback landing mid-retry re-drives
+    /// the activation from the continuation) without being long enough that a
+    /// DJ who tapped play sits in front of an indefinite spinner: at the bound
+    /// the failure is explicit — ``PlaybackFailure/audioSessionUnavailable``,
+    /// logged and reported — rather than silent.
+    nonisolated static let defaultActivationWaitLimit: Duration = .seconds(3)
+
     // MARK: - Observable state
 
     /// The full cued queue. Survives a refetch: a refetch replaces the URLs,
@@ -106,6 +146,10 @@ final class PlaybackController {
     /// observation (ADR 0008 keeps it to four events), so this is a commanded
     /// value, not a sampled one — a scrubber reading it gets what it last set
     /// until issue #145's engine supplies real time updates.
+    ///
+    /// That is also why the post-403 refetch cannot restore the playhead: this
+    /// value is what *we* asked for, not where the DJ actually was, so there
+    /// is nothing here to seek back to. See ADR 0008 Amendment 5.
     private(set) var position: TimeInterval = 0
 
     /// The most recent failure, or `nil` if the current queue has had none.
@@ -133,6 +177,10 @@ final class PlaybackController {
     /// one; `AppDependencies` wires the real coordinator.
     @ObservationIgnored private let audioSession: AudioSessionCoordinator?
     @ObservationIgnored private let reporter: any ErrorReporter
+    /// The bound on a deferred activation — see ``defaultActivationWaitLimit``.
+    /// Injected so a test can drive the give-up arm in milliseconds rather
+    /// than sitting out three real seconds.
+    @ObservationIgnored private let activationWaitLimit: Duration
     /// Wall clock, for the ``minimumManifestLifetime`` comparison — the one
     /// thing here that genuinely compares against a server-supplied calendar
     /// instant rather than measuring an elapsed interval.
@@ -158,13 +206,25 @@ final class PlaybackController {
     /// The in-flight refetch, cancelled by any command that supersedes it —
     /// the `SearchViewModel` discipline, applied to the one task this type
     /// starts on its own.
+    ///
+    /// **A `pause()` is deliberately not one of those commands.** Pausing does
+    /// not supersede the album; the DJ still wants it, and the refetch is the
+    /// only thing that can make its URLs playable again — cancelling would
+    /// leave the queue holding dead URLs and turn the next `resume()` into a
+    /// second 403 with the refetch budget already spent. The pause is honoured
+    /// by ``cue(from:startPlaying:)`` instead: the refreshed queue is loaded
+    /// but not started. See ``pause()``.
     @ObservationIgnored private var refetchTask: Task<Void, Never>?
+    /// The in-flight wait on a deferred audio-session activation, cancelled by
+    /// anything that supersedes the start it was going to issue.
+    @ObservationIgnored private var activationWaitTask: Task<Void, Never>?
 
     init(
         engine: any PlaybackEngine,
         api: APIClient,
         audioSession: AudioSessionCoordinator? = nil,
         reporter: any ErrorReporter = NoOpErrorReporter(),
+        activationWaitLimit: Duration = PlaybackController.defaultActivationWaitLimit,
         nowDate: @escaping @Sendable () -> Date = { Date() },
         now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now }
     ) {
@@ -172,6 +232,7 @@ final class PlaybackController {
         self.api = api
         self.audioSession = audioSession
         self.reporter = reporter
+        self.activationWaitLimit = activationWaitLimit
         self.nowDate = nowDate
         self.now = now
         startObservingEngine()
@@ -189,20 +250,35 @@ final class PlaybackController {
     @discardableResult
     func start(manifest: DigitalArchivePlaybackManifest, albumTitle: String, artistName: String) -> Bool {
         lastFailure = nil
-        didRefetchManifest = false
-        refetchTask?.cancel()
-        refetchTask = nil
+        // Forget the outgoing album *before* the guards, not after. Both
+        // refusal arms below `return` early, and the assignment they used to
+        // return ahead of was the only thing that moved `albumID` on — so a
+        // refused start left the **previous** album's id in place beside a
+        // freshly-reset refetch budget, and a late `.mediaForbidden` from the
+        // album being torn down would then refetch and play an album the DJ
+        // had just navigated away from.
+        clearAlbumIdentity()
+        cancelActivationWait()
 
         guard hasUsableLifetime(manifest) else {
             playbackLog.info("Refusing playback: manifest for album \(manifest.libraryId, privacy: .public) expires too soon")
-            refuse(.manifestExpiring)
+            fail(.manifestExpiring)
+            return false
+        }
+
+        // An empty `tracks[]` is a coverage fact, not a codec one -- see
+        // ``PlaybackFailure/emptyManifest``. Checked before selection so the
+        // two never collapse into one indistinguishable refusal.
+        guard !manifest.tracks.isEmpty else {
+            playbackLog.info("Refusing playback: manifest for album \(manifest.libraryId, privacy: .public) carries no tracks")
+            fail(.emptyManifest)
             return false
         }
 
         let items = Self.playbackItems(from: manifest, albumTitle: albumTitle, artistName: artistName)
         guard !items.isEmpty else {
             playbackLog.info("Refusing playback: no playable rendition for album \(manifest.libraryId, privacy: .public)")
-            refuse(.noPlayableRendition)
+            fail(.noPlayableRendition)
             return false
         }
 
@@ -226,8 +302,18 @@ final class PlaybackController {
         }
     }
 
+    /// Pauses, and withdraws any start this controller was still waiting to
+    /// issue.
+    ///
+    /// Two of those are in flight-able and both used to outlive the pause. The
+    /// **activation wait** is cancelled outright — the engine start it was
+    /// going to make is exactly what the DJ just cancelled. The **one-shot 403
+    /// refetch** is deliberately left running: it is not superseded by a pause
+    /// (see ``refetchTask``), and its re-cue reads ``isPlaybackRequested`` so
+    /// it loads the refreshed queue without starting it.
     func pause() {
         isPlaybackRequested = false
+        cancelActivationWait()
         engine.pause()
     }
 
@@ -236,8 +322,7 @@ final class PlaybackController {
     func resume() {
         guard currentItem != nil else { return }
         isPlaybackRequested = true
-        audioSession?.activate()
-        engine.play()
+        beginPlayback()
     }
 
     /// Skips forward. Distinct from ``PlaybackEngineEvent/itemEnded`` handling:
@@ -257,8 +342,8 @@ final class PlaybackController {
 
     /// Ends playback and hands the audio session back.
     func stop() {
-        refetchTask?.cancel()
-        refetchTask = nil
+        clearAlbumIdentity()
+        cancelActivationWait()
         isPlaybackRequested = false
         isPlaying = false
         cuedAt = nil
@@ -328,9 +413,22 @@ final class PlaybackController {
         }
     }
 
+    /// Routes one engine event.
+    ///
+    /// **Every arm is gated on there being a live cursor**, because an engine
+    /// tearing an item down reports on it *after* this controller has moved
+    /// on, and two of the four arms are writes that nothing would ever
+    /// correct. `.itemEnded` and `.firstFrame` carried their own guards from
+    /// the start; `.timeControl` and `.failed` are the two this closed later.
     private func handle(_ event: PlaybackEngineEvent) {
         switch event {
         case .timeControl(let playing):
+            // A `false` is always safe to apply -- it can only ever agree with
+            // an empty queue. A `true` is not: a yield arriving after `stop()`
+            // would claim playback with `isPlaybackRequested == false` and
+            // `currentItem == nil`, and `.timeControl` only fires on
+            // *transitions*, so no later event would ever put it right.
+            guard !playing || currentIndex != nil else { return }
             isPlaying = playing
         case .itemEnded:
             moveToNextItem()
@@ -339,6 +437,12 @@ final class PlaybackController {
             timeToFirstFrame = now() - cuedAt
             self.cuedAt = nil
         case .failed(let failure):
+            // The costliest of the four to act on late: a `.mediaForbidden`
+            // from an item being discarded would spend the refetch budget and
+            // re-cue an album the DJ has already stopped, been refused off, or
+            // played to the end -- restarting audio and re-activating the
+            // audio session that was just handed back.
+            guard currentIndex != nil else { return }
             handleFailure(failure)
         }
     }
@@ -353,7 +457,13 @@ final class PlaybackController {
         guard queue.indices.contains(next) else {
             currentIndex = nil
             isPlaybackRequested = false
+            // Nothing is playing once the queue runs out, and `.timeControl`
+            // fires only on transitions -- so the engine's own `false` may
+            // never arrive, and (since `handle(_:)` now refuses a `true` over
+            // an empty queue) could not be applied if it did.
+            isPlaying = false
             cuedAt = nil
+            cancelActivationWait()
             audioSession?.deactivate()
             return
         }
@@ -381,8 +491,6 @@ final class PlaybackController {
 
     private func refetchManifest(albumID: Int) async {
         defer { refetchSettledCount += 1 }
-        let resumeAt = currentIndex ?? 0
-        let resumeFileID = currentItem?.fileId
         let manifest: DigitalArchivePlaybackManifest
         do {
             manifest = try await api.albumPlayback(albumId: albumID)
@@ -418,46 +526,207 @@ final class PlaybackController {
             fail(.manifestExpiring)
             return
         }
+        guard !manifest.tracks.isEmpty else {
+            fail(.emptyManifest)
+            return
+        }
         let items = Self.playbackItems(from: manifest, albumTitle: albumTitle, artistName: artistName)
         guard !items.isEmpty else {
             fail(.noPlayableRendition)
             return
         }
+
+        // **The cursor is read here, after the `await`, and never before it.**
+        // A refetch is a suspension the rest of this controller keeps running
+        // across: an `.itemEnded`, an `advance()`, or a `pause()` can all land
+        // in that window, and a cursor snapshotted at the top would be stale
+        // by the time it was applied -- silently rewinding the queue to a
+        // track that had already finished. This is the same shape, and the
+        // same answer, as `AuthService.refreshJWT` re-checking `sessionEpoch`
+        // on its success path and `currentJWT` re-checking token identity:
+        // `Task.isCancelled` cannot stand in for it, because none of those
+        // three commands cancels this task.
+        guard let resumeAt = currentIndex else {
+            // The queue ran out while the refetch was in flight. There is
+            // nothing to resume, and re-cueing from the top would restart an
+            // album the DJ has already finished.
+            return
+        }
+        let resumeFileID = currentItem?.fileId
+
         expiresAt = manifest.expiresAt
         queue = items
         // Resume on the same *track*, not merely the same index: `file_id` is
         // stable across manifest refetches (the schema says so explicitly, for
         // a future offline cache key), so a refreshed manifest whose track
-        // list shifted still resumes where the DJ was rather than somewhere
-        // adjacent. The index is the fallback for the case the track is gone.
+        // list shifted still resumes on the track the DJ was on rather than on
+        // whatever now sits at that array index. The index is the fallback for
+        // the case the track is gone. **It resumes the track, not the
+        // playhead** -- the recovered track restarts from 0:00, because this
+        // seam carries no time to seek back to; see ADR 0008 Amendment 5 and
+        // issue #145.
         let resumed = resumeFileID.flatMap { id in items.firstIndex { $0.fileId == id } }
             ?? min(resumeAt, items.count - 1)
         currentIndex = resumed
-        cue(from: resumed)
+        // A `pause()` that landed in the refetch window is honoured: the
+        // refreshed queue is loaded (so a later `resume()` plays a live URL
+        // rather than the dead one that 403'd) but not started.
+        cue(from: resumed, startPlaying: isPlaybackRequested)
     }
 
     // MARK: - Internals
 
-    /// Loads the queue from `index` onward and starts it. The seam has no
-    /// "load at index", so the suffix *is* the cue: the engine's queue always
-    /// begins at the item the controller's cursor points to, which keeps the
-    /// two from drifting across a refetch.
-    private func cue(from index: Int) {
+    /// Loads the queue from `index` onward and, unless `startPlaying` is
+    /// `false`, starts it. The seam has no "load at index", so the suffix *is*
+    /// the cue: the engine's queue always begins at the item the controller's
+    /// cursor points to, which keeps the two from drifting across a refetch.
+    ///
+    /// `startPlaying: false` is the post-403 re-cue arriving after the DJ
+    /// paused — the queue must be refreshed (its old URLs are dead) without
+    /// audio resuming against an explicit pause. `cuedAt` is left `nil` there
+    /// because nothing was started, so no first frame is coming to time.
+    private func cue(from index: Int, startPlaying: Bool = true) {
         guard queue.indices.contains(index) else { return }
         position = 0
+        engine.load(Array(queue[index...]))
+        guard startPlaying else {
+            cuedAt = nil
+            return
+        }
         isPlaybackRequested = true
         cuedAt = now()
-        engine.load(Array(queue[index...]))
-        audioSession?.activate()
+        beginPlayback()
+    }
+
+    /// Starts the engine, waiting first if the audio session's activation was
+    /// deferred.
+    ///
+    /// `AudioSessionCoordinator.activate()` is synchronous and prompt, and a
+    /// `false` from it means **deferred, not failed** — two states produce it
+    /// (another app holds the session; this coordinator's own handback is
+    /// mid-flight) and both self-resolve. Playing anyway is the alternative
+    /// ADR 0008 Amendment 1 records as *rejected*: it produces no audio, no
+    /// error, and nothing to debug. So a `false` parks the start on
+    /// ``waitForActivation(_:limit:)`` instead, bounded by
+    /// ``defaultActivationWaitLimit``.
+    ///
+    /// What does **not** move: ``isPlaybackRequested`` is already `true` by the
+    /// time this runs, set synchronously by the transport call, so a tap still
+    /// renders at once. And the handback resume stays the coordinator's own
+    /// business — this reads ``AudioSessionCoordinator/isActivated`` and never
+    /// drives it.
+    private func beginPlayback() {
+        cancelActivationWait()
+        guard let audioSession else {
+            engine.play()
+            return
+        }
+        if audioSession.activate() {
+            engine.play()
+            return
+        }
+        let limit = activationWaitLimit
+        activationWaitTask = Task { [weak self] in
+            let didActivate = await Self.waitForActivation(audioSession, limit: limit)
+            guard !Task.isCancelled else { return }
+            self?.finishDeferredActivation(didActivate: didActivate)
+        }
+    }
+
+    /// Suspends until `session` reports itself active, or `limit` elapses.
+    ///
+    /// Observation, not polling: `isActivated` is the one tracked property on
+    /// the coordinator and exists for exactly this (ADR 0008 Amendment 1). The
+    /// timeout rides a sleeping task the change callback *cancels*, rather
+    /// than a second racer in a task group — a group awaits all its children
+    /// before returning, and an observation callback that never fires would
+    /// leave one parked forever.
+    ///
+    /// `onChange` fires on the *will*-set, so the value is re-read afterwards
+    /// rather than assumed: both writers of `isActivated` are main-actor
+    /// isolated, so by the time this `@MainActor` waiter is resumed the write
+    /// (and anything else in that same turn — a handback continuation clears
+    /// the flag and then re-drives the deferred activation, both before it
+    /// yields) has completed. Hence the loop rather than a single wait.
+    @MainActor
+    private static func waitForActivation(_ session: AudioSessionCoordinator, limit: Duration) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: limit)
+        while !session.isActivated {
+            let remaining = ContinuousClock.now.duration(to: deadline)
+            guard remaining > .zero else { return false }
+            let sleeper = Task { @MainActor in try? await Task.sleep(for: remaining) }
+            withObservationTracking {
+                _ = session.isActivated
+            } onChange: {
+                sleeper.cancel()
+            }
+            await withTaskCancellationHandler {
+                await sleeper.value
+            } onCancel: {
+                sleeper.cancel()
+            }
+            if Task.isCancelled { return false }
+        }
+        return true
+    }
+
+    /// Applies the outcome of a deferred activation.
+    ///
+    /// The give-up arm is the point: it is explicit and diagnosable — the
+    /// queue torn down, the session handed back, ``PlaybackFailure/audioSessionUnavailable``
+    /// recorded, the give-up reported — rather than starting the engine anyway
+    /// and reproducing the silence ADR 0008 Amendment 1 rejects three seconds
+    /// later.
+    private func finishDeferredActivation(didActivate: Bool) {
+        activationWaitTask = nil
+        // Superseded while we waited: a pause, a stop, a different album, or a
+        // failure. Nothing here is that caller's to undo.
+        guard isPlaybackRequested, currentItem != nil else { return }
+        guard didActivate else {
+            playbackLog.error("Audio session never activated; abandoning playback")
+            reporter.report(AudioSessionActivationTimeout(), context: "PlaybackController.activation", extra: [:])
+            fail(.audioSessionUnavailable)
+            return
+        }
         engine.play()
+    }
+
+    /// The error the give-up above reports. A bare type name, deliberately
+    /// carrying no payload: `SentryErrorReporter` renders an uncurated error
+    /// through `String(describing:)`, and there is nothing about this failure
+    /// worth naming that a presigned URL or a server string could ride along
+    /// with.
+    private struct AudioSessionActivationTimeout: Error {}
+
+    private func cancelActivationWait() {
+        activationWaitTask?.cancel()
+        activationWaitTask = nil
     }
 
     private func hasUsableLifetime(_ manifest: DigitalArchivePlaybackManifest) -> Bool {
         manifest.expiresAt.timeIntervalSince(nowDate()) >= Self.minimumManifestLifetime
     }
 
+    /// Forgets which album the queue belongs to, and drops the refetch that
+    /// only made sense for it.
+    ///
+    /// Shared by ``start(manifest:albumTitle:artistName:)``, ``stop()`` and
+    /// ``fail(_:)``, so no exit can leave `albumID` pointing at an album this
+    /// controller has moved off while `didRefetchManifest` is reset to a fresh
+    /// budget — the pairing that let a late `.mediaForbidden` refetch and play
+    /// something the DJ never asked for. `handle(_:)`'s live-cursor gate closes
+    /// the same door from the other side; both are cheap and neither is a
+    /// reason to drop the other.
+    private func clearAlbumIdentity() {
+        albumID = nil
+        expiresAt = nil
+        didRefetchManifest = false
+        refetchTask?.cancel()
+        refetchTask = nil
+    }
+
     /// Ends the current queue: the engine stops, its queue is emptied, and
-    /// the session is handed back. Shared by ``stop()`` and ``refuse(_:)`` so
+    /// the session is handed back. Shared by ``stop()`` and ``fail(_:)`` so
     /// there is one teardown rather than two that can drift.
     private func clearQueue() {
         position = 0
@@ -468,28 +737,43 @@ final class PlaybackController {
         audioSession?.deactivate()
     }
 
-    /// Records a refusal from ``start(manifest:albumTitle:artistName:)``,
-    /// ending whatever was playing first.
+    /// Records a failure and ends the queue it belonged to.
     ///
-    /// The teardown is the point. ``fail(_:)`` alone zeroes this controller's
-    /// transport state without touching the engine, which is right for an
-    /// engine-reported failure (the engine has already stopped) and wrong for
-    /// a refusal: a DJ playing album A who taps an album B whose manifest is
-    /// about to expire would be left hearing A under a transport that reads
-    /// stopped, with `currentItem` still pointing at A and
-    /// ``togglePlayPause()`` issuing a *second* `play()` on a queue already
-    /// running. `.timeControl` only fires on transitions, so nothing would
-    /// correct it. Conditional on there being a queue, so a refusal from idle
-    /// still reaches the engine not at all.
-    private func refuse(_ failure: PlaybackFailure) {
-        if !queue.isEmpty { clearQueue() }
-        fail(failure)
-    }
-
+    /// **The teardown is not optional, and it is what this used to be missing.**
+    /// This is one of the three queue-ending exits — the other two being
+    /// `moveToNextItem()`'s end-of-queue arm and a start refused before
+    /// anything was cued — and it was the only one that never handed the audio
+    /// session back. A `.decodeFailed`, a second `.mediaForbidden`, or a
+    /// `.refetchFailed` therefore left `AVAudioSession` active indefinitely,
+    /// with Music/Podcasts still interrupted and (no transport UI shipped) no
+    /// way for a DJ to reach ``stop()``. It also left `queue`/`currentItem`
+    /// populated with URLs known to be dead, so ``togglePlayPause()`` would
+    /// replay them.
+    ///
+    /// The teardown is conditional on there being a queue, so a refusal from
+    /// idle still reaches the engine not at all — the property
+    /// `start(manifest:albumTitle:artistName:)`'s refusal arms need, since a DJ
+    /// playing album A who taps an about-to-expire album B must stop hearing A
+    /// rather than be left with a transport that reads stopped over a queue
+    /// still running.
     private func fail(_ failure: PlaybackFailure) {
+        clearAlbumIdentity()
+        cancelActivationWait()
+        if !queue.isEmpty { clearQueue() }
         lastFailure = failure
         isPlaybackRequested = false
         isPlaying = false
         cuedAt = nil
+    }
+
+    /// Cancels the engine-event consumer.
+    ///
+    /// The task holds only a `weak self`, so it never keeps this controller
+    /// alive — it just parks on the stream forever once nobody is left to
+    /// deliver to, one leaked task per controller ever built. `Task` is
+    /// `Sendable`, which is what lets a `@MainActor` class's nonisolated
+    /// `deinit` touch it.
+    deinit {
+        eventsTask?.cancel()
     }
 }

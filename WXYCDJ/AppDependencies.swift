@@ -12,6 +12,7 @@
 //  Copyright © 2026 WXYC. All rights reserved.
 //
 
+import AVFoundation
 import Foundation
 import Observation
 import OSLog
@@ -99,11 +100,18 @@ final class AppDependencies {
     private var presentationToken = 0
 
     convenience init() {
+        // Built once and shared: the coordinator wants the same reporter the
+        // rest of the graph gets, and this is the **only** place in the app
+        // that names the process-wide `AVAudioSession` (issue #144 review) --
+        // `AudioSessionCoordinator.init` takes `session:` without a default so
+        // no test path can reach the real one by omission.
+        let reporter = SentryErrorReporter()
         self.init(
             catalogStoreURL: Self.defaultCatalogStoreURL(),
             binStoreURL: Self.defaultBinStoreURL(),
-            reporter: SentryErrorReporter(),
-            analytics: PostHogAnalytics()
+            reporter: reporter,
+            analytics: PostHogAnalytics(),
+            audioSession: AudioSessionCoordinator(session: AVAudioSession.sharedInstance(), reporter: reporter)
         )
     }
 
@@ -115,12 +123,16 @@ final class AppDependencies {
     /// `reporter` defaults to ``NoOpErrorReporter`` -- see ``errorReporter``'s
     /// doc comment for why only ``init()`` overrides it. `analytics` defaults
     /// to ``NoOpAnalytics`` for the identical reason (see ``analytics``'s doc
-    /// comment).
+    /// comment). `audioSession` defaults to `nil` on the same principle: the
+    /// inert value is the default, and `PlaybackController` treats a `nil`
+    /// coordinator as "no session to manage", so no test path stands the
+    /// process-wide `AVAudioSession` up by omission.
     init(
         catalogStoreURL: URL?,
         binStoreURL: URL? = nil,
         reporter: any ErrorReporter = NoOpErrorReporter(),
-        analytics: any Analytics = NoOpAnalytics()
+        analytics: any Analytics = NoOpAnalytics(),
+        audioSession: AudioSessionCoordinator? = nil
     ) {
         self.errorReporter = reporter
         self.analytics = analytics
@@ -184,7 +196,7 @@ final class AppDependencies {
         self.playbackController = PlaybackController(
             engine: InertPlaybackEngine(),
             api: api,
-            audioSession: AudioSessionCoordinator(reporter: reporter),
+            audioSession: audioSession,
             reporter: reporter
         )
     }
@@ -233,7 +245,8 @@ final class AppDependencies {
         catalogStore: any CatalogStore,
         catalogRefreshService: CatalogRefreshService? = nil,
         reporter: any ErrorReporter = NoOpErrorReporter(),
-        analytics: any Analytics = NoOpAnalytics()
+        analytics: any Analytics = NoOpAnalytics(),
+        audioSession: AudioSessionCoordinator? = nil
     ) {
         self.errorReporter = reporter
         self.analytics = analytics
@@ -250,7 +263,7 @@ final class AppDependencies {
         self.playbackController = PlaybackController(
             engine: InertPlaybackEngine(),
             api: api,
-            audioSession: AudioSessionCoordinator(reporter: reporter),
+            audioSession: audioSession,
             reporter: reporter
         )
     }

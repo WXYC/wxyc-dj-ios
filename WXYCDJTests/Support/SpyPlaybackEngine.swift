@@ -34,6 +34,7 @@ final class SpyPlaybackEngine: PlaybackEngine {
     let events: AsyncStream<PlaybackEngineEvent>
     private let continuation: AsyncStream<PlaybackEngineEvent>.Continuation
     private let state = OSAllocatedUnfairLock(initialState: [Command]())
+    private let terminated = OSAllocatedUnfairLock(initialState: false)
 
     init() {
         // Unbounded (the default) on purpose: a test emits before the
@@ -43,6 +44,28 @@ final class SpyPlaybackEngine: PlaybackEngine {
         let (stream, continuation) = AsyncStream<PlaybackEngineEvent>.makeStream()
         self.events = stream
         self.continuation = continuation
+        // Records that the stream stopped being consumed -- either because
+        // `finish()` was called or because the consuming task was cancelled.
+        // That second case is the only observable proof that
+        // `PlaybackController.deinit` cancelled its events task; without it a
+        // leaked, parked consumer looks exactly like a healthy one.
+        let terminated = self.terminated
+        continuation.onTermination = { _ in
+            terminated.withLock { $0 = true }
+        }
+    }
+
+    /// Whether the event stream stopped being consumed. See `init`.
+    var isEventStreamTerminated: Bool { terminated.withLock { $0 } }
+
+    /// Ends the stream, as a real engine's teardown would. `deinit` calls it
+    /// too, so a spy that outlives nothing still can't strand a consumer.
+    func finish() {
+        continuation.finish()
+    }
+
+    deinit {
+        continuation.finish()
     }
 
     /// Every command, in call order.
