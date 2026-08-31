@@ -106,6 +106,7 @@ targets:
         UIBackgroundModes:
           - fetch
           - processing
+          - audio
         BGTaskSchedulerPermittedIdentifiers:
           - org.wxyc.dj.catalog.refresh
           - org.wxyc.dj.catalog.reindex

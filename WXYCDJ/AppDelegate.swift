@@ -51,6 +51,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // (BGAppRefreshTask) is registered separately by SwiftUI's
         // .backgroundTask(.appRefresh:) modifier on the scene.
         CatalogBackgroundTasks.registerReindexHandler(dependencies: dependencies)
+        // Issue #138: no player or controller exists yet, so these are
+        // registered with no-op handlers. Issue #145 replaces them once a
+        // PlaybackController exists to receive the commands.
+        RemoteCommandCenterRegistrar.registerNoOpCommands()
         return true
     }
 
