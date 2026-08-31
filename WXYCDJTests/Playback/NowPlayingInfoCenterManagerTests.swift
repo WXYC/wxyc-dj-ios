@@ -122,8 +122,11 @@ struct NowPlayingInfoCenterManagerTests {
     }
 
     /// Catches: `clearPlaybackPosition` dropping its `guard var info = cachedInfo`
-    /// early return, which would write a bare `[isLiveStream: true]` dictionary
-    /// (destroying anything else on screen) instead of no-op'ing.
+    /// early return, which would commit a bare `[:]` dictionary — destroying
+    /// anything else on screen — instead of no-op'ing. (Before the review fix
+    /// that stopped this method asserting `isLiveStream`, the mutation wrote
+    /// `[isLiveStream: true]`; the assertion is unchanged either way, since it
+    /// pins that nothing at all was committed.)
     @Test("clearPlaybackPosition is a no-op when nothing has been written yet")
     func clearPlaybackPositionNoOpWhenNothingCached() {
         let infoCenter = GetterCountingNowPlayingInfoCenter()

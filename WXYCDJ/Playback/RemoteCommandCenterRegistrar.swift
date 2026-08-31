@@ -90,9 +90,21 @@ final class RemoteCommandCenterRegistrar {
         ]
     }
 
-    /// The transport commands this app does **not** service, disabled
-    /// explicitly because every `MPRemoteCommandCenter` command defaults to
-    /// enabled. Advertising one with no target is worse than a no-op.
+    /// Every command this app does **not** service, disabled explicitly
+    /// because each one defaults to enabled and advertising a command with no
+    /// target is worse than a no-op -- the Now Playing and CarPlay surfaces
+    /// render an affordance that does nothing when tapped.
+    ///
+    /// This is deliberately the **complement of ``handledCommands`` over the
+    /// whole of `MPRemoteCommandCenter`**, not the subset wxyc-ios-64 happened
+    /// to name. The source disables only what its own two controllers could
+    /// surface; scoping to that list here left `changeRepeatModeCommand`,
+    /// `changeShuffleModeCommand`, `changePlaybackRateCommand`, the four
+    /// feedback commands and the two language-option commands enabled and
+    /// untargeted -- and shuffle/repeat are exactly the affordances a system
+    /// surface offers an app that, as the `nextTrackCommand` note above says,
+    /// has a real queue. The two lists together must stay exhaustive: a
+    /// command in neither is enabled by default with no handler.
     private var unsupportedCommands: [MPRemoteCommand] {
         [
             commandCenter.stopCommand,
@@ -101,6 +113,15 @@ final class RemoteCommandCenterRegistrar {
             commandCenter.skipForwardCommand,
             commandCenter.skipBackwardCommand,
             commandCenter.changePlaybackPositionCommand,
+            commandCenter.changePlaybackRateCommand,
+            commandCenter.changeRepeatModeCommand,
+            commandCenter.changeShuffleModeCommand,
+            commandCenter.ratingCommand,
+            commandCenter.likeCommand,
+            commandCenter.dislikeCommand,
+            commandCenter.bookmarkCommand,
+            commandCenter.enableLanguageOptionCommand,
+            commandCenter.disableLanguageOptionCommand,
         ]
     }
 
