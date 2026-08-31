@@ -26,6 +26,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     /// the same `CatalogRefreshService` instance.
     let dependencies: AppDependencies
 
+    /// Issue #138's lock-screen transport registration. Held as a stored
+    /// property rather than called statically because it retains the
+    /// `addTarget` handles that `removeTarget(_:)` needs — see
+    /// `RemoteCommandCenterRegistrar`'s header for why discarding them would
+    /// strand a `.noSuchContent` no-op on every command at issue #145.
+    private let remoteCommands = RemoteCommandCenterRegistrar()
+
     override init() {
         // Must run before `AppDependencies()` below: its designated
         // initializer's store-open failures are exactly the silent field
@@ -51,10 +58,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // (BGAppRefreshTask) is registered separately by SwiftUI's
         // .backgroundTask(.appRefresh:) modifier on the scene.
         CatalogBackgroundTasks.registerReindexHandler(dependencies: dependencies)
-        // Issue #138: no player or controller exists yet, so these are
-        // registered with no-op handlers. Issue #145 replaces them once a
-        // PlaybackController exists to receive the commands.
-        RemoteCommandCenterRegistrar.registerNoOpCommands()
+        // Issue #138: no player or controller exists yet, so the transport
+        // commands are registered with no-op handlers and every command the
+        // app can't service is explicitly disabled. Issue #145 replaces the
+        // handler bodies once a PlaybackController exists to receive them.
+        remoteCommands.registerNoOpCommands()
         return true
     }
 

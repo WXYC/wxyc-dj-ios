@@ -132,7 +132,7 @@ A single `CatalogRefreshService` (an `actor` that serializes *all* index touches
   - `org.wxyc.dj.catalog.refresh` — a `BGAppRefreshTask` (poll leg) registered by SwiftUI's `.backgroundTask(.appRefresh:)`. It re-arms itself, does the cheap conditional-GET poll, and on a `200` submits the reindex task. Kept off the ~30 s app-refresh budget.
   - `org.wxyc.dj.catalog.reindex` — a `BGProcessingTask` (reindex leg, `requiresExternalPower` + `requiresNetworkConnectivity`) registered by `AppDelegate` (SwiftUI has no `.processing` matcher). Does the multi-MB download + ~50k-row decode + Spotlight reindex while charging. Idempotent: it re-derives "is there still a `200`?" from its own conditional GET, so a foreground refresh that already ran makes it a cheap `304`.
 
-Both identifiers are declared in `BGTaskSchedulerPermittedIdentifiers`, and `UIBackgroundModes` (`fetch`, `processing`) is set, via `project.yml`'s `info:` block (this target has a generated `Info.plist` rather than `GENERATE_INFOPLIST_FILE` synthesis, because those keys aren't expressible as `INFOPLIST_KEY_*`). No new entitlement — Core Spotlight and BackgroundTasks are both unentitled.
+Both identifiers are declared in `BGTaskSchedulerPermittedIdentifiers`, and `UIBackgroundModes` (`fetch`, `processing`, and — since issue #138 — `audio`) is set, via `project.yml`'s `info:` block (this target has a generated `Info.plist` rather than `GENERATE_INFOPLIST_FILE` synthesis, because those keys aren't expressible as `INFOPLIST_KEY_*`). No new entitlement — Core Spotlight and BackgroundTasks are both unentitled.
 
 A missing or expired session in the background is a **silent skip + reschedule** — never a sign-in prompt.
 

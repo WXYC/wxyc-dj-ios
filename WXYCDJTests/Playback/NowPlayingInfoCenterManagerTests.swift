@@ -60,6 +60,7 @@ struct NowPlayingInfoCenterManagerTests {
     func updatePlaybackPositionWritesFields() {
         let infoCenter = GetterCountingNowPlayingInfoCenter()
         let manager = NowPlayingInfoCenterManager(infoCenter: infoCenter)
+        manager.setPlaybackState(isPlaying: true)
 
         manager.updatePlaybackPosition(elapsed: 12, duration: 200)
 
@@ -69,9 +70,29 @@ struct NowPlayingInfoCenterManagerTests {
         #expect(infoCenter.storedInfo?[MPNowPlayingInfoPropertyIsLiveStream] as? Bool == false)
     }
 
+    /// Catches: restoring the source's live-radio assumption, i.e. reverting
+    /// `updatePlaybackPosition`'s rate write to the unconditional
+    /// `info[MPNowPlayingInfoPropertyPlaybackRate] = 1.0`. That single line is
+    /// what would let a periodic time observer (WXYC/wxyc-dj-ios#145) advance
+    /// the Lock Screen scrub bar against a player the DJ has paused.
+    @Test("a position update after a pause restates the paused rate rather than asserting 1.0")
+    func positionUpdateAfterPauseKeepsTheRateAtZero() {
+        let infoCenter = GetterCountingNowPlayingInfoCenter()
+        let manager = NowPlayingInfoCenterManager(infoCenter: infoCenter)
+        manager.setPlaybackState(isPlaying: true)
+        manager.updatePlaybackPosition(elapsed: 12, duration: 200)
+
+        manager.setPlaybackState(isPlaying: false)
+        manager.updatePlaybackPosition(elapsed: 13, duration: 200)
+
+        #expect(infoCenter.storedInfo?[MPNowPlayingInfoPropertyPlaybackRate] as? Double == 0.0)
+        #expect(infoCenter.playbackState == .paused)
+        #expect(infoCenter.storedInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double == 13)
+    }
+
     /// Catches: `clearPlaybackPosition` no longer removing the duration/elapsed
     /// keys, which would leave a stale scrub bar position on screen.
-    @Test("clearPlaybackPosition resets live-stream mode and removes position keys")
+    @Test("clearPlaybackPosition removes the position keys")
     func clearPlaybackPositionResetsFields() {
         let infoCenter = GetterCountingNowPlayingInfoCenter()
         let manager = NowPlayingInfoCenterManager(infoCenter: infoCenter)
@@ -79,9 +100,25 @@ struct NowPlayingInfoCenterManagerTests {
 
         manager.clearPlaybackPosition()
 
-        #expect(infoCenter.storedInfo?[MPNowPlayingInfoPropertyIsLiveStream] as? Bool == true)
         #expect(infoCenter.storedInfo?[MPMediaItemPropertyPlaybackDuration] == nil)
         #expect(infoCenter.storedInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] == nil)
+    }
+
+    /// Catches: restoring the source's other live-radio assumption, i.e.
+    /// reinstating `info[MPNowPlayingInfoPropertyIsLiveStream] = true` in
+    /// `clearPlaybackPosition`. This app is archive-only (ADR 0008), so the
+    /// only method that can clear a position must not assert the app is
+    /// playing a live stream; the key is removed, not set.
+    @Test("clearPlaybackPosition never asserts live-stream mode")
+    func clearPlaybackPositionDoesNotAssertLiveStream() {
+        let infoCenter = GetterCountingNowPlayingInfoCenter()
+        let manager = NowPlayingInfoCenterManager(infoCenter: infoCenter)
+        manager.updatePlaybackPosition(elapsed: 12, duration: 200)
+        #expect(infoCenter.storedInfo?[MPNowPlayingInfoPropertyIsLiveStream] as? Bool == false)
+
+        manager.clearPlaybackPosition()
+
+        #expect(infoCenter.storedInfo?[MPNowPlayingInfoPropertyIsLiveStream] == nil)
     }
 
     /// Catches: `clearPlaybackPosition` dropping its `guard var info = cachedInfo`

@@ -31,14 +31,47 @@
 //     .interruptionNotification` / `.routeChangeNotification`, decoding
 //     `userInfo` inline via the same keys the source's `InterruptionMessage`
 //     / `RouteChangeMessage` used. Functionally identical; kept self-contained
-//     since this is the only notification-observation code in this app.
+//     since this is the only notification-observation code in this app. The
+//     one part of that framework's *shape* that is kept deliberately is
+//     **where** the decode happens: `makeMessage(_ notification: sending
+//     Notification) -> Self?` runs in the nonisolated observer block and only
+//     the resulting `Sendable` message crosses into
+//     `MainActor.assumeIsolated`. The observer blocks below do the same --
+//     they read `userInfo` into plain value types (`InterruptionType`,
+//     `InterruptionOptions`, `RouteChangeReason`) and hop with those, never
+//     with the `Notification` itself. That is load-bearing, not tidiness;
+//     see the next bullet.
 //   - Logging hooks are replaced with `os.Logger` calls, matching this
 //     module's existing convention (see `AudioSessionCoordinator.swift`).
+//   - **The source's `Core` package declares `extension Notification:
+//     @unchecked @retroactive Sendable`; this port deliberately does not, and
+//     the decode placement above is what makes that possible.** An earlier
+//     draft of this file hopped with the raw `Notification` and needed the
+//     conformance to compile (`error: sending 'notification' risks causing
+//     data races` -- region isolation sees a task-isolated `Notification`
+//     captured by a main-actor-isolated closure). Restating the conformance
+//     is the wrong way to buy that: Foundation ships `@available(*,
+//     unavailable) extension Notification: Sendable`, an explicit "this type
+//     is NOT Sendable" marker, so the declaration earns `warning: conformance
+//     of 'Notification' to protocol 'Sendable' was already stated in the
+//     type's module 'Foundation'` and installs a duplicate conformance record
+//     for a Foundation type -- the hazard class `CLAUDE.md` documents for
+//     `String: @retroactive CodingKey`. And the blast radius differs between
+//     the two repos: in wxyc-ios-64 it is confined to the small `Core`
+//     module, whereas here it would blanket the whole `WXYCDJ` module plus
+//     `WXYCDJTests` via `@testable import`, so a future capture site sending
+//     a `userInfo` holding a non-`Sendable` class reference across an
+//     isolation boundary would compile silently. Narrowing what crosses to
+//     three `RawRepresentable` value types gets the same compile with none of
+//     that, and is what the source's `makeMessage` split does too.
 //
-//  Kept unchanged from the source: `.began` -> pause, `.ended` +
+//  Behaviours kept from the source: `.began` -> pause, `.ended` +
 //  `.shouldResume` -> resume, `.oldDeviceUnavailable` -> pause, and
-//  `cancelPendingInterruptionResume()` -- see its own doc comment below for
-//  why it must stay.
+//  `cancelPendingInterruptionResume()`. Its doc comment below is *adapted*
+//  rather than copied verbatim -- the source names `PlaybackStopTeardown` as
+//  the caller, which does not exist here -- but the reason-bounded rule it
+//  states is unchanged and is an obligation on WXYC/wxyc-dj-ios#144/#145; see
+//  that comment.
 //
 //  Created by Jake Bromberg on 08/30/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -47,15 +80,6 @@
 import AVFoundation
 import Foundation
 import os
-
-/// `Notification`'s `userInfo` is `[AnyHashable: Any]`, which the compiler
-/// cannot prove `Sendable`, so passing a posted `Notification` from the
-/// `@Sendable` observer block below into `MainActor.assumeIsolated` needs an
-/// explicit opt-in. A posted `Notification` is effectively immutable and,
-/// once posted, only ever read here on the main queue we observe on. Matches
-/// wxyc-ios-64's identical workaround in its `Core` package
-/// (`MainActorMessage.swift`).
-extension Notification: @unchecked @retroactive Sendable {}
 
 /// Subscribes to `AVAudioSession.interruptionNotification` /
 /// `.routeChangeNotification` and runs the interruption/route-change state
@@ -82,13 +106,25 @@ final class PlaybackInterruptionRouteHandler {
         self.notificationCenter = notificationCenter
         self.context = context
 
+        // Both blocks decode `userInfo` *before* the main-actor hop, so only
+        // `Sendable` value types cross the isolation boundary and no
+        // `Notification` is ever sent -- the split the source performs in
+        // `InterruptionMessage`/`RouteChangeMessage.makeMessage(_:)`, and the
+        // reason this file needs no retroactive `Notification: Sendable`
+        // conformance (file header).
         interruptionObservation = notificationCenter.addObserver(
             forName: AVAudioSession.interruptionNotification,
             object: nil,
             queue: .main
         ) { [weak self] notification in
+            guard let typeRaw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: typeRaw) else {
+                return
+            }
+            let optionsRaw = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            let options = AVAudioSession.InterruptionOptions(rawValue: optionsRaw)
             MainActor.assumeIsolated {
-                self?.handleInterruption(notification)
+                self?.handleInterruption(type: type, options: options)
             }
         }
         routeChangeObservation = notificationCenter.addObserver(
@@ -96,8 +132,12 @@ final class PlaybackInterruptionRouteHandler {
             object: nil,
             queue: .main
         ) { [weak self] notification in
+            guard let reasonRaw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  let reason = AVAudioSession.RouteChangeReason(rawValue: reasonRaw) else {
+                return
+            }
             MainActor.assumeIsolated {
-                self?.handleRouteChange(notification)
+                self?.handleRouteChange(reason: reason)
             }
         }
     }
@@ -115,18 +155,28 @@ final class PlaybackInterruptionRouteHandler {
     /// `.began` and cleared only at the end of `.ended` -- so a DJ who paused
     /// from the Lock Screen during a phone call would have playback restart
     /// on them the moment the call ended.
+    ///
+    /// **This method has no production caller yet, and that is an obligation
+    /// on WXYC/wxyc-dj-ios#144/#145, not a sign it is dead code.** In the
+    /// source (`c22a3eb`) it is called from the controllers' stop path via
+    /// `PlaybackStopTeardown.retireAutoResumeState(…)`, under a
+    /// **reason-bounded rule**: a stop that is *itself* an auto-resume-bearing
+    /// stop (`.interruptionBegan`, `.routeDisconnected`) preserves the pending
+    /// resume, and **any other stop retires it** -- the same rule the source
+    /// applies to its #665 session id. This app has no pause path yet (there
+    /// is no player and no controller in WXYC/wxyc-dj-ios#138), so nothing can
+    /// call it here; the `PlaybackController` that grows a `pause()` in
+    /// WXYC/wxyc-dj-ios#144 must call this from that stop path, bounded by the
+    /// same rule, or the Lock-Screen-pause-during-a-call defect above is
+    /// reintroduced with the flag once again unreachable.
     func cancelPendingInterruptionResume() {
         wasPlayingBeforeInterruption = false
     }
 
-    private func handleInterruption(_ notification: Notification) {
-        guard let typeRaw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-              let type = AVAudioSession.InterruptionType(rawValue: typeRaw) else {
-            return
-        }
-        let optionsRaw = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
-        let options = AVAudioSession.InterruptionOptions(rawValue: optionsRaw)
-
+    private func handleInterruption(
+        type: AVAudioSession.InterruptionType,
+        options: AVAudioSession.InterruptionOptions
+    ) {
         switch type {
         case .began:
             wasPlayingBeforeInterruption = context?.isPlaying ?? false
@@ -147,12 +197,7 @@ final class PlaybackInterruptionRouteHandler {
         }
     }
 
-    private func handleRouteChange(_ notification: Notification) {
-        guard let reasonRaw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
-              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonRaw) else {
-            return
-        }
-
+    private func handleRouteChange(reason: AVAudioSession.RouteChangeReason) {
         switch reason {
         case .oldDeviceUnavailable:
             // Headphones unplugged - stop playback per Apple HIG.

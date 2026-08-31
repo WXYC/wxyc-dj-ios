@@ -14,6 +14,7 @@
 //
 
 import AVFoundation
+import os
 import Testing
 @testable import WXYCDJ
 
@@ -173,9 +174,13 @@ struct PlaybackInterruptionRouteHandlerTests {
         #expect(fixture.wasPlayingBeforeRouteDisconnect == false)
     }
 
-    /// Catches: `newDeviceAvailable` resuming even when nothing was playing
-    /// before the disconnect.
-    @Test("newDeviceAvailable resumes only when wasPlayingBeforeRouteDisconnect is set")
+    /// Catches: `case .newDeviceAvailable:` no longer resuming at all -- the
+    /// `try? context?.play(…)` call being dropped, or its reason changing.
+    /// It deliberately does **not** catch the `wasPlayingBeforeRouteDisconnect`
+    /// guard being dropped: it sets the flag and asserts a resume happens, so
+    /// removing the guard leaves it green. That mutation is the sibling
+    /// test's, below.
+    @Test("newDeviceAvailable resumes when wasPlayingBeforeRouteDisconnect is set")
     func newDeviceAvailableResumesWhenFlagged() {
         let fixture = Fixture()
         _ = fixture.handler
@@ -186,6 +191,10 @@ struct PlaybackInterruptionRouteHandlerTests {
         #expect(fixture.playCalls == [.resumeAfterRouteReconnect])
     }
 
+    /// Catches: dropping the `if context?.wasPlayingBeforeRouteDisconnect ??
+    /// false` guard in `case .newDeviceAvailable:`, i.e. resuming on every
+    /// route reconnect even when nothing was playing before the disconnect.
+    /// This is the only test in the file that catches that mutation.
     @Test("newDeviceAvailable does not resume when the flag is unset")
     func newDeviceAvailableDoesNotResumeWhenUnflagged() {
         let fixture = Fixture()
@@ -197,39 +206,46 @@ struct PlaybackInterruptionRouteHandlerTests {
         #expect(fixture.playCalls.isEmpty)
     }
 
-    /// Catches: deallocating the handler without removing its observers,
-    /// which would deliver notifications to a deallocated instance forever.
-    @Test("deallocating the handler stops delivering notifications")
+    /// Catches: deleting `deinit`, or either of its two `removeObserver`
+    /// lines.
+    ///
+    /// It asserts on the **registration** rather than on delivery, because
+    /// delivery cannot see this mutation: both observer blocks capture
+    /// `[weak self]`, so after dealloc a still-registered block fires, finds
+    /// `self?` nil, and calls nothing -- leaving `tearDownCalls` exactly as a
+    /// delivery-based assertion expects. (The previous version of this test
+    /// asserted delivery and passed with the entire `deinit` deleted.) A
+    /// `NotificationCenter` subclass counts `removeObserver(_:)` calls
+    /// instead, so a missing teardown is directly observable.
+    @Test("deallocating the handler removes both of its observer registrations")
     func deallocatingRemovesObservers() {
-        let center = NotificationCenter()
+        let center = RemoveObserverCountingNotificationCenter()
         let context = Fixture()
         var localHandler: PlaybackInterruptionRouteHandler? = PlaybackInterruptionRouteHandler(
             notificationCenter: center,
             context: context
         )
         _ = localHandler
-        context.isPlaying = true
-
-        center.post(
-            name: AVAudioSession.interruptionNotification,
-            object: nil,
-            userInfo: [
-                AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue,
-                AVAudioSessionInterruptionOptionKey: UInt(0),
-            ]
-        )
-        #expect(context.tearDownCalls == [.interruptionBegan])
+        #expect(center.removeObserverCallCount == 0, "Nothing is removed while the handler is alive")
 
         localHandler = nil
 
-        center.post(
-            name: AVAudioSession.interruptionNotification,
-            object: nil,
-            userInfo: [
-                AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue,
-                AVAudioSessionInterruptionOptionKey: UInt(0),
-            ]
-        )
-        #expect(context.tearDownCalls == [.interruptionBegan], "No further delivery once the handler is deallocated")
+        #expect(center.removeObserverCallCount == 2, "Both the interruption and route-change observers are removed")
+    }
+}
+
+/// Counts single-argument `removeObserver(_:)` calls so a test can assert that
+/// `PlaybackInterruptionRouteHandler.deinit` actually unregisters — see
+/// `deallocatingRemovesObservers`. Lock-guarded rather than relying on
+/// `NotificationCenter`'s inherited `Sendable` conformance, matching
+/// `SpyErrorReporter`/`SpyAnalytics`.
+private final class RemoveObserverCountingNotificationCenter: NotificationCenter {
+    private let removals = OSAllocatedUnfairLock(initialState: 0)
+
+    var removeObserverCallCount: Int { removals.withLock { $0 } }
+
+    override func removeObserver(_ observer: Any) {
+        removals.withLock { $0 += 1 }
+        super.removeObserver(observer)
     }
 }
