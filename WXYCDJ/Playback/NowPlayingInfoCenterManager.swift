@@ -4,16 +4,21 @@
 //
 //  Ported from wxyc-ios-64's WXYC/iOS/NowPlayingInfoCenterManager.swift
 //  (c22a3eb, 149 lines). Deviations from the source:
-//   - **`handleNowPlayingItem(_:)`, its `Playcut`/`NowPlayingItem` metadata
-//     mapping, the `PlatformImage` artwork plumbing, and the `boundsSize`
-//     init parameter are all dropped.** The digital-archive playback manifest
-//     this app fetches carries no album title and no artist name
-//     (WXYC/wxyc-shared#422) -- whatever eventually writes metadata has to
-//     read title/artist off the detail screen's own state instead, which is
-//     WXYC/wxyc-dj-ios#145's job once a PlaybackController exists to supply
-//     them (see the corresponding note on WXYC/wxyc-dj-ios#144). This port
-//     deliberately does not invent a metadata source ahead of that; nothing
-//     in this app calls a metadata-writing method yet.
+//   - **`handleNowPlayingItem(_:)`'s `Playcut`/`NowPlayingItem` mapping, the
+//     `PlatformImage` artwork plumbing, and the `boundsSize` init parameter
+//     are dropped; the metadata write itself is not.** The digital-archive
+//     playback manifest carries no album title and no artist name
+//     (WXYC/wxyc-shared#422), so `setNowPlayingItem(title:artistName:albumTitle:)`
+//     takes three plain strings instead of a `Playcut`: `PlaybackController`
+//     supplies them off the queued `PlaybackItem`, which carried them from the
+//     detail screen's own state (ADR 0008 Amendment 4). Artwork stays dropped
+//     -- nothing in the playback path holds a cover. `clear()` is the
+//     queue-ending counterpart, added with the same wiring.
+//   - **`clear()` has no source counterpart.** The listener app plays one
+//     endless stream and never takes itself off the Now Playing card; this app
+//     stops, fails, and runs off the end of a queue, and each of those must
+//     leave the Lock Screen showing nothing rather than a track that is no
+//     longer cued.
 //   - **`updatePlaybackPosition`'s parameters change meaning.** The source's
 //     `secondsBehindLive`/`maxLookback` model a time-shifted *live radio*
 //     stream; this app plays fixed-length archive tracks, so the equivalent
@@ -88,7 +93,15 @@ final class NowPlayingInfoCenterManager {
     /// than the reverse, which is the defect this exists to prevent.
     private var lastKnownIsPlaying = false
 
-    init(infoCenter: NowPlayingInfoCenterProtocol = MPNowPlayingInfoCenter.default()) {
+    /// **`infoCenter` takes no default, deliberately.** The only value it could
+    /// default to is the process-wide `MPNowPlayingInfoCenter.default()`, which
+    /// inverts this repo's rule that a defaulted dependency is the *inert* one
+    /// -- the same argument `AudioSessionCoordinator.init(session:)` makes about
+    /// `AVAudioSession.sharedInstance()`. `AppDependencies.init()` names the
+    /// shared centre at the one production call site; every other path (both
+    /// test-facing `AppDependencies` initializers included) leaves
+    /// `PlaybackController`'s `nowPlaying` `nil` and writes nothing at all.
+    init(infoCenter: NowPlayingInfoCenterProtocol) {
         self.infoCenter = infoCenter
     }
 
@@ -110,6 +123,44 @@ final class NowPlayingInfoCenterManager {
     }
 
     // MARK: - Public API
+
+    /// Publish the cued track's metadata to the Lock Screen / Control Centre
+    /// card.
+    ///
+    /// The source's `handleNowPlayingItem(_:)` mapped a `Playcut` (plus
+    /// artwork) onto the same three `MPMediaItem` keys; this takes them as
+    /// plain strings because the digital-archive manifest carries none of them
+    /// -- `albumTitle`/`artistName` ride the queue from the detail screen's own
+    /// state (ADR 0008 Amendment 4) and `title` is the track's. Artwork is not
+    /// published: nothing in the playback path holds a cover, and the header's
+    /// `AsyncImage` load is a `URLCache` fetch in a different layer entirely.
+    ///
+    /// Goes through ``mutate(_:)`` rather than committing a fresh dictionary,
+    /// so a track change preserves the playback rate ``setPlaybackState(isPlaying:)``
+    /// is the sole author of.
+    func setNowPlayingItem(title: String, artistName: String, albumTitle: String) {
+        mutate { info in
+            info[MPMediaItemPropertyTitle] = title
+            info[MPMediaItemPropertyArtist] = artistName
+            info[MPMediaItemPropertyAlbumTitle] = albumTitle
+        }
+    }
+
+    /// Take the app off the Now Playing card entirely: no metadata, no
+    /// position, and a `.stopped` playback state.
+    ///
+    /// The queue-ending counterpart to ``setNowPlayingItem(title:artistName:albumTitle:)``,
+    /// called when playback stops, fails, or runs off the end. Clears the local
+    /// mirror as well as the centre — a mirror left populated would seed the
+    /// *next* album's first write with the dead one's title — and resets
+    /// ``lastKnownIsPlaying``, so a later position write can't publish a
+    /// playing rate for an album nobody started.
+    func clear() {
+        lastKnownIsPlaying = false
+        cachedInfo = nil
+        infoCenter.nowPlayingInfo = nil
+        infoCenter.playbackState = .stopped
+    }
 
     /// Reflect the current playback state in MPNowPlayingInfoCenter.
     ///

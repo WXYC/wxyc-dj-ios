@@ -41,8 +41,10 @@ struct PlaybackItem: Sendable, Equatable, Identifiable, CustomStringConvertible 
     ///
     /// The **track**, not the playhead: the recovered track restarts from
     /// 0:00. This seam carries no time (four events, no periodic observation),
-    /// so nothing here knows where the DJ was; re-seeking belongs to issue
-    /// #145's engine adapter, which holds `currentTime()`. See ADR 0008
+    /// so nothing here knows where the DJ was; re-seeking belongs to the
+    /// engine adapter, which holds `currentTime()`. Issue #145 shipped that
+    /// adapter **without** the re-seek, so the work is
+    /// [#149](https://github.com/WXYC/wxyc-dj-ios/issues/149). See ADR 0008
     /// Amendment 5.
     let fileId: Int
     /// The presigned GET. **A bearer credential until the manifest expires:**
@@ -138,15 +140,15 @@ protocol PlaybackEngine: AnyObject, Sendable {
 
 // MARK: - Placeholder conformer
 
-/// The conformer the composition root wires until issue #145 lands
-/// `AVQueuePlayerEngine`.
+/// The inert default on ``AppDependencies``' two test-facing initializers;
+/// production wires ``AVQueuePlayerEngine`` (issue #145) at the one
+/// composition-root call site instead.
 ///
-/// Accepts every command and emits no events, so the controller sits in its
-/// "requested, not yet playing" state forever. That is not a state a DJ can
-/// reach today: this PR ships no transport UI, and nothing calls
-/// ``PlaybackController/start(manifest:albumTitle:artistName:)``. Its only job
-/// is to let ``AppDependencies`` own a real controller now, so issue #145 is a
-/// one-line substitution rather than a composition-root change.
+/// Accepts every command and emits no events, so a controller built over it
+/// sits in its "requested, not yet playing" state forever. That keeps a test
+/// constructing `AppDependencies` for unrelated (catalog/bin) coverage from
+/// standing up a real `AVQueuePlayer` — the same defaulted-to-inert convention
+/// `audioSession`, `nowPlaying`, `reporter` and `analytics` follow there.
 final class InertPlaybackEngine: PlaybackEngine {
     let events: AsyncStream<PlaybackEngineEvent>
 

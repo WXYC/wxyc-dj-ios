@@ -66,9 +66,9 @@ enum PlaybackFailure: Equatable, Sendable {
 /// ``interruptionRouteHandler`` can drive pause/resume across a phone-call
 /// interruption or a route disconnect without a second controller-shaped
 /// type. See ``tearDown(reason:)`` / ``play(reason:)`` and
-/// ``retirePendingInterruptionResume()`` for the reason-bounded rule that
-/// keeps a Lock-Screen pause mid-call from being silently overridden when
-/// the call ends.
+/// ``retireAutoResumeState(reason:)`` for the reason-bounded rule that keeps
+/// a Lock-Screen pause mid-call — or after an unplug — from being silently
+/// overridden when the call ends or the headphones go back in.
 @MainActor
 @Observable
 final class PlaybackController: PlaybackInterruptionContext {
@@ -156,7 +156,8 @@ final class PlaybackController: PlaybackInterruptionContext {
     /// whenever a different item is cued. The seam carries no periodic time
     /// observation (ADR 0008 keeps it to four events), so this is a commanded
     /// value, not a sampled one — a scrubber reading it gets what it last set
-    /// until issue #145's engine supplies real time updates.
+    /// until the engine supplies real time updates, which issue #145's adapter
+    /// does not: that is [#149](https://github.com/WXYC/wxyc-dj-ios/issues/149).
     ///
     /// That is also why the post-403 refetch cannot restore the playhead: this
     /// value is what *we* asked for, not where the DJ actually was, so there
@@ -172,6 +173,14 @@ final class PlaybackController: PlaybackInterruptionContext {
     /// headphones unplugged), so ``interruptionRouteHandler`` knows whether a
     /// reconnect should resume. Not rendered by any view, so
     /// `@ObservationIgnored`.
+    ///
+    /// The handler's `.oldDeviceUnavailable` arm is the only writer that sets
+    /// it; **this controller is the only thing that clears it**, through
+    /// ``retireAutoResumeState(reason:)``, which every stop but the disconnect's
+    /// own teardown calls. Nothing clears it on the read side — the handler's
+    /// `.newDeviceAvailable` arm reads and leaves it — so without that
+    /// retirement the flag outlives the disconnect it describes and the next
+    /// re-plug resumes audio the DJ had explicitly paused.
     @ObservationIgnored var wasPlayingBeforeRouteDisconnect = false
 
     /// Bumped once per manifest refetch that reaches a conclusion — including
@@ -194,6 +203,20 @@ final class PlaybackController: PlaybackInterruptionContext {
     /// The audio session. Optional so a controller can be unit-tested without
     /// one; `AppDependencies` wires the real coordinator.
     @ObservationIgnored private let audioSession: AudioSessionCoordinator?
+    /// The Lock Screen / Control Centre mirror (issue #138's port, wired here
+    /// in #145). Optional on the same principle as ``audioSession``: the inert
+    /// value is the default, so no test path writes to the process-wide
+    /// `MPNowPlayingInfoCenter` by omission.
+    ///
+    /// Driven from four points and nowhere else — ``cue(from:startPlaying:)``
+    /// and ``moveToNextItem()`` publish the newly-cued track's metadata,
+    /// ``handle(_:)``'s `.timeControl` arm mirrors play/paused, and the three
+    /// queue-ending exits (``clearQueue()``, shared by ``stop()`` and
+    /// ``fail(_:)``, plus `moveToNextItem()`'s end-of-queue arm) clear the
+    /// card. Without it the app ships `UIBackgroundModes: audio` and five live
+    /// remote commands over a blank card: the Lock Screen renders working
+    /// play/pause/next with nothing to say what is playing.
+    @ObservationIgnored private let nowPlaying: NowPlayingInfoCenterManager?
     @ObservationIgnored private let reporter: any ErrorReporter
     /// The bound on a deferred activation — see ``defaultActivationWaitLimit``.
     /// Injected so a test can drive the give-up arm in milliseconds rather
@@ -248,6 +271,7 @@ final class PlaybackController: PlaybackInterruptionContext {
         engine: any PlaybackEngine,
         api: APIClient,
         audioSession: AudioSessionCoordinator? = nil,
+        nowPlaying: NowPlayingInfoCenterManager? = nil,
         reporter: any ErrorReporter = NoOpErrorReporter(),
         activationWaitLimit: Duration = PlaybackController.defaultActivationWaitLimit,
         nowDate: @escaping @Sendable () -> Date = { Date() },
@@ -257,6 +281,7 @@ final class PlaybackController: PlaybackInterruptionContext {
         self.engine = engine
         self.api = api
         self.audioSession = audioSession
+        self.nowPlaying = nowPlaying
         self.reporter = reporter
         self.activationWaitLimit = activationWaitLimit
         self.nowDate = nowDate
@@ -344,7 +369,7 @@ final class PlaybackController: PlaybackInterruptionContext {
     func pause() {
         isPlaybackRequested = false
         cancelActivationWait()
-        retirePendingInterruptionResume()
+        retireAutoResumeState(reason: nil)
         engine.pause()
     }
 
@@ -375,7 +400,7 @@ final class PlaybackController: PlaybackInterruptionContext {
     func stop() {
         clearAlbumIdentity()
         cancelActivationWait()
-        retirePendingInterruptionResume()
+        retireAutoResumeState(reason: nil)
         isPlaybackRequested = false
         isPlaying = false
         cuedAt = nil
@@ -462,6 +487,12 @@ final class PlaybackController: PlaybackInterruptionContext {
             // *transitions*, so no later event would ever put it right.
             guard !playing || currentIndex != nil else { return }
             isPlaying = playing
+            // The engine's own belief is what the Lock Screen must show, not
+            // `isPlaybackRequested` -- a card reading "playing" through a slow
+            // connect is the mirror of the transport defect the two-value
+            // split exists to prevent, in the one surface the DJ can't correct
+            // by looking at the app.
+            nowPlaying?.setPlaybackState(isPlaying: playing)
         case .itemEnded:
             moveToNextItem()
         case .firstFrame:
@@ -496,13 +527,35 @@ final class PlaybackController: PlaybackInterruptionContext {
             isPlaying = false
             cuedAt = nil
             cancelActivationWait()
-            retirePendingInterruptionResume()
+            retireAutoResumeState(reason: nil)
+            // The third queue-ending exit, and the one that doesn't go through
+            // `clearQueue()` -- so it has to take the app off the Now Playing
+            // card itself, or the Lock Screen keeps offering transport for the
+            // last track of an album that has finished.
+            nowPlaying?.clear()
             audioSession?.deactivate()
             return
         }
         currentIndex = next
-        // The next item is a fresh cue, so its first frame is timed from here.
-        cuedAt = now()
+        // The next item is a fresh cue, so its first frame is timed **only if
+        // the DJ actually asked for playback**. `advance()` reaches here while
+        // paused too, and stamping unconditionally there would leave `cuedAt`
+        // sitting at the tap while nothing plays -- so issue #139's
+        // `timeToFirstFrame` would record however long the DJ took to press
+        // play (minutes, on a browse) as a cue→first-frame interval.
+        cuedAt = isPlaybackRequested ? now() : nil
+        publishNowPlayingItem()
+    }
+
+    /// Mirror the currently cued track onto the Lock Screen / Control Centre
+    /// card. A no-op with nothing cued, and with no manager injected.
+    private func publishNowPlayingItem() {
+        guard let item = currentItem else { return }
+        nowPlaying?.setNowPlayingItem(
+            title: item.title,
+            artistName: item.artistName,
+            albumTitle: item.albumTitle
+        )
     }
 
     /// A media 403 is the one engine failure this controller can act on: the
@@ -596,8 +649,9 @@ final class PlaybackController: PlaybackInterruptionContext {
         // whatever now sits at that array index. The index is the fallback for
         // the case the track is gone. **It resumes the track, not the
         // playhead** -- the recovered track restarts from 0:00, because this
-        // seam carries no time to seek back to; see ADR 0008 Amendment 5 and
-        // issue #145.
+        // seam carries no time to seek back to; see ADR 0008 Amendment 5.
+        // Issue #145 shipped the engine adapter without the re-seek, so that
+        // work is https://github.com/WXYC/wxyc-dj-ios/issues/149.
         let resumed = resumeFileID.flatMap { id in items.firstIndex { $0.fileId == id } }
             ?? min(resumeAt, items.count - 1)
         currentIndex = resumed
@@ -622,6 +676,10 @@ final class PlaybackController: PlaybackInterruptionContext {
         guard queue.indices.contains(index) else { return }
         position = 0
         engine.load(Array(queue[index...]))
+        // Published on **both** arms: a post-403 re-cue that lands after a
+        // pause still replaces the queue, so the card must name the track that
+        // will play when the DJ resumes, not the one whose URL just died.
+        publishNowPlayingItem()
         guard startPlaying else {
             cuedAt = nil
             return
@@ -790,6 +848,12 @@ final class PlaybackController: PlaybackInterruptionContext {
         currentIndex = nil
         engine.pause()
         engine.load([])
+        // Two of the three queue-ending exits reach the Now Playing card
+        // through here (`stop()` and `fail(_:)`); the third is
+        // `moveToNextItem()`'s end-of-queue arm, which clears it itself. A
+        // `fail(_:)` from idle never calls this at all, so a refusal that tore
+        // nothing down leaves whatever card was there alone.
+        nowPlaying?.clear()
         audioSession?.deactivate()
     }
 
@@ -815,7 +879,7 @@ final class PlaybackController: PlaybackInterruptionContext {
     private func fail(_ failure: PlaybackFailure) {
         clearAlbumIdentity()
         cancelActivationWait()
-        retirePendingInterruptionResume()
+        retireAutoResumeState(reason: nil)
         if !queue.isEmpty { clearQueue() }
         lastFailure = failure
         isPlaybackRequested = false
@@ -823,36 +887,63 @@ final class PlaybackController: PlaybackInterruptionContext {
         cuedAt = nil
     }
 
-    /// Retires any pending post-interruption auto-resume the interruption
-    /// handler is holding (``PlaybackInterruptionRouteHandler/cancelPendingInterruptionResume()``).
+    /// Retires the auto-resume state a stop must not leave standing, **bounded
+    /// by the reason for the stop** — the rule
+    /// `wxyc-ios-64`'s `PlaybackStopTeardown.retireAutoResumeState(reason:…)`
+    /// applies, mirrored here over the same two fields.
     ///
-    /// **The reason-bounded rule (standing obligation from issue #138,
-    /// discharged here):** every controller-initiated teardown calls this
-    /// -- ``pause()``, ``stop()``, ``fail(_:)``, and the end-of-queue arm of
-    /// ``moveToNextItem()`` -- **except** ``tearDown(reason:)``, which *is*
-    /// the auto-resume-bearing stop the interruption handler itself asks
-    /// for. Calling this from `tearDown(reason:)` would erase the very flag
-    /// the handler just set (`wasPlayingBeforeInterruption`, assigned
-    /// immediately before it calls `context.tearDown(reason: .interruptionBegan)`),
-    /// which would make an interruption that both begins *and* ends never
-    /// resume at all. Every *other* stop must retire it, or a DJ who pauses
-    /// from the Lock Screen mid-call has playback restart on them the moment
-    /// the call ends -- the defect this method exists to close.
-    private func retirePendingInterruptionResume() {
-        interruptionRouteHandler?.cancelPendingInterruptionResume()
+    /// There are **two** pieces of auto-resume state and they carry
+    /// **different** exemptions, which is why one `Bool` parameter (or a
+    /// wrapper called only from the non-interruption paths) cannot express
+    /// this:
+    ///
+    /// - ``wasPlayingBeforeRouteDisconnect`` — set by the handler's
+    ///   `.oldDeviceUnavailable` arm and read by its `.newDeviceAvailable`
+    ///   arm — is exempt from **`.routeDisconnected` only**. That stop *is*
+    ///   the disconnect's own teardown and runs immediately after the handler
+    ///   sets the flag, so clearing it there would disable resume-on-reconnect
+    ///   outright. Every other stop clears it, including
+    ///   `.interruptionBegan`: a call arriving after a reconnect is a new
+    ///   event, and leaving the old disconnect's flag armed means the *next*
+    ///   re-plug resumes audio nobody asked for.
+    /// - The handler's private `wasPlayingBeforeInterruption`, reached through
+    ///   ``PlaybackInterruptionRouteHandler/cancelPendingInterruptionResume()``,
+    ///   is exempt from **both** `.interruptionBegan` (its own teardown, for
+    ///   the same reason as above) **and** `.routeDisconnected` (a disconnect
+    ///   landing mid-call must not cancel the call's own pending resume).
+    ///
+    /// `reason` is `nil` for the four stops that carry no interruption/route
+    /// reason at all — ``pause()``, ``stop()``, ``fail(_:)``, and the
+    /// end-of-queue arm of ``moveToNextItem()`` — which is definitionally
+    /// neither exempt value, so both fields are retired. Without that, a DJ
+    /// who pauses from the Lock Screen mid-call has playback restart when the
+    /// call ends, and one who pauses after unplugging has it restart when the
+    /// headphones go back in. Both are the field defects this method closes.
+    private func retireAutoResumeState(reason: PlaybackReason?) {
+        if reason != .routeDisconnected {
+            wasPlayingBeforeRouteDisconnect = false
+        }
+        if reason != .interruptionBegan && reason != .routeDisconnected {
+            interruptionRouteHandler?.cancelPendingInterruptionResume()
+        }
     }
 
     // MARK: - PlaybackInterruptionContext
 
-    /// Pauses for an interruption/route-disconnect reason, **without**
-    /// retiring the pending auto-resume -- see
-    /// ``retirePendingInterruptionResume()``'s doc comment for why this is
-    /// the one teardown that must not call it. Deliberately not routed
-    /// through ``pause()``: the only difference from it is the omitted
-    /// retirement.
+    /// Pauses for an interruption/route-disconnect reason, passing that reason
+    /// **through** to ``retireAutoResumeState(reason:)`` rather than skipping
+    /// the retirement wholesale.
+    ///
+    /// An earlier shape ignored `reason` entirely and simply omitted the
+    /// retirement call, which made the exemption *positional* (which method
+    /// calls it) rather than reason-based — and the two fields' exemptions
+    /// differ, so a positional rule can only get one of them right. See
+    /// ``retireAutoResumeState(reason:)``. Deliberately not routed through
+    /// ``pause()``: the only difference from it is which reason is passed.
     func tearDown(reason: PlaybackReason) {
         isPlaybackRequested = false
         cancelActivationWait()
+        retireAutoResumeState(reason: reason)
         engine.pause()
     }
 

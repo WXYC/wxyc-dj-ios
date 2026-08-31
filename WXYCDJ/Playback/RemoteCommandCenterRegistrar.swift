@@ -174,33 +174,50 @@ final class RemoteCommandCenterRegistrar {
     /// convention most transport surfaces fall back to when there is nothing
     /// earlier to skip to.
     ///
-    /// Each handler wraps its call to `controller` (a `@MainActor` type) in
-    /// `MainActor.assumeIsolated`, mirroring
-    /// `PlaybackInterruptionRouteHandler`'s notification callbacks: Apple
-    /// documents `MPRemoteCommandCenter` handlers as invoked on the main
-    /// queue, and the handler closure type itself is not `@Sendable`-audited,
-    /// so there is no cross-actor Sendable requirement to satisfy -- only the
-    /// isolation assertion at the call site.
+    /// Each handler hops to the main actor with `Task { @MainActor in … }` and
+    /// returns `.success` synchronously, exactly as this app's reference
+    /// implementation does (`wxyc-ios-64`'s
+    /// `AudioPlayerController.setUpRemoteCommandCenter()`, the file this type
+    /// mirrors).
+    ///
+    /// **Deliberately not `MainActor.assumeIsolated`.** `assumeIsolated`
+    /// *traps* when the assumption is false, and the queue
+    /// `MPRemoteCommandCenter` invokes a handler on is **not documented** —
+    /// not in `MPRemoteCommand.h`, not in the online reference. An earlier
+    /// revision of this comment claimed Apple documents it as the main queue;
+    /// that claim could not be substantiated and has been removed rather than
+    /// replaced with a different guess. Since the assumption is unverified, one
+    /// delivery from anywhere else — a Bluetooth or CarPlay head unit, a
+    /// launch-into-background headphone press, a future OS change — would be a
+    /// hard crash on a lock-screen button press. The `Task` form costs nothing
+    /// here: all five calls are fire-and-forget and none of them informs the
+    /// returned status, so nothing is waiting on the hop.
+    ///
+    /// That is also why these differ in shape from
+    /// `PlaybackInterruptionRouteHandler`'s notification callbacks, which
+    /// *can* use `MainActor.assumeIsolated`: those observers are registered
+    /// with an explicit `queue: .main`, so their delivery queue is a fact this
+    /// app establishes rather than one it hopes for.
     func registerPlaybackCommands(controller: PlaybackController) {
         removeNoOpCommands()
         commandCenter.playCommand.addTarget { _ in
-            MainActor.assumeIsolated { controller.resume() }
+            Task { @MainActor in controller.resume() }
             return .success
         }
         commandCenter.pauseCommand.addTarget { _ in
-            MainActor.assumeIsolated { controller.pause() }
+            Task { @MainActor in controller.pause() }
             return .success
         }
         commandCenter.togglePlayPauseCommand.addTarget { _ in
-            MainActor.assumeIsolated { controller.togglePlayPause() }
+            Task { @MainActor in controller.togglePlayPause() }
             return .success
         }
         commandCenter.nextTrackCommand.addTarget { _ in
-            MainActor.assumeIsolated { controller.advance() }
+            Task { @MainActor in controller.advance() }
             return .success
         }
         commandCenter.previousTrackCommand.addTarget { _ in
-            MainActor.assumeIsolated { controller.seek(to: 0) }
+            Task { @MainActor in controller.seek(to: 0) }
             return .success
         }
     }
