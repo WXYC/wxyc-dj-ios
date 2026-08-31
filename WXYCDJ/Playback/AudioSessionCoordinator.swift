@@ -218,16 +218,23 @@ final class AudioSessionCoordinator {
     @ObservationIgnored private nonisolated(unsafe) var activationGeneration = 0
 
     /// - Parameters:
-    ///   - session: the session seam. Defaults to the process's shared
-    ///     `AVAudioSession` so the composition root can build the production
-    ///     coordinator without naming an AVFoundation type itself; tests pass
-    ///     `FakeAudioSession`.
+    ///   - session: the session seam. **Required, deliberately** -- the one
+    ///     defaultable value here would be `AVAudioSession.sharedInstance()`,
+    ///     the process-wide real session, and this repo's convention is that a
+    ///     defaulted dependency is the *inert* one (`NoOpErrorReporter`,
+    ///     `NoOpAnalytics`, `InMemoryTokenStorage`, and `reporter:` three lines
+    ///     below). Defaulting it inverts that: every construction site that
+    ///     forgets the parameter silently drives real `setCategory` /
+    ///     `setActive` calls against the device, which for a unit test means
+    ///     interrupting whatever the host is playing. `AppDependencies` names
+    ///     `AVAudioSession.sharedInstance()` at its one production call site;
+    ///     tests pass `FakeAudioSession`.
     ///   - reporter: defaults to ``NoOpErrorReporter`` -- the same
     ///     defaulted-to-no-op injection `BinViewModel` and `LoginViewModel`
     ///     use, so no existing construction site changes and no unit test
     ///     fires a real event.
     init(
-        session: any AudioSessionProtocol = AVAudioSession.sharedInstance(),
+        session: any AudioSessionProtocol,
         maxRetryAttempts: Int = 4,
         retryDelay: Duration = .milliseconds(250),
         reporter: any ErrorReporter = NoOpErrorReporter()

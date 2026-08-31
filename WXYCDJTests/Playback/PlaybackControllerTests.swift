@@ -246,7 +246,12 @@ struct PlaybackControllerTests {
         await waitUntil { controller.lastFailure != nil }
 
         #expect(controller.lastFailure == .refetchFailed)
-        #expect(engine.loads.count == 1, "a failed refetch must not re-cue anything")
+        // `fail(_:)` is a queue-ending exit, so the second `load` is the
+        // teardown emptying the engine's queue -- never a re-cue of the album.
+        #expect(engine.loads.last == [], "a failed refetch must not re-cue anything")
+        let reCues = engine.loads.dropFirst().filter { !$0.isEmpty }
+        #expect(reCues.isEmpty)
+        #expect(controller.queue.isEmpty)
         #expect(reporter.reports.map(\.context) == ["PlaybackController.refetchManifest"])
     }
 
@@ -434,6 +439,477 @@ struct PlaybackControllerTests {
         #expect(!item.description.contains("cdn.example.org"))
         #expect(item.description.contains("la paradoja"))
     }
+
+    // MARK: - Seek and position
+
+    @Test("seek(to:) records the commanded position and tells the engine")
+    func seekRecordsThePositionAndTellsTheEngine() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let controller = PlaybackController(engine: engine, api: api)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+
+        controller.seek(to: 92.5)
+
+        // Catches: deleting `position = time` from `seek(to:)`.
+        #expect(controller.position == 92.5)
+        #expect(engine.commands.last == .seek(92.5))
+    }
+
+    @Test("seek(to:) with nothing cued reaches neither the engine nor the position")
+    func seekIsANoOpWithNothingCued() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let controller = PlaybackController(engine: engine, api: api)
+
+        controller.seek(to: 92.5)
+
+        // Catches: deleting `guard currentItem != nil else { return }` from
+        // `seek(to:)` -- a scrubber tap on an empty transport would otherwise
+        // record a position no item backs and issue a seek into a dead queue.
+        #expect(controller.position == 0)
+        #expect(engine.commands.isEmpty)
+    }
+
+    @Test("the commanded position resets when the cursor moves to the next item")
+    func positionResetsWhenTheCursorMoves() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let controller = PlaybackController(engine: engine, api: api)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        controller.seek(to: 92.5)
+
+        engine.emit(.itemEnded)
+        await waitUntil { controller.currentIndex == 1 }
+
+        // Catches: deleting `position = 0` from `moveToNextItem()` -- the next
+        // track would open reading 92.5 s in.
+        #expect(controller.position == 0)
+    }
+
+    // MARK: - A pause that lands mid-refetch
+
+    @Test("a pause during the one-shot refetch is not overridden when the refetch lands")
+    func aPauseDuringARefetchSurvivesTheRefetch() async throws {
+        let refreshed = PlaybackFixtures.manifestBody(PlaybackFixtures.threeTrackManifest(urlSuffix: "-refreshed"))
+        let (api, blocking) = try await SignedInClient.makeBlocking(responseBody: refreshed)
+        let engine = SpyPlaybackEngine()
+        let controller = PlaybackController(engine: engine, api: api)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+
+        engine.emit(.failed(.mediaForbidden))
+        await blocking.waitForFirstRequest()
+
+        // The DJ taps pause while the refetch is still in flight.
+        controller.pause()
+        let playsBeforeRelease = engine.commands.filter { $0 == .play }.count
+        blocking.release()
+        await waitUntil { controller.refetchSettledCount == 1 }
+
+        // Catches: restoring `cue(from:)`'s unconditional
+        // `isPlaybackRequested = true` + `beginPlayback()` (i.e. dropping the
+        // `startPlaying:` gate) -- audio would resume against an explicit pause.
+        #expect(!controller.isPlaybackRequested)
+        #expect(engine.commands.filter { $0 == .play }.count == playsBeforeRelease)
+        // The recovery still happened, though: the dead URLs were replaced, so
+        // a later resume() plays a live one rather than 403-ing again.
+        #expect(engine.loads.count == 2)
+        #expect(engine.loads[1].first?.url.absoluteString.contains("-refreshed") == true)
+    }
+
+    // MARK: - Late engine events
+
+    @Test("a media 403 arriving after stop() neither refetches nor restarts the album")
+    func aLateMediaForbiddenAfterStopIsIgnored() async throws {
+        let (api, session) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let controller = PlaybackController(engine: engine, api: api)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+
+        controller.stop()
+        // The item being torn down reports its own failure a beat later.
+        engine.emit(.failed(.mediaForbidden))
+        await settle()
+
+        // Catches: deleting `guard currentIndex != nil else { return }` from
+        // `handle(_:)`'s `.failed` arm -- with the album identity also cleared
+        // the failure would fall through to `fail(.engine(.mediaForbidden))`
+        // and stamp a failure on a queue the DJ deliberately ended.
+        #expect(controller.lastFailure == nil)
+        #expect(PlaybackFixtures.playbackRequestCount(session) == 0)
+        #expect(controller.queue.isEmpty)
+        #expect(!controller.isPlaybackRequested)
+    }
+
+    @Test("a media 403 arriving after the queue ran out doesn't restart the album from the top")
+    func aLateMediaForbiddenAfterTheQueueRanOutIsIgnored() async throws {
+        let (api, session) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let controller = PlaybackController(engine: engine, api: api)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+
+        for _ in 0..<3 { engine.emit(.itemEnded) }
+        await waitUntil { controller.currentIndex == nil }
+
+        session.enqueue(StubRequestSession.Stub(body: PlaybackFixtures.manifestBody(PlaybackFixtures.threeTrackManifest(urlSuffix: "-refreshed"))))
+        engine.emit(.failed(.mediaForbidden))
+        await settle()
+
+        // Catches: deleting `guard currentIndex != nil else { return }` from
+        // `handle(_:)`'s `.failed` arm. The album identity survives a natural
+        // end-of-queue (nothing clears it there), so without the gate the
+        // refetch fires and re-cues track 1 of an album that just finished.
+        #expect(PlaybackFixtures.playbackRequestCount(session) == 0)
+        #expect(controller.currentIndex == nil)
+        #expect(!controller.isPlaybackRequested)
+        #expect(engine.loads.count == 1)
+    }
+
+    @Test("a refused start doesn't leave the previous album refetchable")
+    func aRefusedStartDoesNotLeaveThePreviousAlbumRefetchable() async throws {
+        let (api, session) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let clockDate = Date(timeIntervalSince1970: 1_800_000_000)
+        let controller = PlaybackController(engine: engine, api: api, nowDate: { clockDate })
+
+        controller.start(
+            manifest: PlaybackFixtures.threeTrackManifest(expiresAt: clockDate.addingTimeInterval(4 * 60 * 60)),
+            albumTitle: "DOGA",
+            artistName: "Juana Molina"
+        )
+        let expiring = PlaybackFixtures.manifest(libraryId: 99, expiresAt: clockDate.addingTimeInterval(5 * 60), tracks: [
+            PlaybackFixtures.track(fileId: 901, title: "Call Your Name", renditions: [PlaybackFixtures.rendition("mp3")]),
+        ])
+        #expect(controller.start(manifest: expiring, albumTitle: "Edits", artistName: "Chuquimamani-Condori") == false)
+
+        session.enqueue(StubRequestSession.Stub(body: PlaybackFixtures.manifestBody(PlaybackFixtures.threeTrackManifest())))
+        engine.emit(.failed(.mediaForbidden))
+        await settle()
+
+        // `start()` returns before assigning `albumID`, so the refusal used to
+        // leave the *previous* album's id in place with a freshly-reset refetch
+        // budget -- a late 403 then played DOGA again, which the DJ never asked
+        // for. Catches: deleting `guard currentIndex != nil else { return }`
+        // from `handle(_:)`'s `.failed` arm.
+        #expect(PlaybackFixtures.playbackRequestCount(session) == 0)
+        #expect(engine.loads.last == [])
+        #expect(!controller.isPlaybackRequested)
+    }
+
+    @Test("a stray .timeControl after stop() can't claim playback on an empty queue")
+    func aLateTimeControlAfterStopIsIgnored() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let controller = PlaybackController(engine: engine, api: api)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+
+        // Prove the event pipeline delivers, so the assertion after the stop
+        // isn't vacuously waiting on a stream nobody is draining.
+        engine.emit(.timeControl(isPlaying: true))
+        await waitUntil { controller.isPlaying }
+
+        controller.stop()
+        engine.emit(.timeControl(isPlaying: true))
+        await settle()
+
+        // Catches: deleting `guard !playing || currentIndex != nil else { return }`
+        // from `handle(_:)`'s `.timeControl` arm. `.timeControl` only fires on
+        // transitions, so nothing would ever correct `isPlaying == true` over
+        // an empty queue.
+        #expect(!controller.isPlaying)
+        #expect(!controller.isPlaybackRequested)
+    }
+
+    // MARK: - The cursor across a refetch
+
+    @Test("an .itemEnded landing during the refetch window isn't rewound by it")
+    func anItemEndedDuringTheRefetchIsNotRewound() async throws {
+        let refreshed = PlaybackFixtures.manifestBody(PlaybackFixtures.threeTrackManifest(urlSuffix: "-refreshed"))
+        let (api, blocking) = try await SignedInClient.makeBlocking(responseBody: refreshed)
+        let engine = SpyPlaybackEngine()
+        let controller = PlaybackController(engine: engine, api: api)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+
+        engine.emit(.failed(.mediaForbidden))
+        await blocking.waitForFirstRequest()
+
+        // The engine finishes the current item while the refetch is in flight.
+        engine.emit(.itemEnded)
+        await waitUntil { controller.currentIndex == 1 }
+        blocking.release()
+        await waitUntil { engine.loads.count == 2 }
+
+        // Catches: hoisting `resumeAt`/`resumeFileID` back above the `await` in
+        // `refetchManifest(albumID:)` -- the cursor read before the suspension
+        // is stale, and the queue rewinds to the track that already ended.
+        #expect(controller.currentIndex == 1)
+        #expect(engine.loads[1].map(\.fileId) == [202, 203])
+    }
+
+    @Test("a refetch whose track list shifted resumes on the same file_id, not the same index")
+    func aRefetchWithAShiftedTrackListResumesOnTheSameFileID() async throws {
+        let (api, session) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let controller = PlaybackController(engine: engine, api: api)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+
+        engine.emit(.itemEnded)
+        await waitUntil { controller.currentIndex == 1 }   // fileId 202
+
+        // The refreshed manifest reorders and drops a track, so index 1 is no
+        // longer the track the DJ was on -- a re-bind that merged a second
+        // digital_asset does exactly this.
+        let shifted = PlaybackFixtures.manifest(tracks: [
+            PlaybackFixtures.track(fileId: 203, title: "eras", renditions: [PlaybackFixtures.rendition("mp3", url: "https://cdn.example.org/3.mp3?sig=C2")]),
+            PlaybackFixtures.track(fileId: 201, title: "la paradoja", renditions: [PlaybackFixtures.rendition("mp3", url: "https://cdn.example.org/1.mp3?sig=A2")]),
+            PlaybackFixtures.track(fileId: 202, title: "un día", renditions: [PlaybackFixtures.rendition("mp3", url: "https://cdn.example.org/2.mp3?sig=B2")]),
+        ])
+        session.enqueue(StubRequestSession.Stub(body: PlaybackFixtures.manifestBody(shifted)))
+        engine.emit(.failed(.mediaForbidden))
+        await waitUntil { engine.loads.count == 2 }
+
+        // Catches: deleting the `resumeFileID.flatMap { … }` lookup in
+        // `refetchManifest(albumID:)` and keeping only the index fallback --
+        // index 1 of the refreshed list is fileId 201, a track the DJ already
+        // heard, so the plain-index answer is observably different here.
+        #expect(controller.currentIndex == 2)
+        #expect(controller.currentItem?.fileId == 202)
+        #expect(engine.loads[1].map(\.fileId) == [202])
+    }
+
+    @Test("the refetched queue carries the album and artist the original start supplied")
+    func theRefetchCarriesTheAlbumAndArtistFromTheStart() async throws {
+        let (api, session) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let controller = PlaybackController(engine: engine, api: api)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+
+        session.enqueue(StubRequestSession.Stub(body: PlaybackFixtures.manifestBody(PlaybackFixtures.threeTrackManifest(urlSuffix: "-refreshed"))))
+        engine.emit(.failed(.mediaForbidden))
+        await waitUntil { engine.loads.count == 2 }
+
+        // The manifest carries neither (ADR 0008 Amendment 4), so the refetch
+        // is the only path that reads the *stored* values rather than
+        // `start()`'s parameters. Catches: deleting `self.albumTitle = albumTitle`
+        // (or `self.artistName = artistName`) from `start()` -- the lock screen
+        // would go blank the moment a 403 was recovered from.
+        #expect(engine.loads[1].allSatisfy { $0.albumTitle == "DOGA" })
+        #expect(engine.loads[1].allSatisfy { $0.artistName == "Juana Molina" })
+    }
+
+    // MARK: - An empty manifest is not an unplayable one
+
+    @Test("a manifest with no tracks is refused distinctly from one with no playable rendition")
+    func anEmptyManifestIsDistinctFromAnUnplayableOne() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let controller = PlaybackController(engine: engine, api: api)
+
+        #expect(controller.start(manifest: PlaybackFixtures.manifest(tracks: []), albumTitle: "Edits", artistName: "Chuquimamani-Condori") == false)
+        // Catches: deleting the `guard !manifest.tracks.isEmpty else { fail(.emptyManifest) … }`
+        // from `start()` -- an album whose bind job never ran would report
+        // `.noPlayableRendition`, indistinguishable from a real codec gap, and
+        // the distinction can't be recovered downstream from a closed enum.
+        #expect(controller.lastFailure == .emptyManifest)
+
+        let allUnplayable = PlaybackFixtures.manifest(tracks: [
+            PlaybackFixtures.track(fileId: 303, title: "unplayable", renditions: [PlaybackFixtures.rendition("opus")]),
+        ])
+        #expect(controller.start(manifest: allUnplayable, albumTitle: "Edits", artistName: "Chuquimamani-Condori") == false)
+        #expect(controller.lastFailure == .noPlayableRendition)
+        #expect(engine.commands.isEmpty)
+    }
+
+    // MARK: - The audio session
+
+    @Test("the engine is not started until a deferred audio-session activation resolves")
+    func theEngineWaitsForTheActivationRamp() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let session = FakeAudioSession()
+        // The first activate() is refused by another app holding the session,
+        // so activate() returns false ("deferred, not failed") and the
+        // coordinator's bounded retry succeeds a tick later.
+        session.failNextActivation(with: FakeAudioSession.cannotInterruptOthersError())
+        let coordinator = AudioSessionCoordinator(session: session, maxRetryAttempts: 4, retryDelay: .milliseconds(5))
+        let controller = PlaybackController(engine: engine, api: api, audioSession: coordinator)
+
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+
+        // The transport still renders immediately -- that property is
+        // load-bearing and must survive the wait (ADR 0008 Amendment 1).
+        #expect(controller.isPlaybackRequested)
+        #expect(engine.loads.count == 1, "the queue is cued regardless; only the start waits")
+        // Catches: discarding `audioSession.activate()`'s Bool and calling
+        // `engine.play()` on the next line -- the rejected alternative in ADR
+        // 0008 Amendment 1, which plays into a session that isn't up and
+        // produces no audio, no error, and nothing to debug.
+        #expect(!engine.commands.contains(.play), "the engine must not be started while the activation is deferred")
+
+        await waitUntil { engine.commands.contains(.play) }
+        #expect(coordinator.isActivated)
+        #expect(controller.lastFailure == nil)
+    }
+
+    @Test("a ramp that never resolves fails explicitly instead of silently")
+    func aRampThatNeverResolvesFailsExplicitly() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let reporter = SpyErrorReporter()
+        let session = FakeAudioSession()
+        session.failAllActivations(with: FakeAudioSession.cannotInterruptOthersError())
+        let coordinator = AudioSessionCoordinator(session: session, maxRetryAttempts: 2, retryDelay: .milliseconds(5))
+        let controller = PlaybackController(
+            engine: engine,
+            api: api,
+            audioSession: coordinator,
+            reporter: reporter,
+            activationWaitLimit: .milliseconds(120)
+        )
+
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        await waitUntil { controller.lastFailure != nil }
+
+        // Catches: deleting the `guard didActivate else { … fail(.audioSessionUnavailable) }`
+        // arm and starting the engine anyway once the bound elapses -- the
+        // silent failure ADR 0008 Amendment 1 rejects.
+        #expect(controller.lastFailure == .audioSessionUnavailable)
+        #expect(!engine.commands.contains(.play))
+        #expect(!controller.isPlaybackRequested)
+        #expect(controller.queue.isEmpty, "the queue is torn down rather than left holding items nothing can play")
+        #expect(reporter.reports.map(\.context) == ["PlaybackController.activation"])
+    }
+
+    @Test("resume() waits for the ramp too, not just the initial cue")
+    func resumeWaitsForTheActivationRamp() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let session = FakeAudioSession()
+        let coordinator = AudioSessionCoordinator(session: session, maxRetryAttempts: 4, retryDelay: .milliseconds(5))
+        let controller = PlaybackController(engine: engine, api: api, audioSession: coordinator)
+
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        await waitUntil { engine.commands.contains(.play) }
+        controller.pause()
+
+        // Model the session genuinely going away while paused -- an
+        // interruption, or a future pause-side handback. Only the coordinator
+        // owns that transition, so the test drives it directly rather than
+        // inventing a controller path for it.
+        coordinator.deactivate()
+        await waitUntil { !coordinator.isActivated }
+
+        // Another app grabs the session before the resume, so this activate()
+        // defers exactly as the first one could.
+        session.failNextActivation(with: FakeAudioSession.cannotInterruptOthersError())
+        let playsBeforeResume = engine.commands.filter { $0 == .play }.count
+        controller.resume()
+
+        // Catches: replacing `resume()`'s `beginPlayback()` with the old
+        // `audioSession?.activate()` + `engine.play()` pair.
+        #expect(controller.isPlaybackRequested)
+        #expect(engine.commands.filter { $0 == .play }.count == playsBeforeResume)
+        await waitUntil { engine.commands.filter { $0 == .play }.count == playsBeforeResume + 1 }
+    }
+
+    @Test("the session is activated on cue and handed back when the queue ends")
+    func theSessionIsActivatedOnCueAndHandedBackAtTheEnd() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let session = FakeAudioSession()
+        let coordinator = AudioSessionCoordinator(session: session)
+        let controller = PlaybackController(engine: engine, api: api, audioSession: coordinator)
+
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        #expect(session.activateCallCount == 1)
+        #expect(session.categoryCalls.count == 1, "the category is configured lazily, on the first activate()")
+
+        for _ in 0..<3 { engine.emit(.itemEnded) }
+        await waitUntil { controller.currentIndex == nil }
+        await waitUntil { session.deactivateCallCount == 1 }
+
+        // Catches: deleting `audioSession?.deactivate()` from
+        // `moveToNextItem()`'s end-of-queue arm -- AVAudioSession would stay
+        // active after the album finished, with Music/Podcasts still
+        // interrupted and no transport UI to reach stop() through.
+        #expect(session.deactivateCallCount == 1)
+        #expect(session.setActiveCalls.last?.options == .notifyOthersOnDeactivation)
+    }
+
+    @Test("stop() hands the audio session back")
+    func stopHandsTheAudioSessionBack() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let session = FakeAudioSession()
+        let coordinator = AudioSessionCoordinator(session: session)
+        let controller = PlaybackController(engine: engine, api: api, audioSession: coordinator)
+
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        controller.stop()
+        await waitUntil { session.deactivateCallCount == 1 }
+
+        // Catches: deleting `audioSession?.deactivate()` from `clearQueue()`.
+        #expect(session.deactivateCallCount == 1)
+    }
+
+    @Test("an engine failure hands the audio session back and tears the dead queue down")
+    func anEngineFailureHandsTheSessionBack() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let session = FakeAudioSession()
+        let coordinator = AudioSessionCoordinator(session: session)
+        let controller = PlaybackController(engine: engine, api: api, audioSession: coordinator)
+
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        engine.emit(.failed(.decodeFailed))
+        await waitUntil { controller.lastFailure != nil }
+        await waitUntil { session.deactivateCallCount == 1 }
+
+        // Catches: deleting `if !queue.isEmpty { clearQueue() }` from `fail(_:)`.
+        // `fail()` is the third queue-ending exit and was the only one that
+        // never handed the session back, so a .decodeFailed left AVAudioSession
+        // active indefinitely -- and left the dead URLs in `queue`, so
+        // togglePlayPause() would replay them.
+        #expect(session.deactivateCallCount == 1)
+        #expect(controller.queue.isEmpty)
+        #expect(controller.currentItem == nil)
+
+        controller.togglePlayPause()
+        #expect(!engine.commands.suffix(1).contains(.play), "there is nothing left to replay")
+    }
+
+    // MARK: - Teardown
+
+    @Test("the engine-event consumer is cancelled when the controller goes away")
+    func theEventConsumerIsCancelledWhenTheControllerDeinits() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        // Held in an optional and released explicitly rather than left to fall
+        // out of a `do` scope: the release is the thing under test, and
+        // end-of-scope lifetime is not something to take on trust in a test
+        // that would otherwise pass vacuously.
+        var controller: PlaybackController? = PlaybackController(engine: engine, api: api)
+        controller?.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+
+        // Drive one event through and wait for it to land, so the consumer is
+        // provably *running and parked on the stream* before the release. Skip
+        // this and the task is still queued when `deinit` cancels it: it then
+        // takes its `self == nil` early return without ever iterating, the
+        // stream is never consumed, and the test measures nothing -- which is
+        // exactly the leak shape it is supposed to catch, only invisible.
+        engine.emit(.timeControl(isPlaying: true))
+        await waitUntil { controller?.isPlaying == true }
+        #expect(!engine.isEventStreamTerminated)
+
+        controller = nil
+        await waitUntil { engine.isEventStreamTerminated }
+
+        // Catches: deleting `deinit { eventsTask?.cancel() }` from
+        // PlaybackController. The consumer task holds only a weak reference, so
+        // a leaked one is invisible -- it just parks on the stream forever,
+        // one per controller ever built.
+        #expect(engine.isEventStreamTerminated)
+    }
 }
 
 // MARK: - Fixtures
@@ -574,11 +1050,34 @@ final class HoldingRequestSession: RequestSession, @unchecked Sendable {
     }
 }
 
-/// Polls `condition` on the main actor until it holds, yielding between
-/// checks. Matches the idiom in `AudioSessionCoordinatorTests.swift`.
+/// Polls `condition` on the main actor until it holds or `timeout` elapses.
+///
+/// Yields *and* sleeps briefly between checks, unlike the fixed-yield-count
+/// idiom in `AudioSessionCoordinatorTests.swift`: several of the waits here
+/// depend on real elapsed time rather than on main-actor turns — the
+/// coordinator's bounded retry (`retryDelay` apart), its detached handback, and
+/// the controller's own activation bound — and a pure yield loop can spin
+/// through its whole budget in less wall-clock time than one retry tick.
 @MainActor
-private func waitUntil(_ condition: () -> Bool) async {
-    for _ in 0..<1_000 where !condition() {
+private func waitUntil(timeout: Duration = .seconds(5), _ condition: () -> Bool) async {
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    while !condition(), ContinuousClock.now < deadline {
         await Task.yield()
+        try? await Task.sleep(for: .milliseconds(1))
     }
+}
+
+/// Lets every in-flight main-actor turn and short-lived task drain, for the
+/// assertions that something did **not** happen.
+///
+/// Those can't wait on a condition — there is nothing to wait for — so they
+/// need a settle point instead. Each one is paired in its test with a positive
+/// observation on the same pipeline (an event that *did* land, a request count
+/// the unfixed code would have raised), so the absence being asserted is a real
+/// measurement rather than a vacuous one.
+@MainActor
+private func settle() async {
+    for _ in 0..<50 { await Task.yield() }
+    try? await Task.sleep(for: .milliseconds(30))
+    for _ in 0..<50 { await Task.yield() }
 }

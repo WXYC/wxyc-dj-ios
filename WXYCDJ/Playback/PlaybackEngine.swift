@@ -36,8 +36,14 @@ import WXYCAPI
 /// assets and a manifest merges them.
 struct PlaybackItem: Sendable, Equatable, Identifiable, CustomStringConvertible {
     /// `digital_asset_file.id` -- stable across manifest refetches, which is
-    /// what lets a post-403 refetch resume on the same track rather than the
-    /// same array index.
+    /// what lets a post-403 refetch resume on the same track rather than on
+    /// whatever now sits at the same array index.
+    ///
+    /// The **track**, not the playhead: the recovered track restarts from
+    /// 0:00. This seam carries no time (four events, no periodic observation),
+    /// so nothing here knows where the DJ was; re-seeking belongs to issue
+    /// #145's engine adapter, which holds `currentTime()`. See ADR 0008
+    /// Amendment 5.
     let fileId: Int
     /// The presigned GET. **A bearer credential until the manifest expires:**
     /// never `os_log` it, never put it in an `NSError` `userInfo`, never hand
