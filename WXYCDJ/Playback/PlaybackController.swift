@@ -61,9 +61,17 @@ enum PlaybackFailure: Equatable, Sendable {
 }
 
 /// Owns the playback queue and the transport state the UI renders.
+///
+/// Conforms to ``PlaybackInterruptionContext`` (issue #145) so its own
+/// ``interruptionRouteHandler`` can drive pause/resume across a phone-call
+/// interruption or a route disconnect without a second controller-shaped
+/// type. See ``tearDown(reason:)`` / ``play(reason:)`` and
+/// ``retirePendingInterruptionResume()`` for the reason-bounded rule that
+/// keeps a Lock-Screen pause mid-call from being silently overridden when
+/// the call ends.
 @MainActor
 @Observable
-final class PlaybackController {
+final class PlaybackController: PlaybackInterruptionContext {
     // MARK: - Policy constants
 
     /// Codec preference, most preferred first. **An `mp3` entry is not
@@ -159,6 +167,13 @@ final class PlaybackController {
     /// Cleared at every ``start(manifest:albumTitle:artistName:)``.
     private(set) var lastFailure: PlaybackFailure?
 
+    /// ``PlaybackInterruptionContext`` conformance: whether playback was
+    /// active immediately before the most recent route disconnect (e.g.
+    /// headphones unplugged), so ``interruptionRouteHandler`` knows whether a
+    /// reconnect should resume. Not rendered by any view, so
+    /// `@ObservationIgnored`.
+    @ObservationIgnored var wasPlayingBeforeRouteDisconnect = false
+
     /// Bumped once per manifest refetch that reaches a conclusion — including
     /// one that was superseded and deliberately discarded, which by design
     /// changes nothing else about this controller. Exposed for the same reason
@@ -221,6 +236,13 @@ final class PlaybackController {
     /// The in-flight wait on a deferred audio-session activation, cancelled by
     /// anything that supersedes the start it was going to issue.
     @ObservationIgnored private var activationWaitTask: Task<Void, Never>?
+    /// Owns the AVAudioSession interruption/route-change state machine
+    /// (issue #138), driving this controller through the
+    /// ``PlaybackInterruptionContext`` conformance below. Built at the end of
+    /// `init` (once every other stored property has a value, so `self` can
+    /// be handed to it) and held strongly; it holds this controller only
+    /// weakly, so there is no retain cycle.
+    @ObservationIgnored private var interruptionRouteHandler: PlaybackInterruptionRouteHandler?
 
     init(
         engine: any PlaybackEngine,
@@ -229,7 +251,8 @@ final class PlaybackController {
         reporter: any ErrorReporter = NoOpErrorReporter(),
         activationWaitLimit: Duration = PlaybackController.defaultActivationWaitLimit,
         nowDate: @escaping @Sendable () -> Date = { Date() },
-        now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now }
+        now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now },
+        notificationCenter: NotificationCenter = .default
     ) {
         self.engine = engine
         self.api = api
@@ -239,6 +262,10 @@ final class PlaybackController {
         self.nowDate = nowDate
         self.now = now
         startObservingEngine()
+        self.interruptionRouteHandler = PlaybackInterruptionRouteHandler(
+            notificationCenter: notificationCenter,
+            context: self
+        )
     }
 
     // MARK: - Transport
@@ -317,6 +344,7 @@ final class PlaybackController {
     func pause() {
         isPlaybackRequested = false
         cancelActivationWait()
+        retirePendingInterruptionResume()
         engine.pause()
     }
 
@@ -347,6 +375,7 @@ final class PlaybackController {
     func stop() {
         clearAlbumIdentity()
         cancelActivationWait()
+        retirePendingInterruptionResume()
         isPlaybackRequested = false
         isPlaying = false
         cuedAt = nil
@@ -467,6 +496,7 @@ final class PlaybackController {
             isPlaying = false
             cuedAt = nil
             cancelActivationWait()
+            retirePendingInterruptionResume()
             audioSession?.deactivate()
             return
         }
@@ -785,11 +815,52 @@ final class PlaybackController {
     private func fail(_ failure: PlaybackFailure) {
         clearAlbumIdentity()
         cancelActivationWait()
+        retirePendingInterruptionResume()
         if !queue.isEmpty { clearQueue() }
         lastFailure = failure
         isPlaybackRequested = false
         isPlaying = false
         cuedAt = nil
+    }
+
+    /// Retires any pending post-interruption auto-resume the interruption
+    /// handler is holding (``PlaybackInterruptionRouteHandler/cancelPendingInterruptionResume()``).
+    ///
+    /// **The reason-bounded rule (standing obligation from issue #138,
+    /// discharged here):** every controller-initiated teardown calls this
+    /// -- ``pause()``, ``stop()``, ``fail(_:)``, and the end-of-queue arm of
+    /// ``moveToNextItem()`` -- **except** ``tearDown(reason:)``, which *is*
+    /// the auto-resume-bearing stop the interruption handler itself asks
+    /// for. Calling this from `tearDown(reason:)` would erase the very flag
+    /// the handler just set (`wasPlayingBeforeInterruption`, assigned
+    /// immediately before it calls `context.tearDown(reason: .interruptionBegan)`),
+    /// which would make an interruption that both begins *and* ends never
+    /// resume at all. Every *other* stop must retire it, or a DJ who pauses
+    /// from the Lock Screen mid-call has playback restart on them the moment
+    /// the call ends -- the defect this method exists to close.
+    private func retirePendingInterruptionResume() {
+        interruptionRouteHandler?.cancelPendingInterruptionResume()
+    }
+
+    // MARK: - PlaybackInterruptionContext
+
+    /// Pauses for an interruption/route-disconnect reason, **without**
+    /// retiring the pending auto-resume -- see
+    /// ``retirePendingInterruptionResume()``'s doc comment for why this is
+    /// the one teardown that must not call it. Deliberately not routed
+    /// through ``pause()``: the only difference from it is the omitted
+    /// retirement.
+    func tearDown(reason: PlaybackReason) {
+        isPlaybackRequested = false
+        cancelActivationWait()
+        engine.pause()
+    }
+
+    /// Resumes for an interruption-ended/route-reconnected reason.
+    /// `PlaybackInterruptionContext` declares this `throws` to match the
+    /// source contract this was ported from; nothing here actually throws.
+    func play(reason: PlaybackReason) throws {
+        resume()
     }
 
     /// Cancels the engine-event consumer.

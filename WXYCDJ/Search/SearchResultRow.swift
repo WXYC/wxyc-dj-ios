@@ -39,7 +39,13 @@ struct SearchResultRow: View {
                     if let bin = row.rotationBin {
                         RotationBadge(bin: bin)
                     }
-                    if hasDigitalAudio {
+                    // Issue #145: the same role gate AlbumDetailView applies
+                    // to its header badge and Play section -- a `member`'s
+                    // JWT role denies `digital_archive` server-side, so
+                    // showing this badge to them would only earn a quiet 403
+                    // on tap. Fail-open (nil/unrecognized roles still show)
+                    // for the reason `DigitalArchiveRoleGate` documents.
+                    if hasDigitalAudio, !DigitalArchiveRoleGate.hidesDigitalAudioBadge(role: currentRole) {
                         DigitalAudioBadge()
                     }
                 }
@@ -81,6 +87,14 @@ struct SearchResultRow: View {
             .fill(.quaternary)
             .frame(width: 44, height: 44)
             .overlay(Image(systemName: "music.note").foregroundStyle(.secondary))
+    }
+
+    /// The decoded JWT role, or `nil` when signed out or in the issue-#53
+    /// pending-JWT window -- mirrors `AlbumDetailView.currentRole`. Read off
+    /// `deps.authService` rather than adding a second `@Environment` key.
+    private var currentRole: String? {
+        if case .signedIn(let payload) = deps.authService.state { return payload?.role }
+        return nil
     }
 }
 

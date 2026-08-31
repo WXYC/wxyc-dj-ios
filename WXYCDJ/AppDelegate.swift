@@ -58,11 +58,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // (BGAppRefreshTask) is registered separately by SwiftUI's
         // .backgroundTask(.appRefresh:) modifier on the scene.
         CatalogBackgroundTasks.registerReindexHandler(dependencies: dependencies)
-        // Issue #138: no player or controller exists yet, so the transport
-        // commands are registered with no-op handlers and every command the
-        // app can't service is explicitly disabled. Issue #145 replaces the
-        // handler bodies once a PlaybackController exists to receive them.
+        // Issue #138 registers the no-ops (and, in the same call, disables
+        // every unsupported transport command -- that half doesn't change
+        // here). Issue #145: a real PlaybackController now exists, so wire
+        // it in immediately -- registerPlaybackCommands(controller:) detaches
+        // the no-ops before installing real handlers, per this type's
+        // standing obligation.
         remoteCommands.registerNoOpCommands()
+        remoteCommands.registerPlaybackCommands(controller: dependencies.playbackController)
         return true
     }
 

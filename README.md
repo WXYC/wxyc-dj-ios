@@ -4,7 +4,7 @@
 
 A small SwiftUI app for WXYC DJs. Sign in with a one-time code emailed to you — or with your dj.wxyc.org password, either way identified by username or email — search the WXYC library with live results, view a release's full metadata (catalog row + LML enrichment — release year, label, genres, styles, tracklist, streaming links, Discogs and Wikipedia URLs), and add/remove items from your personal **bin** (the per-DJ favorites collection Backend-Service exposes at `/djs/bin`).
 
-This is a focused tool. It deliberately does **not** ship: flowsheet integration, playback, rotation (H/M/L/S) editing, push notifications, or the second LML call for artist bio/tokens. Those can come later — see the v2 list at the bottom.
+This is a focused tool. It deliberately does **not** ship: flowsheet integration, rotation (H/M/L/S) editing, push notifications, or the second LML call for artist bio/tokens. Those can come later — see the v2 list at the bottom. Digital-archive playback — streaming a bound album from the auto DJ's library, behind a signed manifest and a kill switch — is no longer deferred either; see "Playback" below.
 
 ## Requirements
 
@@ -111,8 +111,15 @@ All endpoints live in Backend-Service (`apps/backend/routes/`) except the auth s
 | Remove from bin | DELETE | `/djs/bin?album_id=` | JWT |
 | Album metadata (LML) | GET | `/proxy/metadata/album?artistName=&releaseTitle=` | JWT |
 | Bulk catalog export | GET | `/library/catalog` (conditional GET, gzipped NDJSON) | JWT |
+| Digital-archive playback manifest | GET | `/digital-archive/albums/{id}/playback` | JWT |
 
 The bin endpoints derive the DJ from the JWT's `sub` claim, so the client never sends `dj_id`. The JWT is short-lived; `AuthService.currentJWT()` refreshes via `/auth/token` automatically and `APIClient` retries once on a 401.
+
+## Playback
+
+A signed-in DJ (any role but `member` — the JWT role `digital_archive` denies) can stream a bound album straight from the auto DJ's library: an album detail screen carrying the digital-audio badge shows a "Play" section listing that album's manifest tracks, and a mini-player at the bottom of the tab bar keeps the transport reachable from Search or Bin. Playback is in-memory streaming only — no downloads, nothing cached beyond ordinary `AVPlayer` buffering — behind a signed, time-limited manifest and a server-side kill switch (`DIGITAL_ARCHIVE_STREAMING_ENABLED`). It continues in the background, exposes lock-screen/Control-Center transport, and pauses for an incoming call or a route disconnect (unplugged headphones), resuming afterward.
+
+Epic [#135](https://github.com/WXYC/wxyc-dj-ios/issues/135) landed in three parts: [#138](https://github.com/WXYC/wxyc-dj-ios/issues/138) (the `AudioSessionCoordinator` extraction plus two file-level ports from `wxyc-ios-64`), [#144](https://github.com/WXYC/wxyc-dj-ios/issues/144) (the `PlaybackEngine` seam and `PlaybackController`), and [#145](https://github.com/WXYC/wxyc-dj-ios/issues/145) (`AVQueuePlayerEngine`, the detail-view Play section, and the mini-player). See `CLAUDE.md`'s "Playback" section for the file-by-file detail and [`docs/adr/0008-archive-playback.md`](docs/adr/0008-archive-playback.md) (five amendments) for the design decisions and their rationale.
 
 ## Architecture Notes
 

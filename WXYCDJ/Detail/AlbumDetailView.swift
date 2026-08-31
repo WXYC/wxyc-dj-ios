@@ -27,6 +27,8 @@ struct AlbumDetailView: View {
     /// silently inheriting whatever the default happened to be.
     let origin: AlbumDetailOrigin
     @Environment(AppDependencies.self) private var deps
+    @Environment(AuthService.self) private var auth
+    @Environment(PlaybackController.self) private var playback
     @State private var info: AlbumInfo?
     @State private var infoLoaded: Bool = false
     @State private var metadata: AlbumMetadata?
@@ -60,6 +62,10 @@ struct AlbumDetailView: View {
     // permanently suppress the other on the same screen.
     @State private var didRecordArtistNameMiss = false
     @State private var didRecordLMLMiss = false
+    // Issue #145: the digital-archive Play section's on-demand manifest
+    // fetch. Reset to `.idle` at the top of every `loadAll()`, mirroring
+    // `cloneRow`/`metadataError` above.
+    @State private var manifestState: PlaybackManifestState = .idle
 
     init(albumId: Int, fallback: AlbumSearchResult? = nil, origin: AlbumDetailOrigin) {
         self.albumId = albumId
@@ -70,6 +76,7 @@ struct AlbumDetailView: View {
     var body: some View {
         List {
             headerSection
+            playSection
             catalogSection
             if let metadata, hasReleaseInfo(metadata) {
                 releaseSection(metadata)
@@ -219,10 +226,106 @@ struct AlbumDetailView: View {
                 if let label = displayLabel, !label.isEmpty {
                     Text(label).foregroundStyle(.secondary)
                 }
-                if cloneRow?.hasDigitalAudio == true {
+                if Self.shouldShowDigitalAudio(hasDigitalAudio: cloneRow?.hasDigitalAudio ?? false, role: currentRole) {
                     DigitalAudioBadge()
                 }
             }
+        }
+    }
+
+    /// The digital-archive Play section (issue #145). One condition gates
+    /// both this section and the header's ``DigitalAudioBadge`` --
+    /// ``shouldShowDigitalAudio(hasDigitalAudio:role:)`` -- so a DJ never
+    /// sees one without the other: a badge with no section to act on it, or
+    /// a Play section for an album whose badge is hidden.
+    ///
+    /// `cloneRow == nil` (a Spotlight deep-link clone miss, or a device whose
+    /// SQLite store never opened) renders neither the badge nor this
+    /// section, silently -- the clone is the only source of
+    /// `has_digital_audio`, and there is nothing to gate on.
+    @ViewBuilder
+    private var playSection: some View {
+        if Self.shouldShowDigitalAudio(hasDigitalAudio: cloneRow?.hasDigitalAudio ?? false, role: currentRole) {
+            switch manifestState {
+            case .idle, .loading:
+                Section("Play") {
+                    ProgressView()
+                }
+            case .offline:
+                // Offline: badge shown, control disabled, no error event --
+                // never attempted the request, so nothing to report either.
+                Section("Play") {
+                    Label("Connect to play", systemImage: "wifi.slash")
+                        .foregroundStyle(.secondary)
+                }
+            case .unavailable:
+                // A quiet 403 (role denial, kill switch) or 404 (no bound
+                // audio) -- both expected states, never a red banner, never
+                // reported (issue #145 wave-2 decision #1/#4).
+                Section("Play") {
+                    Text("No audio for this album")
+                        .foregroundStyle(.secondary)
+                }
+            case .failed:
+                // A loud failure (5xx, decode, network) already reached
+                // Sentry in loadPlaybackManifest() -- this is just the quiet
+                // on-screen footer, not a red banner either.
+                Section("Play") {
+                    Text("Couldn't load tracks")
+                        .foregroundStyle(.secondary)
+                }
+            case .loaded(let manifest):
+                playTracksSection(manifest)
+            }
+        }
+    }
+
+    /// "N tracks available" -- deliberately never lined up with the LML
+    /// Discogs ``tracklistSection``, a different list from a different
+    /// source. Many `recently_rotated` albums are partial rips, so the
+    /// manifest is not the album.
+    private func playTracksSection(_ manifest: DigitalArchivePlaybackManifest) -> some View {
+        Section(Self.trackAvailabilityText(count: manifest.tracks.count)) {
+            ForEach(manifest.tracks, id: \.fileId) { track in
+                HStack(spacing: 8) {
+                    if Self.isAlbumCurrentlyCued(currentItemFileId: playback.currentItem?.fileId, trackFileIds: [track.fileId]) {
+                        Image(systemName: playback.isPlaying ? "waveform" : "pause.fill")
+                            .foregroundStyle(.tint)
+                            .frame(width: 16)
+                    } else {
+                        Color.clear.frame(width: 16)
+                    }
+                    Text(track.title)
+                    Spacer()
+                }
+            }
+            Button {
+                togglePlayback(manifest: manifest)
+            } label: {
+                let isThisAlbumCued = Self.isAlbumCurrentlyCued(
+                    currentItemFileId: playback.currentItem?.fileId,
+                    trackFileIds: manifest.tracks.map(\.fileId)
+                )
+                Label(
+                    isThisAlbumCued && playback.isPlaybackRequested ? "Pause" : "Play",
+                    systemImage: isThisAlbumCued && playback.isPlaybackRequested ? "pause.fill" : "play.fill"
+                )
+                .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    private func togglePlayback(manifest: DigitalArchivePlaybackManifest) {
+        let isThisAlbumCued = Self.isAlbumCurrentlyCued(
+            currentItemFileId: playback.currentItem?.fileId,
+            trackFileIds: manifest.tracks.map(\.fileId)
+        )
+        if isThisAlbumCued {
+            playback.togglePlayPause()
+        } else {
+            let title = info?.albumTitle ?? resolution.catalogRow?.albumTitle ?? ""
+            let artist = info?.artistName ?? resolution.catalogRow?.artistName ?? ""
+            playback.start(manifest: manifest, albumTitle: title, artistName: artist)
         }
     }
 
@@ -706,10 +809,131 @@ struct AlbumDetailView: View {
         fallback?.artworkURL == nil
     }
 
+    // MARK: Digital-archive playback (issue #145)
+
+    /// On-demand manifest-fetch state driving ``playSection``.
+    private enum PlaybackManifestState {
+        case idle
+        case loading
+        case loaded(DigitalArchivePlaybackManifest)
+        /// No request was ever attempted -- ``deps``' connectivity monitor
+        /// already reported offline, so there is nothing to report.
+        case offline
+        /// A quiet 403 or 404 (role denial, kill switch, or no bound audio).
+        case unavailable
+        /// A loud failure (5xx, decode, network) -- already reported.
+        case failed(String)
+    }
+
+    /// Whether the digital-audio badge (header) and the Play section should
+    /// show at all -- one predicate for both, so they can never disagree.
+    ///
+    /// The role half is issue #145's wave-4 decision: hide only when the
+    /// decoded JWT role case/whitespace-normalizes to exactly "member" (the
+    /// one canonical role `digital_archive` denies); show for every other
+    /// value, including `nil`. See ``DigitalArchiveRoleGate`` for the full
+    /// argument for why this doesn't need `canonicalizeRole`/`ROLE_ALIASES`
+    /// ported into Swift. Deliberately fail-open: a wrongly-shown badge
+    /// costs a DJ one tap into a quiet 403; wrongly hiding it from a
+    /// legitimate dj+ DJ is invisible.
+    nonisolated static func shouldShowDigitalAudio(hasDigitalAudio: Bool, role: String?) -> Bool {
+        hasDigitalAudio && !DigitalArchiveRoleGate.hidesDigitalAudioBadge(role: role)
+    }
+
+    /// The decoded JWT role, or `nil` when signed out or in the issue-#53
+    /// pending-JWT window (`.signedIn(payload: nil)`) -- both fail open per
+    /// ``shouldShowDigitalAudio(hasDigitalAudio:role:)``.
+    private var currentRole: String? {
+        if case .signedIn(let payload) = auth.state { return payload?.role }
+        return nil
+    }
+
+    /// "N tracks available" -- see ``playTracksSection(_:)`` for why this is
+    /// never lined up with the LML tracklist.
+    nonisolated static func trackAvailabilityText(count: Int) -> String {
+        "\(count) track\(count == 1 ? "" : "s") available"
+    }
+
+    /// Whether `currentItemFileId` (``PlaybackController/currentItem``'s
+    /// `fileId`, or `nil` if nothing is cued) belongs to this album's
+    /// manifest -- drives both the per-track now-playing highlight (called
+    /// with a single-element `trackFileIds`) and the section's Play/Pause
+    /// label (called with the whole album).
+    nonisolated static func isAlbumCurrentlyCued(currentItemFileId: Int?, trackFileIds: [Int]) -> Bool {
+        guard let currentItemFileId else { return false }
+        return trackFileIds.contains(currentItemFileId)
+    }
+
+    /// Whether a `/digital-archive/albums/{id}/playback` failure should
+    /// render quietly (a 403 exactly as a 404, both expected states) or stay
+    /// loud and reach Sentry.
+    ///
+    /// **403 and 404 both render as the quiet "No audio for this album"** --
+    /// a role denial (`member`) and a kill-switch/unbound-album 404 are both
+    /// expected states, not defects; badge visibility does not make the 403
+    /// branch dead code, since the kill switch still reaches it for a
+    /// legitimate dj+ DJ. **A 500 stays loud**: `presignManifest` runs its
+    /// presigns in `Promise.all`, so one misconfigured store name rejects
+    /// the whole manifest as a 500, and that must not be folded into the
+    /// same quiet arm as an expected refusal. `.offline` is quiet for the
+    /// same reason it is everywhere else in this app -- a supported mode,
+    /// never a defect -- even though ``loadPlaybackManifest()`` already
+    /// short-circuits before the network on that leg; this is the fail-safe
+    /// answer if a request somehow still throws it.
+    ///
+    /// A total switch, no `default:`, matching `shouldReportMetadataFailure`
+    /// and `AuthError.caseName`'s convention: a future `APIError` case is a
+    /// compile-time decision about which arm it belongs to.
+    nonisolated static func classifyPlaybackManifestFailure(_ error: APIError) -> PlaybackManifestFailureSeverity {
+        switch error {
+        case .http(let status, let message):
+            (status == 403 || status == 404) ? .quiet : .loud(message: message ?? "Server error (\(status))")
+        case .unauthorized, .notSignedIn, .offline:
+            .quiet
+        case .decoding, .network:
+            .loud(message: error.localizedMessage)
+        }
+    }
+
+    enum PlaybackManifestFailureSeverity: Equatable {
+        case quiet
+        case loud(message: String)
+    }
+
+    /// Fetches the digital-archive playback manifest on demand -- only
+    /// reachable once ``loadAll()`` has confirmed
+    /// ``shouldShowDigitalAudio(hasDigitalAudio:role:)``. Offline short-circuits
+    /// before the network entirely (badge shown, control disabled, no error
+    /// event); an empty `tracks[]` renders the same quiet "No audio for this
+    /// album" as a 403/404, mirroring `PlaybackController.start(manifest:…)`'s
+    /// own `.emptyManifest` treatment of an unbound album.
+    private func loadPlaybackManifest() async {
+        guard deps.connectivity.isOnline else {
+            manifestState = .offline
+            return
+        }
+        manifestState = .loading
+        do {
+            let manifest = try await deps.api.albumPlayback(albumId: albumId)
+            manifestState = manifest.tracks.isEmpty ? .unavailable : .loaded(manifest)
+        } catch let error as APIError {
+            switch Self.classifyPlaybackManifestFailure(error) {
+            case .quiet:
+                manifestState = .unavailable
+            case .loud(let message):
+                deps.errorReporter.report(error, context: "AlbumDetailView.loadPlaybackManifest")
+                manifestState = .failed(message)
+            }
+        } catch {
+            manifestState = .failed(error.localizedDescription)
+        }
+    }
+
     private func loadAll() async {
         infoFailed = false
         cloneRow = nil
         metadataError = nil
+        manifestState = .idle
         // The clone is read *alongside* the network legs, not after them: were
         // it awaited later, a clone-sourced cover would land after LML's and
         // the header would visibly swap — the exact defect this screen's
@@ -752,6 +976,12 @@ struct AlbumDetailView: View {
         // not the primary path.
         if infoFailed, cloneRow == nil {
             cloneRow = await loadCloneRow()
+        }
+        // On demand: only once we know this album actually carries digital
+        // audio and the badge isn't hidden by role -- not for every album
+        // regardless of the clone's flag.
+        if Self.shouldShowDigitalAudio(hasDigitalAudio: cloneRow?.hasDigitalAudio ?? false, role: currentRole) {
+            await loadPlaybackManifest()
         }
     }
 
