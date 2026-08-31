@@ -591,9 +591,18 @@ struct PlaybackControllerTests {
         // budget -- a late 403 then played DOGA again, which the DJ never asked
         // for. Catches: deleting `guard currentIndex != nil else { return }`
         // from `handle(_:)`'s `.failed` arm.
+        //
+        // The `lastFailure` assertion is what makes that mutation observable.
+        // Without it the test passes under the deletion: `fail(.manifestExpiring)`
+        // has already run `clearAlbumIdentity()`, so `handleFailure` bails at its
+        // nil `albumID` and falls through to `fail(.engine(.mediaForbidden))` --
+        // which issues no request, re-cues nothing, and leaves
+        // `isPlaybackRequested` false, so every other assertion here still holds
+        // while the refusal's own outcome has been silently overwritten.
         #expect(PlaybackFixtures.playbackRequestCount(session) == 0)
         #expect(engine.loads.last == [])
         #expect(!controller.isPlaybackRequested)
+        #expect(controller.lastFailure == .manifestExpiring, "the refusal's outcome must survive the late 403")
     }
 
     @Test("a stray .timeControl after stop() can't claim playback on an empty queue")
@@ -721,6 +730,38 @@ struct PlaybackControllerTests {
     }
 
     // MARK: - The audio session
+
+    /// Catches: dropping `beginPlayback()`'s `guard audioSession.activationPending`
+    /// fast path, which would park a HARD activation failure on an observation
+    /// that can never fire and report a timeout `activationWaitLimit` later.
+    ///
+    /// `activate()` returns `false` from three arms, not the two issue #144 and
+    /// ADR 0008 Amendment 1 were written against. `.blockedBySelfHandback` and
+    /// `.blockedByOtherApp` both arm something that resolves them (the pending
+    /// flag, the bounded retry); `.failed` -- a `setActive(true)` that threw
+    /// anything other than `CannotInterruptOthers` -- arms nothing at all, so
+    /// `isActivated` can never flip. The coordinator knows this synchronously,
+    /// which is why the controller must too.
+    @Test("a hard activation failure fails at once instead of waiting out the ramp")
+    func aHardActivationFailureFailsImmediatelyInsteadOfWaiting() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let session = FakeAudioSession()
+        // Not cannotInterruptOthersError(): this is the arm that schedules no
+        // retry and leaves activationPending false.
+        session.failAllActivations(with: NSError(domain: "org.wxyc.dj.test", code: 561_017_449))
+        let coordinator = AudioSessionCoordinator(session: session, maxRetryAttempts: 4, retryDelay: .milliseconds(5))
+        let controller = PlaybackController(engine: engine, api: api, audioSession: coordinator)
+
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+
+        #expect(!coordinator.activationPending, "the .failed arm arms nothing")
+        // Synchronously, with no waiting: the failure is known at t=0.
+        #expect(controller.lastFailure == .audioSessionUnavailable)
+        #expect(!engine.commands.contains(.play), "the engine is never started")
+        #expect(!controller.isPlaybackRequested)
+        #expect(controller.queue.isEmpty, "a queue-ending failure tears the queue down")
+    }
 
     @Test("the engine is not started until a deferred audio-session activation resolves")
     func theEngineWaitsForTheActivationRamp() async throws {

@@ -49,8 +49,10 @@ enum PlaybackFailure: Equatable, Sendable {
     /// The audio session never came up within
     /// ``PlaybackController/defaultActivationWaitLimit``.
     ///
-    /// `AudioSessionCoordinator.activate()` returning `false` means *deferred*,
-    /// and both deferral states self-resolve — but neither is guaranteed to,
+    /// `AudioSessionCoordinator.activate()` returning `false` means *deferred*
+    /// on two of its three false-producing arms, and neither is guaranteed to
+    /// resolve in time; the third arm never resolves at all and is failed fast
+    /// by ``beginPlayback()`` rather than waited on. This case covers both,
     /// and ADR 0008 Amendment 1 rejects starting the engine anyway precisely
     /// because that produces "no audio, no error, nothing to debug". This is
     /// the explicit, diagnosable alternative: the queue is torn down, the
@@ -100,8 +102,9 @@ final class PlaybackController {
     /// activation before giving up and failing explicitly.
     ///
     /// `AudioSessionCoordinator.activate()` is synchronous and returns `false`
-    /// for *deferred, not failed* (ADR 0008 Amendment 1). Two things produce
-    /// that, and this bound covers both with margin: the coordinator's own
+    /// for *deferred, not failed* on two of its three false-producing arms
+    /// (ADR 0008 Amendment 1; the third is failed fast and never reaches this
+    /// bound). Those two are what this limit covers, with margin: the coordinator's own
     /// bounded retry against another app holding the session
     /// (`maxRetryAttempts` 4 × `retryDelay` 250 ms = **1 s**), and its
     /// self-handback resume, which waits out a `setActive(false, …)` XPC round
@@ -602,9 +605,10 @@ final class PlaybackController {
     /// deferred.
     ///
     /// `AudioSessionCoordinator.activate()` is synchronous and prompt, and a
-    /// `false` from it means **deferred, not failed** — two states produce it
-    /// (another app holds the session; this coordinator's own handback is
-    /// mid-flight) and both self-resolve. Playing anyway is the alternative
+    /// `false` from it means **deferred, not failed** on two of its three
+    /// false-producing arms (another app holds the session; this coordinator's
+    /// own handback is mid-flight) and those two self-resolve. The third,
+    /// `.failed`, arms nothing and is failed fast below. Playing anyway is the alternative
     /// ADR 0008 Amendment 1 records as *rejected*: it produces no audio, no
     /// error, and nothing to debug. So a `false` parks the start on
     /// ``waitForActivation(_:limit:)`` instead, bounded by
@@ -623,6 +627,28 @@ final class PlaybackController {
         }
         if audioSession.activate() {
             engine.play()
+            return
+        }
+        // A `false` is only a *deferral* when the coordinator armed something
+        // that will resolve it: `.blockedBySelfHandback` sets
+        // `activationPending` directly and `.blockedByOtherApp` sets it via
+        // `scheduleRetry()`. Its third false-producing arm, `.failed` (a
+        // `setActive(true)` that threw something other than
+        // `CannotInterruptOthers` -- a mediaservices reset, `!pri`, resource
+        // busy), arms **nothing**: no retry, no pending flag, and `isActivated`
+        // stays false forever. Waiting on an observation that can never fire
+        // would spend the whole `activationWaitLimit` and then report a
+        // *timeout* for a failure the coordinator already knew about
+        // synchronously, at t=0, and has already logged and reported through
+        // its own `ErrorReporter`.
+        //
+        // The "two states produce a false, and both self-resolve" claim that
+        // issue #144 and ADR 0008 Amendment 1 were written against is wrong;
+        // `AudioSessionCoordinatorTests.hardActivationFailureDoesNotScheduleARetry`
+        // pins the third. Both arrive here as `.audioSessionUnavailable`,
+        // which is true of each -- the cause is the coordinator's to report.
+        guard audioSession.activationPending else {
+            fail(.audioSessionUnavailable)
             return
         }
         let limit = activationWaitLimit
@@ -774,6 +800,16 @@ final class PlaybackController {
     /// `Sendable`, which is what lets a `@MainActor` class's nonisolated
     /// `deinit` touch it.
     deinit {
+        // All three unstructured tasks, not just the stream consumer. Each
+        // holds `[weak self]` so none retains the controller, but an
+        // uncancelled one outlives it: `refetchTask` runs a manifest request to
+        // its full timeout before discovering `self == nil`, and
+        // `activationWaitTask` captures the coordinator *strongly* (`guard let
+        // audioSession`), so a dead controller keeps an `AudioSessionCoordinator`
+        // alive behind a sleeping task. `Task` is `Sendable`, which is what
+        // lets a `@MainActor` class's nonisolated `deinit` touch them.
         eventsTask?.cancel()
+        refetchTask?.cancel()
+        activationWaitTask?.cancel()
     }
 }
