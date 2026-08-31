@@ -25,6 +25,7 @@
 //
 
 import Foundation
+import os
 import Testing
 @testable import WXYCDJ
 
@@ -337,6 +338,42 @@ struct AudioSessionCoordinatorTests {
         // this design depends on simply never happens.
         #expect(!coordinator.isActivated, "the retry a refused handback relies on never happened")
         #expect(session.deactivateCallCount == 2, "expected the refused handback and exactly one retry")
+    }
+
+    // MARK: - The two ADR 0008 amendments (issue #144)
+
+    @Test("isActivated is observable, so a consumer can watch the ramp resolve rather than poll it")
+    func isActivatedIsObservable() async {
+        let session = FakeAudioSession()
+        let coordinator = AudioSessionCoordinator(session: session)
+        let observed = OSAllocatedUnfairLock(initialState: false)
+
+        withObservationTracking {
+            _ = coordinator.isActivated
+        } onChange: {
+            observed.withLock { $0 = true }
+        }
+
+        #expect(observed.withLock { $0 } == false, "nothing has changed yet")
+        #expect(coordinator.activate())
+        #expect(observed.withLock { $0 }, "activate() setting isActivated must notify an observer")
+    }
+
+    @Test("a refused handback is reported, not merely logged")
+    func refusedHandbackIsReported() async {
+        let session = FakeAudioSession()
+        let reporter = SpyErrorReporter()
+        let coordinator = AudioSessionCoordinator(session: session, reporter: reporter)
+        #expect(coordinator.activate())
+
+        session.failNextDeactivation(with: NSError(domain: "com.apple.coreaudio.avfaudio", code: 561_017_449))
+        coordinator.deactivate()
+        await waitUntil { coordinator.deactivationSettledCount == 1 }
+
+        // Nothing outside this type can observe the failure: it happens in a
+        // detached task and deactivate() returns Void. That is why the
+        // reporter is injected here rather than left to a consumer.
+        #expect(reporter.reports.map(\.context) == ["AudioSessionCoordinator.deactivate"])
     }
 }
 

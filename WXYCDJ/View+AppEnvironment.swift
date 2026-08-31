@@ -20,7 +20,8 @@ extension View {
     /// Inject the app-wide `@Observable` objects every screen reads from
     /// `@Environment`: the ``AppDependencies`` composition root, its
     /// `AuthService`, its `Router`, and its `ConnectivityMonitor` (issue #56,
-    /// read by the offline banner). Used at the scene root and re-applied to
+    /// read by the offline banner), and its `PlaybackController` (issue #144).
+    /// Used at the scene root and re-applied to
     /// the deep-link cover so the shared `AlbumDetailView` runs under an
     /// identical environment whether it's reached via a tab push or a Spotlight
     /// tap — a single source of truth for what the UI environment contains.
@@ -29,5 +30,6 @@ extension View {
             .environment(dependencies.authService)
             .environment(dependencies.router)
             .environment(dependencies.connectivity)
+            .environment(dependencies.playbackController)
     }
 }
