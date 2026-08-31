@@ -483,6 +483,61 @@ struct PlaybackControllerTests {
         #expect(controller.timeToFirstFrame == nil)
     }
 
+    @Test("resuming after a pause times the resume, not the abandoned first tap")
+    func resumingReopensTheCueInterval() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let clock = ManualClock()
+        let controller = PlaybackController(engine: engine, api: api, now: clock.reader)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+
+        // A slow connect: two seconds in, no audio yet, so the DJ gives up.
+        clock.advance(by: .seconds(2))
+        controller.pause()
+        // ...comes back ten minutes later and taps play again.
+        clock.advance(by: .seconds(600))
+        controller.resume()
+        clock.advance(by: .milliseconds(400))
+        engine.emit(.firstFrame)
+        await waitUntil { controller.timeToFirstFrame != nil }
+
+        // Catches: deleting `cuedAt = now()` from `beginPlayback()` (i.e.
+        // reverting the stamp to `cue(from:startPlaying:)` only). `resume()`
+        // reaches the engine through `beginPlayback()` and never through
+        // `cue`, so the anchor would either stay frozen at the original tap --
+        // reporting a ten-minute cue→first-frame interval for a 400 ms one --
+        // or, with `pause()`'s clear in place, be gone entirely and record
+        // nothing at all. Both are wrong for the same reason: the anchor has
+        // to mean "a start is outstanding", and `resume()` issues a start.
+        #expect(controller.timeToFirstFrame == .milliseconds(400))
+    }
+
+    @Test("a first frame that crosses a pause opens no cue→first-frame interval")
+    func pauseClosesTheOpenCueInterval() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let clock = ManualClock()
+        let controller = PlaybackController(engine: engine, api: api, now: clock.reader)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+
+        // Ten minutes of nothing, then the DJ gives up -- and the engine's
+        // first frame lands afterwards. The real engine's periodic time
+        // observer and this controller are separate turns, and the seam
+        // promises no ordering between a `pause()` and an in-flight
+        // `.firstFrame`, so a frame arriving on the far side of a pause is
+        // reachable rather than hypothetical.
+        clock.advance(by: .seconds(600))
+        controller.pause()
+        engine.emit(.firstFrame)
+        await settle()
+
+        // Catches: deleting `cuedAt = nil` from `pause()`. The anchor would
+        // survive the withdrawal that ended it, and this frame -- which the DJ
+        // never waited for -- would be timed from the tap they had already
+        // given up on, reporting ten minutes.
+        #expect(controller.timeToFirstFrame == nil)
+    }
+
     // MARK: - The presigned URL is a credential
 
     @Test("a PlaybackItem's description omits the presigned URL")
@@ -1206,6 +1261,153 @@ struct PlaybackControllerTests {
         // end-of-queue arm. That arm is the one queue-ending exit that does NOT
         // route through `clearQueue()`, so the `stop()` test above cannot cover
         // it -- an album played to its end would keep a live-looking card.
+        #expect(infoCenter.storedInfo == nil)
+        #expect(infoCenter.playbackState == .stopped)
+    }
+
+    // MARK: - A cleared card stays cleared (the late .timeControl(false))
+
+    // Every queue-ending exit clears the Now Playing card in the same
+    // main-actor turn it stops the engine, and the real engine answers that
+    // stop with a KVO `.timeControl(isPlaying: false)` one turn later. The
+    // three tests below are the ones the `…ClearsTheNowPlayingCard` tests
+    // above cannot be: those assert the intermediate state, and
+    // `SpyPlaybackEngine.pause()` emits nothing by default, so they passed
+    // while production undid the clear a turn afterwards.
+    //
+    // Each drives a *delivered* `.timeControl(isPlaying: true)` first and waits
+    // on `controller.isPlaying`, so the later absence is measured on a stream
+    // proven to be live rather than asserted over an event that never arrived.
+
+    /// Catches: ungating `handle(_:)`'s Now Playing mirror -- replacing
+    /// `if currentIndex != nil { nowPlaying?.setPlaybackState(isPlaying: playing) }`
+    /// with the bare `nowPlaying?.setPlaybackState(isPlaying: playing)`.
+    /// `setPlaybackState` seeds `cachedInfo ?? [:]`, so a late `false` after
+    /// `stop()` re-commits a dictionary holding nothing but a playback rate and
+    /// puts `playbackState` back to `.paused`: a blank Lock Screen card with
+    /// five live remote commands over a queue that no longer exists.
+    @Test("a late timeControl(false) after stop() does not resurrect the Now Playing card")
+    func lateTimeControlAfterStopLeavesTheCardCleared() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let infoCenter = SpyNowPlayingInfoCenter()
+        let controller = PlaybackController(
+            engine: engine,
+            api: api,
+            nowPlaying: NowPlayingInfoCenterManager(infoCenter: infoCenter)
+        )
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        engine.emit(.timeControl(isPlaying: true))
+        await waitUntil { controller.isPlaying }
+
+        controller.stop()
+        #expect(infoCenter.storedInfo == nil)
+
+        engine.emit(.timeControl(isPlaying: false))
+        await settle()
+
+        #expect(infoCenter.storedInfo == nil, "a stopped album must not be re-published as a rate-only card")
+        #expect(infoCenter.playbackState == .stopped, "a stopped album must not fall back to .paused")
+    }
+
+    /// Catches: the same one-line ungating, reached through the second exit
+    /// that routes via `clearQueue()`. `fail(_:)` is worth its own case
+    /// because it is the arm the DJ cannot escape: no transport UI reaches a
+    /// failed queue, so a resurrected card there offers working play/pause for
+    /// an album nothing can restart.
+    @Test("a late timeControl(false) after a terminal failure does not resurrect the card")
+    func lateTimeControlAfterFailureLeavesTheCardCleared() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let infoCenter = SpyNowPlayingInfoCenter()
+        let controller = PlaybackController(
+            engine: engine,
+            api: api,
+            nowPlaying: NowPlayingInfoCenterManager(infoCenter: infoCenter)
+        )
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        engine.emit(.timeControl(isPlaying: true))
+        await waitUntil { controller.isPlaying }
+
+        // A non-403 engine failure is terminal: no refetch, straight to fail(_:).
+        engine.emit(.failed(.decodeFailed))
+        await waitUntil { controller.lastFailure == .engine(.decodeFailed) }
+        #expect(infoCenter.storedInfo == nil)
+
+        engine.emit(.timeControl(isPlaying: false))
+        await settle()
+
+        #expect(infoCenter.storedInfo == nil, "a failed album must not be re-published as a rate-only card")
+        #expect(infoCenter.playbackState == .stopped)
+    }
+
+    /// Catches: the same one-line ungating, reached through the one exit that
+    /// does **not** route via `clearQueue()`. `moveToNextItem()`'s end-of-queue
+    /// arm clears the card itself, and the production engine reaches the same
+    /// `.timeControl(false)` by a different road -- `AVQueuePlayer`'s
+    /// `currentItem` going nil moves `timeControlStatus` to `.paused` -- so
+    /// neither test above covers it.
+    @Test("a late timeControl(false) after the queue runs out does not resurrect the card")
+    func lateTimeControlAfterEndOfQueueLeavesTheCardCleared() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let infoCenter = SpyNowPlayingInfoCenter()
+        let controller = PlaybackController(
+            engine: engine,
+            api: api,
+            nowPlaying: NowPlayingInfoCenterManager(infoCenter: infoCenter)
+        )
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        engine.emit(.timeControl(isPlaying: true))
+        await waitUntil { controller.isPlaying }
+
+        for _ in 0..<3 { engine.emit(.itemEnded) }
+        await waitUntil { controller.currentIndex == nil }
+        #expect(infoCenter.storedInfo == nil)
+
+        engine.emit(.timeControl(isPlaying: false))
+        await settle()
+
+        #expect(infoCenter.storedInfo == nil, "a finished album must not be re-published as a rate-only card")
+        #expect(infoCenter.playbackState == .stopped)
+    }
+
+    /// Catches: the same one-line ungating, with **nothing hand-emitted after
+    /// the stop** -- `SpyPlaybackEngine.emitTimeControlOnPause()` makes the
+    /// spy answer `pause()` the way `AVQueuePlayerEngine`'s KVO observer does,
+    /// so this is the production sequence end to end rather than a
+    /// reconstruction of it. The first block is the positive control: a plain
+    /// `pause()` with a live queue must move `isPlaying` and the card to
+    /// paused with no manual emit, which is what proves the auto-emit is
+    /// reaching the controller at all.
+    @Test("stopping a playing queue leaves the card cleared when the engine answers the pause itself")
+    func engineAnsweredPauseAfterStopLeavesTheCardCleared() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        engine.emitTimeControlOnPause()
+        let infoCenter = SpyNowPlayingInfoCenter()
+        let controller = PlaybackController(
+            engine: engine,
+            api: api,
+            nowPlaying: NowPlayingInfoCenterManager(infoCenter: infoCenter)
+        )
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        engine.emit(.timeControl(isPlaying: true))
+        await waitUntil { controller.isPlaying }
+
+        // Positive control: the spy's auto-emit really does reach the
+        // controller, and while the queue is live the card follows it.
+        controller.pause()
+        await waitUntil { !controller.isPlaying }
+        #expect(infoCenter.playbackState == .paused, "a pause with a live queue must still reach the card")
+
+        controller.resume()
+        engine.emit(.timeControl(isPlaying: true))
+        await waitUntil { controller.isPlaying }
+
+        controller.stop()
+        await settle()
+
         #expect(infoCenter.storedInfo == nil)
         #expect(infoCenter.playbackState == .stopped)
     }

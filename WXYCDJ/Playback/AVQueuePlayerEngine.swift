@@ -122,6 +122,24 @@ final class AVQueuePlayerEngine: PlaybackEngine, @unchecked Sendable {
     /// in ``attachItemObservers(to:)`` so the *next* item re-arms.
     private var didReportFailureForCurrentItem = false
 
+    /// The item ``attachItemObservers(to:)`` last armed
+    /// ``didReportFailureForCurrentItem`` for.
+    ///
+    /// **Re-arming per item is not the same as scoping per item, and the gap
+    /// between them is reachable by two live paths.** The status observation
+    /// asks for `.initial`, whose callback defers a main-queue turn before
+    /// calling ``reportFailure(for:)``; and `NotificationCenter` does not
+    /// retract blocks it has *already enqueued* when `removeObserver` runs. So
+    /// a detached item's report can land after this engine has moved on, and
+    /// without an identity check it would be indistinguishable from the current
+    /// item failing. Both costs are concrete: a stale `.mediaForbidden` landing
+    /// after a successful 403 refetch and re-cue reaches `PlaybackController`
+    /// with `didRefetchManifest == true` and tears the *recovered* queue down as
+    /// a terminal `.engine(.mediaForbidden)`; or it spends the successor's
+    /// per-item dedup allowance and swallows the successor's real failure,
+    /// stalling the queue in silence.
+    private var observedItem: AVPlayerItem?
+
     init(notificationCenter: NotificationCenter = .default) {
         let player = AVQueuePlayer()
         self.player = player
@@ -223,8 +241,10 @@ final class AVQueuePlayerEngine: PlaybackEngine, @unchecked Sendable {
         firstFrameFiredForCurrentItem = false
         // Re-armed per item, so the dedup guard below scopes to this item
         // rather than latching for the engine's lifetime and swallowing the
-        // *next* dead URL in the queue.
+        // *next* dead URL in the queue. `observedItem` is what makes that
+        // scoping real rather than merely intended -- see its doc comment.
         didReportFailureForCurrentItem = false
+        observedItem = item
         guard let item else { return }
 
         itemStatusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
@@ -254,6 +274,11 @@ final class AVQueuePlayerEngine: PlaybackEngine, @unchecked Sendable {
     }
 
     private func reportFailure(for item: AVPlayerItem) {
+        // Only the item the flags below were armed for. A report from a
+        // detached item is not this item's failure, and applying the dedup
+        // guard to it would consume this item's one allowance. See
+        // `observedItem` for the two paths a detached report survives on.
+        guard item === observedItem else { return }
         // At most one `.failed` per item. Two of the three signals routinely
         // fire for the same failure, and a duplicate is not just noise --
         // `PlaybackController` spends its one-shot refetch on the first and

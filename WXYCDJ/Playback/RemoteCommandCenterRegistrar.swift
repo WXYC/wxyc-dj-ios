@@ -3,16 +3,19 @@
 //  WXYCDJ
 //
 //  Not a file-level port -- wxyc-ios-64 wires its MPRemoteCommandCenter
-//  commands straight to a real player, and this app has neither a player nor a
-//  controller yet (WXYC/wxyc-dj-ios#144/#145). WXYC/wxyc-dj-ios#138's body
-//  originally asked for play/pause/next/previous "enabled," which the wave-2
-//  retrospective on that issue found unsatisfiable: there is nothing here for
-//  a handler to call, and wiring a target protocol in this PR would smuggle in
-//  #144's seam ahead of its own review. Instead this registers the transport
-//  commands with explicit no-op handlers, each returning `.noSuchContent` --
-//  the MPRemoteCommandHandlerStatus for "a legitimate command with nothing to
-//  act on." WXYC/wxyc-dj-ios#145 is the ticket that replaces `noOpHandler`
-//  with real playback control once a PlaybackController exists to receive it.
+//  commands straight to a real player. This type instead has two registration
+//  modes, for a reason that is now historical but explains its shape.
+//  WXYC/wxyc-dj-ios#138 landed before there was a player or a controller, so
+//  its body's ask for play/pause/next/previous "enabled" was unsatisfiable as
+//  written -- there was nothing for a handler to call, and wiring a target
+//  protocol there would have smuggled in #144's seam ahead of its own review.
+//  `registerNoOpCommands()` is that state: the transport commands registered
+//  with explicit no-op handlers, each returning `.noSuchContent`, the
+//  MPRemoteCommandHandlerStatus for "a legitimate command with nothing to act
+//  on." **WXYC/wxyc-dj-ios#145 discharged that, in this file:**
+//  `registerPlaybackCommands(controller:)` (below) detaches the no-ops and
+//  wires all five to a real `PlaybackController`, and `AppDelegate` calls the
+//  two back to back at launch.
 //
 //  It does mirror the *shape* of the source's
 //  `AudioPlayerController.setUpRemoteCommandCenter()` (`c22a3eb`, ~line 1606)
@@ -23,15 +26,16 @@
 //     `registeredTargets`, exactly as the source appends each to its
 //     `commandTargets` array. `MPRemoteCommand` has no remove-all API and
 //     `removeTarget(_:)` accepts nothing else, so a discarded token is a
-//     permanently un-detachable handler. That matters concretely at #145:
-//     its natural shape is a `PlaybackController` registering real handlers
-//     while `AppDelegate` still performs this registration at launch, which
-//     would leave `playCommand` carrying two targets -- one of them
-//     unconditionally answering `.noSuchContent` for a command the app can by
-//     then service -- with no way to detach it short of relaunching. Hence
-//     `removeNoOpCommands()`, and hence this being an instance rather than
-//     the source's controller-owned array (there is no controller yet to own
-//     one).
+//     permanently un-detachable handler. That mattered concretely at #145,
+//     whose shape is exactly what was anticipated: a `PlaybackController`
+//     registering real handlers while `AppDelegate` still performs the no-op
+//     registration at launch, which without a detach would leave `playCommand`
+//     carrying two targets -- one of them unconditionally answering
+//     `.noSuchContent` for a command the app can now service -- with no way to
+//     remove it short of relaunching. Hence `removeNoOpCommands()`, and hence
+//     this being an instance owning its own ledger rather than the source's
+//     controller-owned array: `AppDelegate` performs both registrations, so
+//     the tokens outlive any one controller's construction.
 //   - **The enabled/disabled flags are set explicitly, both ways.**
 //     `MPRemoteCommandCenter.shared()` defaults *every* command to
 //     `isEnabled == true`, so saying nothing advertises `stopCommand`,
@@ -44,13 +48,17 @@
 //     plus `skipForward`/`skipBackward`/`changePlaybackPosition` on its
 //     non-time-shiftable branch); this app enables `next`/`previous` because,
 //     unlike the listener app's single live stream, it has a real queue
-//     (#138's body). `changePlaybackPosition` stays disabled here even though
-//     archive tracks are scrubbable -- #145 enables it when it wires a seek.
+//     (#138's body). `changePlaybackPosition` stays disabled even though
+//     archive tracks are scrubbable and `PlaybackController.seek(to:)` exists:
+//     #145 wired no scrub feed, so the Lock Screen has no elapsed time to
+//     render a bar against (see `NowPlayingInfoCenterManager`'s header), and
+//     enabling a scrubber over a card with no position is the untargeted-
+//     affordance failure this whole list exists to prevent.
 //   - **`togglePlayPauseCommand` is registered, making five commands rather
 //     than #138's stated four.** The source registers it, and it is what a
 //     headphone single-press and most Bluetooth head units send; leaving it
-//     out would give #145's body swap no toggle path to fill in. A superset
-//     of the issue's acceptance criterion, deliberately.
+//     out would have given #145's body swap no toggle path to fill in. A
+//     superset of the issue's acceptance criterion, deliberately.
 //
 //  Created by Jake Bromberg on 08/30/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -79,7 +87,10 @@ final class RemoteCommandCenterRegistrar {
     }
 
     /// The commands this app registers a handler for. Each is enabled, and
-    /// each carries `noOpHandler` until WXYC/wxyc-dj-ios#145 swaps the bodies.
+    /// each carries `noOpHandler` until ``registerPlaybackCommands(controller:)``
+    /// detaches the no-ops and wires a real ``PlaybackController`` in their
+    /// place -- which `AppDelegate` does immediately after
+    /// ``registerNoOpCommands()`` at launch.
     private var handledCommands: [MPRemoteCommand] {
         [
             commandCenter.playCommand,

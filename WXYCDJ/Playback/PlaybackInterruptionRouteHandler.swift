@@ -156,19 +156,22 @@ final class PlaybackInterruptionRouteHandler {
     /// from the Lock Screen during a phone call would have playback restart
     /// on them the moment the call ended.
     ///
-    /// **This method has no production caller yet, and that is an obligation
-    /// on WXYC/wxyc-dj-ios#144/#145, not a sign it is dead code.** In the
-    /// source (`c22a3eb`) it is called from the controllers' stop path via
-    /// `PlaybackStopTeardown.retireAutoResumeState(…)`, under a
-    /// **reason-bounded rule**: a stop that is *itself* an auto-resume-bearing
-    /// stop (`.interruptionBegan`, `.routeDisconnected`) preserves the pending
-    /// resume, and **any other stop retires it** -- the same rule the source
-    /// applies to its #665 session id. This app has no pause path yet (there
-    /// is no player and no controller in WXYC/wxyc-dj-ios#138), so nothing can
-    /// call it here; the `PlaybackController` that grows a `pause()` in
-    /// WXYC/wxyc-dj-ios#144 must call this from that stop path, bounded by the
-    /// same rule, or the Lock-Screen-pause-during-a-call defect above is
-    /// reintroduced with the flag once again unreachable.
+    /// **The production caller is
+    /// ``PlaybackController/retireAutoResumeState(reason:)``**, as of
+    /// WXYC/wxyc-dj-ios#145 — the obligation this comment used to record as
+    /// outstanding is discharged. It mirrors the source's
+    /// `PlaybackStopTeardown.retireAutoResumeState(…)` (`c22a3eb`) and applies
+    /// the same **reason-bounded rule**: a stop that is *itself* an
+    /// auto-resume-bearing stop preserves the pending resume, and any other
+    /// stop retires it. This field's exemption is **both**
+    /// `.interruptionBegan` (its own teardown) and `.routeDisconnected` (a
+    /// disconnect landing mid-call must not cancel the call's pending resume)
+    /// — deliberately *not* the same exemption set as the controller's
+    /// `wasPlayingBeforeRouteDisconnect`, which is why that method is
+    /// reason-bounded rather than a single shared flag.
+    ///
+    /// Whatever calls this, the rule holds or the Lock-Screen-pause-during-a-
+    /// call defect above returns with the flag once again unreachable.
     func cancelPendingInterruptionResume() {
         wasPlayingBeforeInterruption = false
     }

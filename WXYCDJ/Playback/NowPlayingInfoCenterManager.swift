@@ -30,18 +30,32 @@
 //       `MPNowPlayingInfoPropertyPlaybackRate = 1.0` unconditionally, which
 //       is true for it because a live stream is playing whenever a position
 //       is written at all. Here a DJ can pause: `setPlaybackState(isPlaying:
-//       false)` writes rate `0.0`, and any position flush or in-flight tick
-//       from WXYC/wxyc-dj-ios#145's periodic time observer would then
-//       overwrite it back to `1.0` while `infoCenter.playbackState` stayed
-//       `.paused` -- a Lock Screen scrub bar advancing against a paused
-//       player. So `setPlaybackState` is the **sole author of the playback
-//       rate**, mirrored in `lastKnownIsPlaying`, and a position update
-//       restates that mirror rather than asserting `1.0`.
+//       false)` writes rate `0.0`, and any position flush landing after that
+//       pause would overwrite it back to `1.0` while
+//       `infoCenter.playbackState` stayed `.paused` -- a Lock Screen scrub
+//       bar advancing against a paused player. So `setPlaybackState` is the
+//       **sole author of the playback rate**, mirrored in
+//       `lastKnownIsPlaying`, and a position update restates that mirror
+//       rather than asserting `1.0`.
 //     - The source's `clearPlaybackPosition` writes
 //       `MPNowPlayingInfoPropertyIsLiveStream = true` ("reset to live-stream
 //       mode"). Nothing this app plays is a live stream, so it removes the
 //       key instead of asserting something false -- and it was asserted by
 //       the only method that can clear a position.
+//   - **`updatePlaybackPosition` / `clearPlaybackPosition` have no production
+//     caller, so the shipped card carries metadata and a play/pause rate but
+//     no scrub bar.** This is a stated deferral, not an oversight to be read
+//     as one. WXYC/wxyc-dj-ios#145's `AVQueuePlayerEngine` does add a periodic
+//     time observer, but it feeds `PlaybackEngineEvent.firstFrame` only: the
+//     four-event seam ADR 0008 fixes carries no elapsed time, so
+//     `PlaybackController` has no sampled position to publish (its own
+//     `position` is a *commanded* value, not a sampled one) and nothing calls
+//     these two. The engine-side time feed is
+//     https://github.com/WXYC/wxyc-dj-ios/issues/149, which covers the
+//     post-403 re-seek over the same missing signal; **wiring these two
+//     methods to it is not yet filed** -- do not cite an issue number for the
+//     scrub bar until one exists. `RemoteCommandCenterRegistrar` keeps
+//     `changePlaybackPositionCommand` disabled for the same reason.
 //   - The `Dictionary.update(with:)` helper is dropped along with the
 //     metadata method it existed only to support.
 //   - `@MainActor` isolation and the local-mirror discipline below (never

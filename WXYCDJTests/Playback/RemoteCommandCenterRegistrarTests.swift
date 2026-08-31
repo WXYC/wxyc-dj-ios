@@ -179,11 +179,17 @@ struct RemoteCommandCenterRegistrarTests {
         #expect(registrar.registeredTargets.isEmpty, "the no-op tokens must be detached before real handlers are wired")
     }
 
-    /// Catches: `registerPlaybackCommands(controller:)` being called without
-    /// a prior `registerNoOpCommands()` -- it must not crash or leave
-    /// `unsupportedCommands` enabled just because there was nothing to
-    /// detach. `removeNoOpCommands()` on an empty ledger is a documented
-    /// no-op.
+    /// Catches: `removeNoOpCommands()` growing a precondition on a non-empty
+    /// ledger (or otherwise trapping), so that
+    /// `registerPlaybackCommands(controller:)` could not be called without a
+    /// prior `registerNoOpCommands()`. Iterating an empty ledger is a
+    /// documented no-op and must stay one, since `AppDelegate`'s ordering is
+    /// the only thing that pairs the two calls today.
+    ///
+    /// It asserts **only** that, and deliberately: `registerPlaybackCommands`
+    /// never touches `isEnabled` at all, so no assertion here could speak to
+    /// `unsupportedCommands` staying disabled -- that is
+    /// `registerNoOpCommands()`'s job, pinned by its own test above.
     @Test("wiring real playback commands with nothing registered yet does not crash")
     func registeringPlaybackCommandsWithNothingToRemoveIsSafe() async throws {
         let (api, _) = try await SignedInClient.make()
