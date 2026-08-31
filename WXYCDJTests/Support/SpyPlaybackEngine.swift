@@ -12,6 +12,12 @@
 //  SpyBinStore/SpyErrorReporter: OSAllocatedUnfairLock is unconditionally
 //  Sendable regardless of what it guards.
 //
+//  It emits nothing on its own by default, which is a deliberate default and
+//  also a known blind spot: `emitTimeControlOnPause()` opts a test into the
+//  one place the real engine answers a command with an event, and the reason
+//  that opt-in exists is that its absence let a defect through review. See
+//  that method.
+//
 //  Created by Jake Bromberg on 08/30/26.
 //  Copyright © 2026 WXYC. All rights reserved.
 //
@@ -35,6 +41,25 @@ final class SpyPlaybackEngine: PlaybackEngine {
     private let continuation: AsyncStream<PlaybackEngineEvent>.Continuation
     private let state = OSAllocatedUnfairLock(initialState: [Command]())
     private let terminated = OSAllocatedUnfairLock(initialState: false)
+    private let autoEmitsTimeControlOnPause = OSAllocatedUnfairLock(initialState: false)
+
+    /// Makes ``pause()`` yield `.timeControl(isPlaying: false)`, the way
+    /// `AVQueuePlayerEngine` really does — `player.pause()` moves
+    /// `timeControlStatus`, whose KVO observer yields exactly that.
+    ///
+    /// **Opt-in, because turning it on by default would change what every
+    /// existing test measures.** Most of them assert an intermediate state
+    /// right after a command, and an implicit event arriving a turn later
+    /// would fold a second concern into each of them. It is opt-in rather than
+    /// absent because leaving it out entirely is what let a real defect
+    /// through review: `stop()` clears the Now Playing card and calls
+    /// `engine.pause()` in one main-actor turn, the production engine answers
+    /// that pause a turn later, and a `PlaybackController` that applied the
+    /// answer ungated re-committed a blank card. A spy that emits nothing
+    /// asserted the intermediate state and passed.
+    func emitTimeControlOnPause() {
+        autoEmitsTimeControlOnPause.withLock { $0 = true }
+    }
 
     init() {
         // Unbounded (the default) on purpose: a test emits before the
@@ -85,7 +110,12 @@ final class SpyPlaybackEngine: PlaybackEngine {
 
     func load(_ items: [PlaybackItem]) { record(.load(items)) }
     func play() { record(.play) }
-    func pause() { record(.pause) }
+    func pause() {
+        record(.pause)
+        if autoEmitsTimeControlOnPause.withLock({ $0 }) {
+            emit(.timeControl(isPlaying: false))
+        }
+    }
     func advance() { record(.advance) }
     func seek(to time: TimeInterval) { record(.seek(time)) }
 

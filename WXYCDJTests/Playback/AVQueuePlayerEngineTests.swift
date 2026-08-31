@@ -181,6 +181,70 @@ struct AVQueuePlayerEngineFailureObservationTests {
         // would report nothing and the queue would stall in silence.
         #expect(recorder.failures.count == 2)
     }
+
+    @Test("a failure enqueued before detachment is not reported against the successor")
+    func detachedItemsFailureIsNotReported() async throws {
+        let center = NotificationCenter()
+        let failed = try await makeAlreadyFailedItem()
+        let successor = AVPlayerItem(asset: AVURLAsset(url: URL(string: "https://cdn.example.org/2.mp3?sig=B")!))
+        let engine = AVQueuePlayerEngine(notificationCenter: center)
+        let recorder = EventRecorder()
+        let consumer = Task { for await event in engine.events { recorder.record(event) } }
+        defer { consumer.cancel() }
+
+        // The `.initial` status callback fires synchronously inside
+        // `observe(...)` and defers `reportFailure(for:)` by one main-queue
+        // turn. Nothing has drained that queue yet, so re-attaching here
+        // detaches the failed item with its report still enqueued -- exactly
+        // the window `AVQueuePlayer` opens when a pre-buffered item fails and
+        // the player has already moved on, and the window a successful 403
+        // refetch's re-cue lands in.
+        engine.attachItemObservers(to: failed)
+        engine.attachItemObservers(to: successor)
+        await settle()
+
+        // Catches: dropping `guard item === observedItem` from
+        // `reportFailure(for:)`. Re-arming `didReportFailureForCurrentItem` per
+        // item is not the same as scoping it per item: the stale report would
+        // be yielded as if it were the successor's, which after a 403 refetch
+        // reaches `PlaybackController` with `didRefetchManifest == true` and
+        // tears the recovered queue down as a terminal `.engine(...)`.
+        #expect(recorder.failures.isEmpty, "a detached item's report must not be attributed to its successor")
+
+        // Positive control on the same pipeline, so the absence above is a
+        // measurement rather than a stream that was never live: the successor's
+        // own failure still reports, and still spends only its own allowance.
+        center.post(name: AVPlayerItem.failedToPlayToEndTimeNotification, object: successor)
+        await waitUntil { !recorder.failures.isEmpty }
+        #expect(recorder.failures == [.decodeFailed], "the successor's own dedup allowance must be intact")
+    }
+
+    @Test("the currently observed item still reports through the identity guard")
+    func observedItemStillReports() async throws {
+        let center = NotificationCenter()
+        let item = AVPlayerItem(asset: AVURLAsset(url: URL(string: "https://cdn.example.org/1.mp3?sig=A")!))
+        let engine = AVQueuePlayerEngine(notificationCenter: center)
+        let recorder = EventRecorder()
+        let consumer = Task { for await event in engine.events { recorder.record(event) } }
+        defer { consumer.cancel() }
+
+        engine.attachItemObservers(to: item)
+        center.post(name: AVPlayerItem.failedToPlayToEndTimeNotification, object: item)
+        await waitUntil { !recorder.failures.isEmpty }
+
+        // Catches: deleting `observedItem = item` from
+        // `attachItemObservers(to:)`, which leaves the new guard comparing
+        // against a permanently `nil` field and silences **every** failure --
+        // including the live item's, i.e. the entire 403-refetch recovery path.
+        // (Inverting it to `guard item !== observedItem` fails here too.)
+        //
+        // The test above catches those as well, through its trailing positive
+        // control; this is the same direction stated on its own, over the
+        // single-item path with no detachment anywhere near it -- so a future
+        // edit that reshapes the stale-report fixture cannot take the positive
+        // direction's only coverage with it.
+        #expect(recorder.failures == [.decodeFailed])
+    }
 }
 
 /// Polls `condition` on the main actor until it holds or `timeout` elapses.

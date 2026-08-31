@@ -148,8 +148,18 @@ final class PlaybackController: PlaybackInterruptionContext {
     /// ``togglePlayPause()`` therefore branches on this, never on `isPlaying`.
     private(set) var isPlaybackRequested = false
 
-    /// What the engine says is actually happening. Only ever written from
-    /// ``PlaybackEngineEvent/timeControl(isPlaying:)``.
+    /// What the engine says is actually happening.
+    ///
+    /// ``PlaybackEngineEvent/timeControl(isPlaying:)`` is the only thing that
+    /// can set it **true**; the three queue-ending exits — ``stop()``,
+    /// ``fail(_:)``, and ``moveToNextItem()``'s end-of-queue arm — each write
+    /// `false` directly, because `.timeControl` fires only on *transitions* and
+    /// the engine's own `false` may never arrive (and, since `handle(_:)`
+    /// refuses a `true` over an empty cursor, could not be applied if it did).
+    ///
+    /// Being internal state a later event can correct is what lets `handle(_:)`
+    /// apply a `.timeControl(false)` **ungated** where it gates the Lock Screen
+    /// mirror beside it — see that arm.
     private(set) var isPlaying = false
 
     /// The last position this controller commanded, in seconds; reset to zero
@@ -210,12 +220,19 @@ final class PlaybackController: PlaybackInterruptionContext {
     ///
     /// Driven from four points and nowhere else — ``cue(from:startPlaying:)``
     /// and ``moveToNextItem()`` publish the newly-cued track's metadata,
-    /// ``handle(_:)``'s `.timeControl` arm mirrors play/paused, and the three
-    /// queue-ending exits (``clearQueue()``, shared by ``stop()`` and
-    /// ``fail(_:)``, plus `moveToNextItem()`'s end-of-queue arm) clear the
-    /// card. Without it the app ships `UIBackgroundModes: audio` and five live
-    /// remote commands over a blank card: the Lock Screen renders working
-    /// play/pause/next with nothing to say what is playing.
+    /// ``handle(_:)``'s `.timeControl` arm mirrors play/paused **while a
+    /// cursor is live**, and the three queue-ending exits (``clearQueue()``,
+    /// shared by ``stop()`` and ``fail(_:)``, plus `moveToNextItem()`'s
+    /// end-of-queue arm) clear the card. Without it the app ships
+    /// `UIBackgroundModes: audio` and five live remote commands over a blank
+    /// card: the Lock Screen renders working play/pause/next with nothing to
+    /// say what is playing.
+    ///
+    /// **A cleared card stays cleared only because of that cursor gate.** The
+    /// clear and the `engine.pause()` that provokes the engine's own
+    /// `.timeControl(false)` happen in the same main-actor turn, so the mirror
+    /// would otherwise re-commit a rate-only dictionary one turn after every
+    /// stop-while-playing. See the `.timeControl` arm.
     @ObservationIgnored private let nowPlaying: NowPlayingInfoCenterManager?
     @ObservationIgnored private let reporter: any ErrorReporter
     /// The bound on a deferred activation — see ``defaultActivationWaitLimit``.
@@ -366,10 +383,20 @@ final class PlaybackController: PlaybackInterruptionContext {
     /// refetch** is deliberately left running: it is not superseded by a pause
     /// (see ``refetchTask``), and its re-cue reads ``isPlaybackRequested`` so
     /// it loads the refreshed queue without starting it.
+    ///
+    /// It also **closes the open cue→first-frame interval**. A pause is the DJ
+    /// withdrawing the start that opened it, so the elapsed time stops being a
+    /// measurement of anything: a frame that crosses the pause (the engine's
+    /// periodic observer and this actor are separate turns, and the seam
+    /// promises no ordering between a `pause()` and an in-flight `.firstFrame`)
+    /// would otherwise be timed from the tap the DJ has already given up on.
+    /// The interval is reopened wherever playback is actually issued — see
+    /// ``beginPlayback()``.
     func pause() {
         isPlaybackRequested = false
         cancelActivationWait()
         retireAutoResumeState(reason: nil)
+        cuedAt = nil
         engine.pause()
     }
 
@@ -480,19 +507,39 @@ final class PlaybackController: PlaybackInterruptionContext {
     private func handle(_ event: PlaybackEngineEvent) {
         switch event {
         case .timeControl(let playing):
-            // A `false` is always safe to apply -- it can only ever agree with
-            // an empty queue. A `true` is not: a yield arriving after `stop()`
-            // would claim playback with `isPlaybackRequested == false` and
-            // `currentItem == nil`, and `.timeControl` only fires on
-            // *transitions*, so no later event would ever put it right.
+            // A `false` is always safe to apply *to `isPlaying`* -- it can only
+            // ever agree with an empty queue. A `true` is not: a yield arriving
+            // after `stop()` would claim playback with
+            // `isPlaybackRequested == false` and `currentItem == nil`, and
+            // `.timeControl` only fires on *transitions*, so no later event
+            // would ever put it right.
             guard !playing || currentIndex != nil else { return }
             isPlaying = playing
-            // The engine's own belief is what the Lock Screen must show, not
-            // `isPlaybackRequested` -- a card reading "playing" through a slow
-            // connect is the mirror of the transport defect the two-value
-            // split exists to prevent, in the one surface the DJ can't correct
-            // by looking at the app.
-            nowPlaying?.setPlaybackState(isPlaying: playing)
+            // **The two writes below the guard are gated differently, and that
+            // asymmetry is the point.** `isPlaying` is internal state a later
+            // event can correct, so an ungated `false` costs nothing. The Lock
+            // Screen card is an *external* surface nothing will correct, and a
+            // late `false` there does not merely restate a cleared card -- it
+            // resurrects one. Every queue-ending exit clears the card in the
+            // same main-actor turn it calls `engine.pause()`, and the real
+            // engine answers that pause with a KVO `.timeControl(false)` one
+            // turn later; `setPlaybackState` seeds `cachedInfo ?? [:]`, so it
+            // would commit a dictionary holding nothing but a playback rate and
+            // set `playbackState` back to `.paused`. End state after any stop
+            // from playing: a blank card with `.paused` rather than `.stopped`,
+            // over five live remote commands and a queue that no longer exists
+            // -- the exact condition this wiring was added to eliminate. (It
+            // escaped review because `SpyPlaybackEngine.pause()` records a
+            // command and emits nothing unless a test opts in.)
+            //
+            // While there *is* a queue, the engine's own belief is what the
+            // card must show, not `isPlaybackRequested` -- a card reading
+            // "playing" through a slow connect is the mirror of the transport
+            // defect the two-value split exists to prevent, on the one surface
+            // the DJ can't correct by looking at the app.
+            if currentIndex != nil {
+                nowPlaying?.setPlaybackState(isPlaying: playing)
+            }
         case .itemEnded:
             moveToNextItem()
         case .firstFrame:
@@ -670,8 +717,10 @@ final class PlaybackController: PlaybackInterruptionContext {
     ///
     /// `startPlaying: false` is the post-403 re-cue arriving after the DJ
     /// paused — the queue must be refreshed (its old URLs are dead) without
-    /// audio resuming against an explicit pause. `cuedAt` is left `nil` there
-    /// because nothing was started, so no first frame is coming to time.
+    /// audio resuming against an explicit pause. `cuedAt` is cleared there
+    /// because nothing was started, so no first frame is coming to time; the
+    /// starting arm leaves the stamp to ``beginPlayback()``, the one place a
+    /// start is actually issued.
     private func cue(from index: Int, startPlaying: Bool = true) {
         guard queue.indices.contains(index) else { return }
         position = 0
@@ -685,7 +734,6 @@ final class PlaybackController: PlaybackInterruptionContext {
             return
         }
         isPlaybackRequested = true
-        cuedAt = now()
         beginPlayback()
     }
 
@@ -707,7 +755,21 @@ final class PlaybackController: PlaybackInterruptionContext {
     /// renders at once. And the handback resume stays the coordinator's own
     /// business — this reads ``AudioSessionCoordinator/isActivated`` and never
     /// drives it.
+    ///
+    /// **This is where the cue→first-frame interval opens**, rather than in
+    /// ``cue(from:startPlaying:)`` alone, because this is the one place a start
+    /// is actually issued — by ``cue(from:startPlaying:)`` *and* by
+    /// ``resume()``. Stamping only at the cue left the anchor frozen at the
+    /// original tap across a pause: tap play, sit through a slow connect, pause
+    /// before any audio, come back ten minutes later and tap play, and the
+    /// first frame was reported as a ten-minute cue. Stamping here (with
+    /// ``pause()`` clearing it) makes the anchor mean "a start is outstanding",
+    /// which is the thing issue #139's measurement is about. The activation
+    /// wait is deliberately inside the interval: a DJ waiting on another app's
+    /// session hand-back is waiting on playback, and this is the only value
+    /// that would show it.
     private func beginPlayback() {
+        cuedAt = now()
         cancelActivationWait()
         guard let audioSession else {
             engine.play()
