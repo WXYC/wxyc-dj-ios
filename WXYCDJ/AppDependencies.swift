@@ -82,10 +82,13 @@ final class AppDependencies {
     /// Owned here and injected through ``View/wxycAppEnvironment(_:)`` beside
     /// the other app-wide observables.
     ///
-    /// Wired over ``InertPlaybackEngine`` until issue #145 lands
-    /// `AVQueuePlayerEngine` -- a one-line substitution here rather than a
-    /// composition-root change then. Nothing reaches it yet: this app ships no
-    /// transport UI until #145.
+    /// Wired over the real ``AVQueuePlayerEngine`` (issue #145) at the one
+    /// production call site, ``init()``. Both test-facing initializers below
+    /// take `engine: any PlaybackEngine` defaulted to ``InertPlaybackEngine``
+    /// instead -- the same defaulted-to-inert convention `audioSession`,
+    /// `reporter`, and `analytics` already follow here, so a test
+    /// constructing `AppDependencies` for unrelated (catalog/bin) coverage
+    /// never stands up a real `AVQueuePlayer`.
     let playbackController: PlaybackController
     /// Cold-launch Spotlight deep-link state (issue #19 step 7), injected via
     /// `.environment` and bound to RootView's `fullScreenCover`. The resolution
@@ -111,7 +114,8 @@ final class AppDependencies {
             binStoreURL: Self.defaultBinStoreURL(),
             reporter: reporter,
             analytics: PostHogAnalytics(),
-            audioSession: AudioSessionCoordinator(session: AVAudioSession.sharedInstance(), reporter: reporter)
+            audioSession: AudioSessionCoordinator(session: AVAudioSession.sharedInstance(), reporter: reporter),
+            engine: AVQueuePlayerEngine()
         )
     }
 
@@ -132,7 +136,8 @@ final class AppDependencies {
         binStoreURL: URL? = nil,
         reporter: any ErrorReporter = NoOpErrorReporter(),
         analytics: any Analytics = NoOpAnalytics(),
-        audioSession: AudioSessionCoordinator? = nil
+        audioSession: AudioSessionCoordinator? = nil,
+        engine: any PlaybackEngine = InertPlaybackEngine()
     ) {
         self.errorReporter = reporter
         self.analytics = analytics
@@ -194,7 +199,7 @@ final class AppDependencies {
         self.binStore = Self.openBinStore(at: binStoreURL, reporter: reporter)
         self.librarySearch = LibrarySearch(api: api, catalogStore: catalogStore, connectivity: connectivity)
         self.playbackController = PlaybackController(
-            engine: InertPlaybackEngine(),
+            engine: engine,
             api: api,
             audioSession: audioSession,
             reporter: reporter
@@ -246,7 +251,8 @@ final class AppDependencies {
         catalogRefreshService: CatalogRefreshService? = nil,
         reporter: any ErrorReporter = NoOpErrorReporter(),
         analytics: any Analytics = NoOpAnalytics(),
-        audioSession: AudioSessionCoordinator? = nil
+        audioSession: AudioSessionCoordinator? = nil,
+        engine: any PlaybackEngine = InertPlaybackEngine()
     ) {
         self.errorReporter = reporter
         self.analytics = analytics
@@ -261,7 +267,7 @@ final class AppDependencies {
         self.binStore = nil
         self.librarySearch = LibrarySearch(api: api, catalogStore: catalogStore, connectivity: connectivity)
         self.playbackController = PlaybackController(
-            engine: InertPlaybackEngine(),
+            engine: engine,
             api: api,
             audioSession: audioSession,
             reporter: reporter

@@ -19,11 +19,32 @@
 //  Copyright © 2026 WXYC. All rights reserved.
 //
 
+import AVFoundation
 import Foundation
 import os
 import Testing
 @testable import WXYCAPI
 @testable import WXYCDJ
+
+/// Posts a real `AVAudioSession.interruptionNotification` on `center`, in
+/// the same shape `PlaybackInterruptionRouteHandlerTests` uses -- this is
+/// the mechanism the reason-bounded-resume tests below drive
+/// `PlaybackController` through, end to end, rather than calling
+/// `tearDown(reason:)`/`play(reason:)` directly.
+private func postInterruption(
+    _ center: NotificationCenter,
+    type: AVAudioSession.InterruptionType,
+    options: AVAudioSession.InterruptionOptions = []
+) {
+    center.post(
+        name: AVAudioSession.interruptionNotification,
+        object: nil,
+        userInfo: [
+            AVAudioSessionInterruptionTypeKey: type.rawValue,
+            AVAudioSessionInterruptionOptionKey: options.rawValue,
+        ]
+    )
+}
 
 @MainActor
 struct PlaybackControllerTests {
@@ -950,6 +971,86 @@ struct PlaybackControllerTests {
         // a leaked one is invisible -- it just parks on the stream forever,
         // one per controller ever built.
         #expect(engine.isEventStreamTerminated)
+    }
+
+    // MARK: - Interruption resume, reason-bounded (issue #145 obligation)
+
+    @Test("an interruption during playback pauses via tearDown, and ending it with shouldResume resumes")
+    func interruptionBeginsPausesAndEndingResumes() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let notificationCenter = NotificationCenter()
+        let controller = PlaybackController(engine: engine, api: api, notificationCenter: notificationCenter)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        engine.emit(.timeControl(isPlaying: true))
+        await waitUntil { controller.isPlaying }
+
+        postInterruption(notificationCenter, type: .began)
+        // Catches: `tearDown(reason:)` not calling `engine.pause()`.
+        #expect(engine.commands.last == .pause)
+
+        postInterruption(notificationCenter, type: .ended, options: .shouldResume)
+
+        // Catches: `tearDown(reason:)` calling `retirePendingInterruptionResume()`
+        // (which it must not -- it IS the auto-resume-bearing stop) instead of
+        // leaving the pending resume for `.ended` to act on.
+        #expect(engine.commands.last == .play)
+    }
+
+    @Test("a manual pause during a call retires the pending resume, so the call ending does not restart playback")
+    func manualPauseDuringInterruptionRetiresThePendingResume() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let notificationCenter = NotificationCenter()
+        let controller = PlaybackController(engine: engine, api: api, notificationCenter: notificationCenter)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        engine.emit(.timeControl(isPlaying: true))
+        await waitUntil { controller.isPlaying }
+
+        postInterruption(notificationCenter, type: .began)
+        #expect(engine.commands.last == .pause)
+
+        // The DJ pauses from the Lock Screen mid-call -- a stop that is NOT
+        // itself the interruption's own teardown, so it must retire the
+        // pending auto-resume per the reason-bounded rule.
+        controller.pause()
+        let commandCountBeforeCallEnds = engine.commands.count
+
+        postInterruption(notificationCenter, type: .ended, options: .shouldResume)
+
+        // Catches: dropping `retirePendingInterruptionResume()` from
+        // `pause()` -- without it, this call ending would re-issue `.play`
+        // and restart playback the DJ had explicitly paused, which is the
+        // exact field defect this obligation exists to close.
+        #expect(engine.commands.count == commandCountBeforeCallEnds, "the call ending must not re-issue play after a manual pause")
+    }
+
+    @Test("stop() during an interruption retires the pending resume, so a later album is not replayed by the old call ending")
+    func stopDuringInterruptionRetiresThePendingResume() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let notificationCenter = NotificationCenter()
+        let controller = PlaybackController(engine: engine, api: api, notificationCenter: notificationCenter)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        engine.emit(.timeControl(isPlaying: true))
+        await waitUntil { controller.isPlaying }
+
+        postInterruption(notificationCenter, type: .began)
+        controller.stop()
+
+        // A different album, started fresh after the stop. Its own start()
+        // already issues one .play -- if `stop()` had not retired the old
+        // interruption's pending resume, the still-in-flight call ending
+        // below would resume() this *new* album a second, redundant time.
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "Edits", artistName: "Chuquimamani-Condori")
+        let playCountAfterFreshStart = engine.commands.filter { $0 == .play }.count
+
+        postInterruption(notificationCenter, type: .ended, options: .shouldResume)
+
+        // Catches: dropping `retirePendingInterruptionResume()` from
+        // `stop()` -- a stale interruption resume would otherwise replay a
+        // later, unrelated album the moment the old call ends.
+        #expect(engine.commands.filter { $0 == .play }.count == playCountAfterFreshStart, "a stale interruption resume must not replay a later, unrelated album")
     }
 }
 

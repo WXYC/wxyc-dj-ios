@@ -29,6 +29,7 @@
 
 import MediaPlayer
 import Testing
+@testable import WXYCAPI
 @testable import WXYCDJ
 
 @MainActor
@@ -143,5 +144,40 @@ struct RemoteCommandCenterRegistrarTests {
                 "\(entry.name) should carry a retained no-op target"
             )
         }
+    }
+
+    /// Catches: `registerPlaybackCommands(controller:)` dropping its
+    /// `removeNoOpCommands()` call -- the standing obligation from issue
+    /// #138/#145. Without it, `registeredTargets` (and therefore the
+    /// no-op handlers it was retained to let this method detach) would
+    /// survive the call, leaving every command carrying both a live
+    /// handler and the `.noSuchContent` no-op.
+    @Test("wiring real playback commands detaches every retained no-op target first")
+    func registeringPlaybackCommandsDetachesNoOpsFirst() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let controller = PlaybackController(engine: InertPlaybackEngine(), api: api)
+        let registrar = RemoteCommandCenterRegistrar()
+        registrar.registerNoOpCommands()
+        #expect(registrar.registeredTargets.count == 5)
+
+        registrar.registerPlaybackCommands(controller: controller)
+
+        #expect(registrar.registeredTargets.isEmpty, "the no-op tokens must be detached before real handlers are wired")
+    }
+
+    /// Catches: `registerPlaybackCommands(controller:)` being called without
+    /// a prior `registerNoOpCommands()` -- it must not crash or leave
+    /// `unsupportedCommands` enabled just because there was nothing to
+    /// detach. `removeNoOpCommands()` on an empty ledger is a documented
+    /// no-op.
+    @Test("wiring real playback commands with nothing registered yet does not crash")
+    func registeringPlaybackCommandsWithNothingToRemoveIsSafe() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let controller = PlaybackController(engine: InertPlaybackEngine(), api: api)
+        let registrar = RemoteCommandCenterRegistrar()
+
+        registrar.registerPlaybackCommands(controller: controller)
+
+        #expect(registrar.registeredTargets.isEmpty)
     }
 }

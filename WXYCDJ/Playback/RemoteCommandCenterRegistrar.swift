@@ -154,4 +154,54 @@ final class RemoteCommandCenterRegistrar {
     static func noOpHandler(_ event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus {
         .noSuchContent
     }
+
+    /// Replaces every no-op handler with a real one driving `controller`
+    /// (issue #145). **Calls ``removeNoOpCommands()`` first** -- the standing
+    /// obligation this type's header names: without it, `playCommand` would
+    /// carry both a live handler and the `.noSuchContent` no-op that
+    /// unconditionally refuses, with no way to detach the no-op short of
+    /// relaunching (`MPRemoteCommand` has no remove-all API).
+    ///
+    /// The five real handlers are not retained in ``registeredTargets`` --
+    /// nothing in this app's lifetime needs to detach them again, unlike the
+    /// no-ops they replace, which existed only to be swapped out once a
+    /// controller was available.
+    ///
+    /// `previousTrackCommand` has no backward-navigation counterpart on
+    /// `PlaybackController` (the seam only ever moves the queue forward via
+    /// ``PlaybackController/advance()``), so its handler restarts the
+    /// current track -- the same "previous means restart, not skip back"
+    /// convention most transport surfaces fall back to when there is nothing
+    /// earlier to skip to.
+    ///
+    /// Each handler wraps its call to `controller` (a `@MainActor` type) in
+    /// `MainActor.assumeIsolated`, mirroring
+    /// `PlaybackInterruptionRouteHandler`'s notification callbacks: Apple
+    /// documents `MPRemoteCommandCenter` handlers as invoked on the main
+    /// queue, and the handler closure type itself is not `@Sendable`-audited,
+    /// so there is no cross-actor Sendable requirement to satisfy -- only the
+    /// isolation assertion at the call site.
+    func registerPlaybackCommands(controller: PlaybackController) {
+        removeNoOpCommands()
+        commandCenter.playCommand.addTarget { _ in
+            MainActor.assumeIsolated { controller.resume() }
+            return .success
+        }
+        commandCenter.pauseCommand.addTarget { _ in
+            MainActor.assumeIsolated { controller.pause() }
+            return .success
+        }
+        commandCenter.togglePlayPauseCommand.addTarget { _ in
+            MainActor.assumeIsolated { controller.togglePlayPause() }
+            return .success
+        }
+        commandCenter.nextTrackCommand.addTarget { _ in
+            MainActor.assumeIsolated { controller.advance() }
+            return .success
+        }
+        commandCenter.previousTrackCommand.addTarget { _ in
+            MainActor.assumeIsolated { controller.seek(to: 0) }
+            return .success
+        }
+    }
 }
