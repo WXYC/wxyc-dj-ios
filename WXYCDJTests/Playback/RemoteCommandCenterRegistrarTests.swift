@@ -10,10 +10,24 @@
 //  would catch.
 //
 //  These run against the real `MPRemoteCommandCenter.shared()` — the class is
-//  a process singleton with no constructible alternative — but each test
-//  registers through its own `RemoteCommandCenterRegistrar` instance and
-//  removes only that instance's own targets, so the host app's launch-time
+//  a process singleton with no constructible alternative (`-init` is
+//  `NS_UNAVAILABLE`, so there is no non-shared centre to construct over) — but
+//  each test registers through its own `RemoteCommandCenterRegistrar` instance
+//  and removes only that instance's own targets, so the host app's launch-time
 //  registration is left intact.
+//
+//  **The two `registerPlaybackCommands` tests are an explicit exception to
+//  that, and it cannot be closed here.** That method deliberately does not
+//  retain the tokens its five `addTarget` calls return (its doc comment says
+//  why: nothing in the app's lifetime needs to detach a real handler, unlike
+//  the no-ops it replaces), and `removeTarget(_:)` accepts nothing else — so
+//  the real handlers those two tests install stay attached to the shared
+//  centre for the rest of the test process. That is harmless in practice:
+//  every assertion in this file is about `isEnabled` flags or the registrar's
+//  own ledger, neither of which a leftover target affects, and the host app
+//  installs the same handlers at launch anyway. It is recorded rather than
+//  fixed because the only fix — retaining tokens the production code has a
+//  stated reason not to retain — would change behaviour to suit a test.
 //
 //  `noOpHandler` itself is deliberately NOT unit-tested: invoking it needs an
 //  `MPRemoteCommandEvent`, and `-[MPRemoteCommandEvent init]` raises

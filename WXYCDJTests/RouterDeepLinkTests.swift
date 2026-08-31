@@ -30,11 +30,12 @@ struct RouterDeepLinkTests {
     /// get *separate* `Router`s, so an assertion accidentally written against
     /// the unspied one's `router` would pass vacuously.
     private static func makeDeps(
-        analytics: any Analytics = NoOpAnalytics()
+        analytics: any Analytics = NoOpAnalytics(),
+        engine: any PlaybackEngine = InertPlaybackEngine()
     ) -> (AppDependencies, URL) {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "router-deeplink-\(UUID().uuidString).sqlite")
-        return (AppDependencies(catalogStoreURL: url, analytics: analytics), url)
+        return (AppDependencies(catalogStoreURL: url, analytics: analytics, engine: engine), url)
     }
 
     private static func cleanup(_ url: URL) {
@@ -122,6 +123,50 @@ struct RouterDeepLinkTests {
 
         #expect(deps.router.deepLink == nil)
         #expect(deps.router.pending == nil)
+    }
+
+    @Test func signOutStopsArchivePlayback() async throws {
+        let engine = SpyPlaybackEngine()
+        let (deps, url) = Self.makeDeps(engine: engine)
+        defer { Self.cleanup(url) }
+        deps.playbackController.start(
+            manifest: PlaybackFixtures.threeTrackManifest(),
+            albumTitle: "DOGA",
+            artistName: "Juana Molina"
+        )
+        #expect(deps.playbackController.currentItem != nil)
+
+        await deps.handleAuthChange(wasSignedIn: true, isSignedIn: false)
+
+        // Catches: dropping `playbackController.stop()` from the genuine
+        // sign-out arm. A presigned manifest URL stays valid for up to four
+        // hours after it is minted, so AVQueuePlayer would keep streaming
+        // role-gated archive audio while `RootView` swapped `MainView` for
+        // `LoginView` -- taking the mini-player and the detail screen's Play
+        // section with it, leaving no in-app transport to reach `stop()` with.
+        #expect(deps.playbackController.currentItem == nil)
+        #expect(engine.loads.last == [], "the engine's queue must be emptied, not merely paused")
+    }
+
+    @Test func coldLaunchSignedOutResolutionLeavesPlaybackAlone() async throws {
+        let engine = SpyPlaybackEngine()
+        let (deps, url) = Self.makeDeps(engine: engine)
+        defer { Self.cleanup(url) }
+        deps.playbackController.start(
+            manifest: PlaybackFixtures.threeTrackManifest(),
+            albumTitle: "DOGA",
+            artistName: "Juana Molina"
+        )
+
+        // The cold-launch `.unknown` → `.signedOut` transition: nobody signed
+        // out, so nothing should be torn down.
+        await deps.handleAuthChange(wasSignedIn: false, isSignedIn: false)
+
+        // Catches: hoisting `playbackController.stop()` out of the
+        // `wasSignedIn` guard -- every launch would then stop whatever the
+        // previous state had cued, and the sign-out test above would still
+        // pass.
+        #expect(deps.playbackController.currentItem != nil)
     }
 
     @Test func tapWhileSignedInPresentsImmediatelyWithCloneFallback() async throws {

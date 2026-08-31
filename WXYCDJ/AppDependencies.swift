@@ -14,6 +14,7 @@
 
 import AVFoundation
 import Foundation
+import MediaPlayer
 import Observation
 import OSLog
 import WXYCAPI
@@ -86,9 +87,10 @@ final class AppDependencies {
     /// production call site, ``init()``. Both test-facing initializers below
     /// take `engine: any PlaybackEngine` defaulted to ``InertPlaybackEngine``
     /// instead -- the same defaulted-to-inert convention `audioSession`,
-    /// `reporter`, and `analytics` already follow here, so a test
-    /// constructing `AppDependencies` for unrelated (catalog/bin) coverage
-    /// never stands up a real `AVQueuePlayer`.
+    /// `nowPlaying`, `reporter`, and `analytics` already follow here, so a
+    /// test constructing `AppDependencies` for unrelated (catalog/bin)
+    /// coverage never stands up a real `AVQueuePlayer`, and never writes to
+    /// the process-wide `MPNowPlayingInfoCenter`.
     let playbackController: PlaybackController
     /// Cold-launch Spotlight deep-link state (issue #19 step 7), injected via
     /// `.environment` and bound to RootView's `fullScreenCover`. The resolution
@@ -105,9 +107,12 @@ final class AppDependencies {
     convenience init() {
         // Built once and shared: the coordinator wants the same reporter the
         // rest of the graph gets, and this is the **only** place in the app
-        // that names the process-wide `AVAudioSession` (issue #144 review) --
-        // `AudioSessionCoordinator.init` takes `session:` without a default so
-        // no test path can reach the real one by omission.
+        // that names either process-wide media singleton --
+        // `AVAudioSession.sharedInstance()` (issue #144 review) and
+        // `MPNowPlayingInfoCenter.default()` (issue #145 review). Neither
+        // `AudioSessionCoordinator.init(session:)` nor
+        // `NowPlayingInfoCenterManager.init(infoCenter:)` defaults its
+        // parameter, so no test path can reach the real one by omission.
         let reporter = SentryErrorReporter()
         self.init(
             catalogStoreURL: Self.defaultCatalogStoreURL(),
@@ -115,6 +120,7 @@ final class AppDependencies {
             reporter: reporter,
             analytics: PostHogAnalytics(),
             audioSession: AudioSessionCoordinator(session: AVAudioSession.sharedInstance(), reporter: reporter),
+            nowPlaying: NowPlayingInfoCenterManager(infoCenter: MPNowPlayingInfoCenter.default()),
             engine: AVQueuePlayerEngine()
         )
     }
@@ -127,16 +133,19 @@ final class AppDependencies {
     /// `reporter` defaults to ``NoOpErrorReporter`` -- see ``errorReporter``'s
     /// doc comment for why only ``init()`` overrides it. `analytics` defaults
     /// to ``NoOpAnalytics`` for the identical reason (see ``analytics``'s doc
-    /// comment). `audioSession` defaults to `nil` on the same principle: the
-    /// inert value is the default, and `PlaybackController` treats a `nil`
-    /// coordinator as "no session to manage", so no test path stands the
-    /// process-wide `AVAudioSession` up by omission.
+    /// comment). `audioSession` and `nowPlaying` default to `nil` on the same
+    /// principle: the inert value is the default, and `PlaybackController`
+    /// treats a `nil` coordinator as "no session to manage" and a `nil` Now
+    /// Playing manager as "nothing to mirror", so no test path stands the
+    /// process-wide `AVAudioSession` or `MPNowPlayingInfoCenter` up by
+    /// omission.
     init(
         catalogStoreURL: URL?,
         binStoreURL: URL? = nil,
         reporter: any ErrorReporter = NoOpErrorReporter(),
         analytics: any Analytics = NoOpAnalytics(),
         audioSession: AudioSessionCoordinator? = nil,
+        nowPlaying: NowPlayingInfoCenterManager? = nil,
         engine: any PlaybackEngine = InertPlaybackEngine()
     ) {
         self.errorReporter = reporter
@@ -202,6 +211,7 @@ final class AppDependencies {
             engine: engine,
             api: api,
             audioSession: audioSession,
+            nowPlaying: nowPlaying,
             reporter: reporter
         )
     }
@@ -252,6 +262,7 @@ final class AppDependencies {
         reporter: any ErrorReporter = NoOpErrorReporter(),
         analytics: any Analytics = NoOpAnalytics(),
         audioSession: AudioSessionCoordinator? = nil,
+        nowPlaying: NowPlayingInfoCenterManager? = nil,
         engine: any PlaybackEngine = InertPlaybackEngine()
     ) {
         self.errorReporter = reporter
@@ -270,6 +281,7 @@ final class AppDependencies {
             engine: engine,
             api: api,
             audioSession: audioSession,
+            nowPlaying: nowPlaying,
             reporter: reporter
         )
     }
@@ -567,7 +579,15 @@ final class AppDependencies {
     ///   parked id into ``Router/deepLink``.
     /// - **Genuine sign-out** (was signed in, now isn't): tear down — dismiss any
     ///   presented cover and drop any park via ``invalidateDeepLink()`` — so a
-    ///   deep-link detail can't strand over `LoginView` issuing 401s.
+    ///   deep-link detail can't strand over `LoginView` issuing 401s, **and
+    ///   stop playback**. The archive is role-gated (`digital_archive` denies
+    ///   `member`), but a presigned manifest URL stays valid for up to four
+    ///   hours after it is minted, so `AVQueuePlayer` would happily keep
+    ///   streaming a signed-out DJ's album — with `RootView` having swapped
+    ///   `MainView` for `LoginView`, taking the mini-player and the detail
+    ///   screen's Play section with it, so there is no transport left in the
+    ///   app to reach `stop()` with. Lock-screen transport would still be
+    ///   live, which makes it worse rather than better.
     /// - **Still signed out** (cold-launch `.unknown` → `.signedOut`, no
     ///   session): do nothing, so a tap parked before sign-in survives for a
     ///   later manual sign-in to replay.
@@ -580,6 +600,7 @@ final class AppDependencies {
             await present(albumID: albumID, parked: true)
         } else if wasSignedIn {
             invalidateDeepLink()
+            playbackController.stop()
         }
     }
 

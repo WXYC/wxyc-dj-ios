@@ -21,6 +21,7 @@
 
 import AVFoundation
 import Foundation
+import MediaPlayer
 import os
 import Testing
 @testable import WXYCAPI
@@ -43,6 +44,20 @@ private func postInterruption(
             AVAudioSessionInterruptionTypeKey: type.rawValue,
             AVAudioSessionInterruptionOptionKey: options.rawValue,
         ]
+    )
+}
+
+/// Posts a real `AVAudioSession.routeChangeNotification` on `center`, the
+/// peer of ``postInterruption(_:type:options:)`` for the route half of the
+/// reason-bounded rule.
+private func postRouteChange(
+    _ center: NotificationCenter,
+    reason: AVAudioSession.RouteChangeReason
+) {
+    center.post(
+        name: AVAudioSession.routeChangeNotification,
+        object: nil,
+        userInfo: [AVAudioSessionRouteChangeReasonKey: reason.rawValue]
     )
 }
 
@@ -441,6 +456,31 @@ struct PlaybackControllerTests {
         await waitUntil { controller.timeToFirstFrame != nil }
 
         #expect(controller.timeToFirstFrame == .milliseconds(250))
+    }
+
+    @Test("advancing while paused does not open a cue→first-frame interval")
+    func advancingWhilePausedDoesNotStampTheCueInstant() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let clock = ManualClock()
+        let controller = PlaybackController(engine: engine, api: api, now: clock.reader)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        controller.pause()
+
+        // The DJ browses the track list for ten minutes with playback paused,
+        // then skips forward.
+        clock.advance(by: .seconds(600))
+        controller.advance()
+        clock.advance(by: .seconds(1))
+        engine.emit(.firstFrame)
+        await settle()
+
+        // Catches: reverting `moveToNextItem()`'s stamp to an unconditional
+        // `cuedAt = now()`. That single line would open an interval at the skip
+        // tap while nothing was playing, so issue #139's `timeToFirstFrame`
+        // would report however long the DJ spent paused as a cue→first-frame
+        // measurement -- ten minutes, here.
+        #expect(controller.timeToFirstFrame == nil)
     }
 
     // MARK: - The presigned URL is a credential
@@ -991,9 +1031,11 @@ struct PlaybackControllerTests {
 
         postInterruption(notificationCenter, type: .ended, options: .shouldResume)
 
-        // Catches: `tearDown(reason:)` calling `retirePendingInterruptionResume()`
-        // (which it must not -- it IS the auto-resume-bearing stop) instead of
-        // leaving the pending resume for `.ended` to act on.
+        // Catches: `tearDown(reason:)` retiring the pending interruption
+        // resume for `.interruptionBegan` -- i.e. widening
+        // `retireAutoResumeState(reason:)`'s second exemption to route
+        // disconnects only. That stop IS the auto-resume-bearing one, so
+        // retiring there would leave `.ended` with nothing to act on.
         #expect(engine.commands.last == .play)
     }
 
@@ -1018,8 +1060,9 @@ struct PlaybackControllerTests {
 
         postInterruption(notificationCenter, type: .ended, options: .shouldResume)
 
-        // Catches: dropping `retirePendingInterruptionResume()` from
-        // `pause()` -- without it, this call ending would re-issue `.play`
+        // Catches: dropping `pause()`'s `retireAutoResumeState(reason: nil)`,
+        // or narrowing the second exemption's condition so a `nil` reason no
+        // longer retires -- without it, this call ending would re-issue `.play`
         // and restart playback the DJ had explicitly paused, which is the
         // exact field defect this obligation exists to close.
         #expect(engine.commands.count == commandCountBeforeCallEnds, "the call ending must not re-issue play after a manual pause")
@@ -1047,10 +1090,222 @@ struct PlaybackControllerTests {
 
         postInterruption(notificationCenter, type: .ended, options: .shouldResume)
 
-        // Catches: dropping `retirePendingInterruptionResume()` from
-        // `stop()` -- a stale interruption resume would otherwise replay a
+        // Catches: dropping `stop()`'s `retireAutoResumeState(reason: nil)`
+        // -- a stale interruption resume would otherwise replay a
         // later, unrelated album the moment the old call ends.
         #expect(engine.commands.filter { $0 == .play }.count == playCountAfterFreshStart, "a stale interruption resume must not replay a later, unrelated album")
+    }
+
+    // MARK: - Now Playing card (issue #145 review)
+
+    @Test("cueing an album publishes its first track to the Now Playing card")
+    func startPublishesTheCuedTrackToTheNowPlayingCard() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let infoCenter = SpyNowPlayingInfoCenter()
+        let controller = PlaybackController(
+            engine: SpyPlaybackEngine(),
+            api: api,
+            nowPlaying: NowPlayingInfoCenterManager(infoCenter: infoCenter)
+        )
+
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+
+        // Catches: deleting the `publishNowPlayingItem()` call from
+        // `cue(from:startPlaying:)`. Without it the app ships
+        // `UIBackgroundModes: audio` and five live remote commands over a card
+        // that names nothing -- the Lock Screen renders working play/pause/next
+        // with no title, artist, or album.
+        #expect(infoCenter.storedString(MPMediaItemPropertyTitle) == "la paradoja")
+        #expect(infoCenter.storedString(MPMediaItemPropertyArtist) == "Juana Molina")
+        #expect(infoCenter.storedString(MPMediaItemPropertyAlbumTitle) == "DOGA")
+    }
+
+    @Test("the engine's own play/pause belief is mirrored to the Now Playing card")
+    func timeControlMirrorsToTheNowPlayingCard() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let infoCenter = SpyNowPlayingInfoCenter()
+        let controller = PlaybackController(
+            engine: engine,
+            api: api,
+            nowPlaying: NowPlayingInfoCenterManager(infoCenter: infoCenter)
+        )
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+
+        engine.emit(.timeControl(isPlaying: true))
+        await waitUntil { controller.isPlaying }
+        // Catches: deleting `nowPlaying?.setPlaybackState(isPlaying:)` from
+        // `handle(_:)`'s `.timeControl` arm -- the Lock Screen's play/pause
+        // glyph and scrub-bar rate would then never move off their initial
+        // state, whatever the player did.
+        #expect(infoCenter.playbackState == .playing)
+
+        engine.emit(.timeControl(isPlaying: false))
+        await waitUntil { !controller.isPlaying }
+        #expect(infoCenter.playbackState == .paused)
+    }
+
+    @Test("advancing republishes the new track to the Now Playing card")
+    func advanceRepublishesTheNowPlayingCard() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let infoCenter = SpyNowPlayingInfoCenter()
+        let controller = PlaybackController(
+            engine: SpyPlaybackEngine(),
+            api: api,
+            nowPlaying: NowPlayingInfoCenterManager(infoCenter: infoCenter)
+        )
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+
+        controller.advance()
+
+        // Catches: deleting the `publishNowPlayingItem()` call from
+        // `moveToNextItem()`'s advance arm. The card would keep naming the
+        // first track for the whole album -- and `cue()` alone can't cover it,
+        // since the engine advances its own queue and nothing re-cues.
+        #expect(infoCenter.storedString(MPMediaItemPropertyTitle) == "un día")
+    }
+
+    @Test("stop() takes the app off the Now Playing card")
+    func stopClearsTheNowPlayingCard() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let infoCenter = SpyNowPlayingInfoCenter()
+        let controller = PlaybackController(
+            engine: SpyPlaybackEngine(),
+            api: api,
+            nowPlaying: NowPlayingInfoCenterManager(infoCenter: infoCenter)
+        )
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        #expect(infoCenter.storedInfo != nil)
+
+        controller.stop()
+
+        // Catches: deleting `nowPlaying?.clear()` from `clearQueue()` -- the
+        // shared teardown behind `stop()` and `fail(_:)`. A stopped album would
+        // otherwise keep its Lock Screen card, offering transport for a queue
+        // that no longer exists.
+        #expect(infoCenter.storedInfo == nil)
+        #expect(infoCenter.playbackState == .stopped)
+    }
+
+    @Test("the queue running out takes the app off the Now Playing card")
+    func endOfQueueClearsTheNowPlayingCard() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let infoCenter = SpyNowPlayingInfoCenter()
+        let controller = PlaybackController(
+            engine: engine,
+            api: api,
+            nowPlaying: NowPlayingInfoCenterManager(infoCenter: infoCenter)
+        )
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+
+        for _ in 0..<3 { engine.emit(.itemEnded) }
+        await waitUntil { controller.currentIndex == nil }
+
+        // Catches: deleting `nowPlaying?.clear()` from `moveToNextItem()`'s
+        // end-of-queue arm. That arm is the one queue-ending exit that does NOT
+        // route through `clearQueue()`, so the `stop()` test above cannot cover
+        // it -- an album played to its end would keep a live-looking card.
+        #expect(infoCenter.storedInfo == nil)
+        #expect(infoCenter.playbackState == .stopped)
+    }
+
+    // MARK: - The route half of the reason-bounded rule
+
+    @Test("a route disconnect preserves its own resume flag, so re-plugging resumes")
+    func routeDisconnectPreservesItsOwnResumeFlag() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let notificationCenter = NotificationCenter()
+        let controller = PlaybackController(engine: engine, api: api, notificationCenter: notificationCenter)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        engine.emit(.timeControl(isPlaying: true))
+        await waitUntil { controller.isPlaying }
+
+        // Headphones out while playing: the handler records the flag, then
+        // asks for the auto-resume-bearing teardown.
+        postRouteChange(notificationCenter, reason: .oldDeviceUnavailable)
+        #expect(engine.commands.last == .pause)
+        let playCountAfterDisconnect = engine.commands.filter { $0 == .play }.count
+
+        // Headphones back in.
+        postRouteChange(notificationCenter, reason: .newDeviceAvailable)
+
+        // Catches: making the retirement unconditional -- i.e. clearing
+        // `wasPlayingBeforeRouteDisconnect` inside `tearDown(reason:)` without
+        // the `reason != .routeDisconnected` guard. That single missing
+        // condition silently disables resume-on-reconnect entirely, which no
+        // other test in this file would notice.
+        #expect(
+            engine.commands.filter { $0 == .play }.count == playCountAfterDisconnect + 1,
+            "re-plugging after a disconnect-while-playing must resume"
+        )
+    }
+
+    @Test("a manual pause after a route disconnect retires the resume flag, so re-plugging stays silent")
+    func manualPauseAfterRouteDisconnectRetiresTheResumeFlag() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let notificationCenter = NotificationCenter()
+        let controller = PlaybackController(engine: engine, api: api, notificationCenter: notificationCenter)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        engine.emit(.timeControl(isPlaying: true))
+        await waitUntil { controller.isPlaying }
+
+        // Unplug while playing -- the flag is now set and preserved.
+        postRouteChange(notificationCenter, reason: .oldDeviceUnavailable)
+        // The DJ taps play again and hears it on the speaker...
+        controller.resume()
+        // ...then explicitly pauses. That is a stop under no auto-resume
+        // reason, so it must retire BOTH halves of the auto-resume state.
+        controller.pause()
+        let playCountAfterManualPause = engine.commands.filter { $0 == .play }.count
+
+        postRouteChange(notificationCenter, reason: .newDeviceAvailable)
+
+        // Catches: dropping the `wasPlayingBeforeRouteDisconnect = false` line
+        // from the reason-bounded retirement -- i.e. the state this PR shipped,
+        // where the retirement cleared only the interruption half and the route
+        // flag was never written by the controller at all. Re-plugging would
+        // then restart audio against an explicit pause.
+        #expect(
+            engine.commands.filter { $0 == .play }.count == playCountAfterManualPause,
+            "re-plugging must not restart audio the DJ explicitly paused"
+        )
+    }
+
+    @Test("an interruption teardown clears the stale route-disconnect flag")
+    func interruptionTeardownClearsTheStaleRouteFlag() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let notificationCenter = NotificationCenter()
+        let controller = PlaybackController(engine: engine, api: api, notificationCenter: notificationCenter)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        engine.emit(.timeControl(isPlaying: true))
+        await waitUntil { controller.isPlaying }
+
+        // A disconnect sets the flag...
+        postRouteChange(notificationCenter, reason: .oldDeviceUnavailable)
+        controller.resume()
+        engine.emit(.timeControl(isPlaying: true))
+        await waitUntil { controller.isPlaying }
+
+        // ...and then a call arrives. `.interruptionBegan` is exempt from the
+        // interruption half of the rule but NOT from the route half, so it must
+        // clear the now-stale route flag.
+        postInterruption(notificationCenter, type: .began)
+        let playCountAfterInterruption = engine.commands.filter { $0 == .play }.count
+
+        postRouteChange(notificationCenter, reason: .newDeviceAvailable)
+
+        // Catches: widening the route half's exemption to
+        // `reason != .routeDisconnected && reason != .interruptionBegan` --
+        // i.e. giving both fields the same two-reason exemption instead of the
+        // one-reason/two-reason split the upstream rule draws.
+        #expect(
+            engine.commands.filter { $0 == .play }.count == playCountAfterInterruption,
+            "an interruption teardown must not leave a stale route-disconnect resume armed"
+        )
     }
 }
 

@@ -266,13 +266,26 @@ struct AlbumDetailView: View {
                     Text("No audio for this album")
                         .foregroundStyle(.secondary)
                 }
-            case .failed:
-                // A loud failure (5xx, decode, network) already reached
-                // Sentry in loadPlaybackManifest() -- this is just the quiet
-                // on-screen footer, not a red banner either.
+            case .failed(let message):
+                // A loud failure (5xx, decode, network, or an unclassified
+                // throw) already reached Sentry in loadPlaybackManifest() --
+                // every arm that sets `.failed` reports first -- so this is
+                // just the quiet on-screen footer, not a red banner.
+                //
+                // The message is **rendered**, not carried and dropped: it is
+                // the one thing distinguishing "the archive service is down"
+                // from "this build can't parse the response", and a DJ who
+                // reads it to a maintainer saves a Sentry lookup. It is
+                // server-authored copy on screen, exactly as `AuthError`'s
+                // `.rejected` renders — the ADR 0007 prohibition is on server
+                // text reaching *telemetry*, not the display.
                 Section("Play") {
-                    Text("Couldn't load tracks")
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Couldn't load tracks")
+                        Text(message)
+                            .font(.caption)
+                    }
+                    .foregroundStyle(.secondary)
                 }
             case .loaded(let manifest):
                 playTracksSection(manifest)
@@ -925,6 +938,13 @@ struct AlbumDetailView: View {
                 manifestState = .failed(message)
             }
         } catch {
+            // Reported, not merely rendered. `APIClient` classifies everything
+            // it throws as an `APIError` (cancellation included -- it becomes
+            // `.offline`), so reaching here at all means something threw that
+            // this app's transport layer has no account of, which is exactly
+            // the definition of a defect. It also keeps the `.failed` render
+            // arm's claim honest: every path into that state has been reported.
+            deps.errorReporter.report(error, context: "AlbumDetailView.loadPlaybackManifest")
             manifestState = .failed(error.localizedDescription)
         }
     }
