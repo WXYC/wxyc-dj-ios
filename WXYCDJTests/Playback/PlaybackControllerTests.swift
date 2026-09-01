@@ -192,7 +192,7 @@ struct PlaybackControllerTests {
         let manifest = PlaybackFixtures.threeTrackManifest(expiresAt: clockDate.addingTimeInterval(5 * 60))
         #expect(controller.start(manifest: manifest, albumTitle: "DOGA", artistName: "Juana Molina") == false)
 
-        #expect(controller.lastFailure == .manifestExpiring)
+        #expect(controller.lastFailure?.failure == .manifestExpiring)
         #expect(!controller.isPlaybackRequested)
         #expect(engine.commands.isEmpty, "a refused manifest must not reach the engine at all")
     }
@@ -210,6 +210,124 @@ struct PlaybackControllerTests {
         let manifest = PlaybackFixtures.threeTrackManifest(expiresAt: clockDate.addingTimeInterval(remaining))
         #expect(controller.start(manifest: manifest, albumTitle: "DOGA", artistName: "Juana Molina"))
         #expect(controller.lastFailure == nil)
+    }
+
+    // MARK: - Failure dismissal (issue #151)
+
+    /// Catches: `dismissFailure()` being a no-op (e.g. reading `lastFailure`
+    /// back into itself instead of assigning `nil`), which would leave the
+    /// mini-player's failed state (ADR 0008 Amendment 6) permanently on
+    /// screen with a dismiss control that does nothing.
+    @Test("dismissFailure clears a recorded failure")
+    func dismissFailureClearsLastFailure() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let clockDate = Date(timeIntervalSince1970: 1_800_000_000)
+        let controller = PlaybackController(engine: engine, api: api, nowDate: { clockDate })
+
+        let manifest = PlaybackFixtures.threeTrackManifest(expiresAt: clockDate.addingTimeInterval(5 * 60))
+        #expect(controller.start(manifest: manifest, albumTitle: "DOGA", artistName: "Juana Molina") == false)
+        #expect(controller.lastFailure?.failure == .manifestExpiring)
+
+        controller.dismissFailure()
+
+        #expect(controller.lastFailure == nil)
+    }
+
+    /// Catches: `dismissFailure()` reaching further than `lastFailure` --
+    /// e.g. also touching `currentIndex`/`queue`, which would make it a
+    /// second, competing stop primitive rather than the narrow clear its
+    /// doc comment promises.
+    @Test("dismissFailure with an active queue leaves playback state untouched")
+    func dismissFailureLeavesPlaybackStateAlone() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let controller = PlaybackController(engine: engine, api: api)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "DOGA", artistName: "Juana Molina")
+        #expect(controller.lastFailure == nil)
+
+        controller.dismissFailure()
+
+        #expect(controller.currentIndex == 0)
+        #expect(controller.isPlaybackRequested)
+        #expect(controller.lastFailure == nil)
+    }
+
+    /// Catches: `stop()` not clearing `lastFailure`. `AppDependencies` outlives
+    /// a sign-out and calls `stop()` from `handleAuthChange`'s sign-out arm, so
+    /// a failure left standing here renders the mini-player's failed bar over
+    /// the *next* session -- plausibly a different DJ on a shared control-room
+    /// device, who has played nothing and has no way to explain the message.
+    /// Deleting the `lastFailure = nil` line in `stop()` fails this.
+    @Test("stop() clears a recorded failure so it cannot survive into the next session")
+    func stopClearsLastFailure() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let clockDate = Date(timeIntervalSince1970: 1_800_000_000)
+        let controller = PlaybackController(engine: engine, api: api, nowDate: { clockDate })
+
+        let expiring = PlaybackFixtures.threeTrackManifest(expiresAt: clockDate.addingTimeInterval(5 * 60))
+        #expect(controller.start(manifest: expiring, albumTitle: "DOGA", artistName: "Juana Molina") == false)
+        #expect(controller.lastFailure?.failure == .manifestExpiring)
+
+        controller.stop()
+
+        #expect(controller.lastFailure == nil)
+    }
+
+    // MARK: - Failure attribution (issue #151, review finding 5)
+
+    /// Catches: `start()`'s refusal arms passing `self.albumTitle` instead of
+    /// their local `albumTitle` parameter. `self.albumTitle` is assigned only
+    /// *after* those guards, and `clearAlbumIdentity()` does not reset it, so
+    /// at a refusal it still holds the album that was playing a moment ago --
+    /// which is precisely the album the mini-player would then name, while the
+    /// album that actually failed goes unnamed. The whole point of the record
+    /// is that "this album" resolves to the right one.
+    @Test("a refused start names the album that was refused, not the one it interrupted")
+    func refusedStartNamesTheRefusedAlbum() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let clockDate = Date(timeIntervalSince1970: 1_800_000_000)
+        let controller = PlaybackController(engine: engine, api: api, nowDate: { clockDate })
+
+        // Album A starts cleanly, so `self.albumTitle` is now "DOGA".
+        let live = PlaybackFixtures.threeTrackManifest(expiresAt: clockDate.addingTimeInterval(3 * 60 * 60))
+        #expect(controller.start(manifest: live, albumTitle: "DOGA", artistName: "Juana Molina"))
+
+        // Album B is refused before `self.albumTitle` is reassigned.
+        let expiring = PlaybackFixtures.threeTrackManifest(expiresAt: clockDate.addingTimeInterval(5 * 60))
+        #expect(
+            controller.start(
+                manifest: expiring,
+                albumTitle: "On Your Own Love Again",
+                artistName: "Jessica Pratt"
+            ) == false
+        )
+
+        #expect(controller.lastFailure?.failure == .manifestExpiring)
+        #expect(
+            controller.lastFailure?.albumTitle == "On Your Own Love Again",
+            "the failure must name the album that was refused, not the one whose queue it tore down"
+        )
+    }
+
+    /// Catches: a mid-playback failure recording no album at all -- e.g.
+    /// `handleFailure` passing `nil` rather than `self.albumTitle`. The
+    /// mini-player has no other context, so an unnamed failure there reads
+    /// against whatever screen the DJ walks back to.
+    @Test("a mid-playback engine failure names the album that was playing")
+    func midPlaybackFailureNamesThePlayingAlbum() async throws {
+        let (api, _) = try await SignedInClient.make()
+        let engine = SpyPlaybackEngine()
+        let controller = PlaybackController(engine: engine, api: api)
+        controller.start(manifest: PlaybackFixtures.threeTrackManifest(), albumTitle: "Edits", artistName: "Chuquimamani-Condori")
+
+        engine.emit(.failed(.decodeFailed))
+        await waitUntil { controller.lastFailure != nil }
+
+        #expect(controller.lastFailure?.failure == .engine(.decodeFailed))
+        #expect(controller.lastFailure?.albumTitle == "Edits")
     }
 
     // MARK: - The media 403 policy
@@ -250,7 +368,7 @@ struct PlaybackControllerTests {
         engine.emit(.failed(.mediaForbidden))
         await waitUntil { controller.lastFailure != nil }
 
-        #expect(controller.lastFailure == .engine(.mediaForbidden))
+        #expect(controller.lastFailure?.failure == .engine(.mediaForbidden))
         #expect(!controller.isPlaybackRequested)
         #expect(PlaybackFixtures.playbackRequestCount(session) == 1, "the refetch budget is one per queue")
     }
@@ -265,7 +383,7 @@ struct PlaybackControllerTests {
         engine.emit(.failed(.decodeFailed))
         await waitUntil { controller.lastFailure != nil }
 
-        #expect(controller.lastFailure == .engine(.decodeFailed))
+        #expect(controller.lastFailure?.failure == .engine(.decodeFailed))
         #expect(PlaybackFixtures.playbackRequestCount(session) == 0)
     }
 
@@ -281,7 +399,7 @@ struct PlaybackControllerTests {
         engine.emit(.failed(.mediaForbidden))
         await waitUntil { controller.lastFailure != nil }
 
-        #expect(controller.lastFailure == .refetchFailed)
+        #expect(controller.lastFailure?.failure == .refetchFailed)
         // `fail(_:)` is a queue-ending exit, so the second `load` is the
         // teardown emptying the engine's queue -- never a re-cue of the album.
         #expect(engine.loads.last == [], "a failed refetch must not re-cue anything")
@@ -353,7 +471,7 @@ struct PlaybackControllerTests {
         ])
         #expect(controller.start(manifest: expiring, albumTitle: "Edits", artistName: "Chuquimamani-Condori") == false)
 
-        #expect(controller.lastFailure == .manifestExpiring)
+        #expect(controller.lastFailure?.failure == .manifestExpiring)
         // Otherwise DOGA keeps playing under a transport that reads stopped,
         // and togglePlayPause() issues a second play() on a live queue.
         #expect(controller.queue.isEmpty)
@@ -427,7 +545,7 @@ struct PlaybackControllerTests {
             PlaybackFixtures.track(fileId: 303, title: "unplayable", renditions: [PlaybackFixtures.rendition("opus")]),
         ])
         #expect(controller.start(manifest: allUnplayable, albumTitle: "Edits", artistName: "Chuquimamani-Condori") == false)
-        #expect(controller.lastFailure == .noPlayableRendition)
+        #expect(controller.lastFailure?.failure == .noPlayableRendition)
     }
 
     @Test("provenance is carried per track, not folded to one value for the manifest")
@@ -718,7 +836,7 @@ struct PlaybackControllerTests {
         #expect(PlaybackFixtures.playbackRequestCount(session) == 0)
         #expect(engine.loads.last == [])
         #expect(!controller.isPlaybackRequested)
-        #expect(controller.lastFailure == .manifestExpiring, "the refusal's outcome must survive the late 403")
+        #expect(controller.lastFailure?.failure == .manifestExpiring, "the refusal's outcome must survive the late 403")
     }
 
     @Test("a stray .timeControl after stop() can't claim playback on an empty queue")
@@ -835,13 +953,13 @@ struct PlaybackControllerTests {
         // from `start()` -- an album whose bind job never ran would report
         // `.noPlayableRendition`, indistinguishable from a real codec gap, and
         // the distinction can't be recovered downstream from a closed enum.
-        #expect(controller.lastFailure == .emptyManifest)
+        #expect(controller.lastFailure?.failure == .emptyManifest)
 
         let allUnplayable = PlaybackFixtures.manifest(tracks: [
             PlaybackFixtures.track(fileId: 303, title: "unplayable", renditions: [PlaybackFixtures.rendition("opus")]),
         ])
         #expect(controller.start(manifest: allUnplayable, albumTitle: "Edits", artistName: "Chuquimamani-Condori") == false)
-        #expect(controller.lastFailure == .noPlayableRendition)
+        #expect(controller.lastFailure?.failure == .noPlayableRendition)
         #expect(engine.commands.isEmpty)
     }
 
@@ -873,7 +991,7 @@ struct PlaybackControllerTests {
 
         #expect(!coordinator.activationPending, "the .failed arm arms nothing")
         // Synchronously, with no waiting: the failure is known at t=0.
-        #expect(controller.lastFailure == .audioSessionUnavailable)
+        #expect(controller.lastFailure?.failure == .audioSessionUnavailable)
         #expect(!engine.commands.contains(.play), "the engine is never started")
         #expect(!controller.isPlaybackRequested)
         #expect(controller.queue.isEmpty, "a queue-ending failure tears the queue down")
@@ -930,7 +1048,7 @@ struct PlaybackControllerTests {
         // Catches: deleting the `guard didActivate else { … fail(.audioSessionUnavailable) }`
         // arm and starting the engine anyway once the bound elapses -- the
         // silent failure ADR 0008 Amendment 1 rejects.
-        #expect(controller.lastFailure == .audioSessionUnavailable)
+        #expect(controller.lastFailure?.failure == .audioSessionUnavailable)
         #expect(!engine.commands.contains(.play))
         #expect(!controller.isPlaybackRequested)
         #expect(controller.queue.isEmpty, "the queue is torn down rather than left holding items nothing can play")
@@ -1331,7 +1449,7 @@ struct PlaybackControllerTests {
 
         // A non-403 engine failure is terminal: no refetch, straight to fail(_:).
         engine.emit(.failed(.decodeFailed))
-        await waitUntil { controller.lastFailure == .engine(.decodeFailed) }
+        await waitUntil { controller.lastFailure?.failure == .engine(.decodeFailed) }
         #expect(infoCenter.storedInfo == nil)
 
         engine.emit(.timeControl(isPlaying: false))

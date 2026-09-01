@@ -34,7 +34,9 @@
 		52BDE81D6F3711C7CC0B9B76 /* TelemetryPrivacyScrubTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6003DA91E6D0137CC4D8D33C /* TelemetryPrivacyScrubTests.swift */; };
 		574EDEABD3333936B2530863 /* TelemetryBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = D890BC53FC78B18923CE1021 /* TelemetryBootstrap.swift */; };
 		5890F98AB60C5BF3043C386F /* AppDependenciesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08B568981D92EC8060CDFD01 /* AppDependenciesTests.swift */; };
+		599F50519A3108159E6DF644 /* PlaybackFailureCopyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9C2C0E444549DD29D9F87FE /* PlaybackFailureCopyTests.swift */; };
 		5DF131914FF3F0B2596F60F2 /* TelemetryPrivacyScrub.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A6CC0B5FA47B02017226FA9 /* TelemetryPrivacyScrub.swift */; };
+		5F9860A3AD11B9F7737527AE /* PlaybackFailureCopy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A51A3DF82197FBDD94E50D80 /* PlaybackFailureCopy.swift */; };
 		6F539D33FF70A989ED17F9EA /* PlaybackControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BB4F1D8DB157BA5BD831649 /* PlaybackControllerTests.swift */; };
 		7279D81E44273E9773826AE5 /* AVQueuePlayerEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE81F8B727E46FEF72DB8C32 /* AVQueuePlayerEngineTests.swift */; };
 		72DDD3B5A5B2A91A4EF71A16 /* ErrorReporting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CA746C19327B79EE365C2E3 /* ErrorReporting.swift */; };
@@ -159,6 +161,7 @@
 		919B7DF6ECD14279DA5ED0D2 /* LoginViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginViewModelTests.swift; sourceTree = "<group>"; };
 		9209D2D25B4421AC75229E13 /* SpyErrorReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpyErrorReporter.swift; sourceTree = "<group>"; };
 		9C17E03F68F1EE553DDECF35 /* Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixtures.swift; sourceTree = "<group>"; };
+		A51A3DF82197FBDD94E50D80 /* PlaybackFailureCopy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackFailureCopy.swift; sourceTree = "<group>"; };
 		A596BDE6117797EFB6A4D665 /* SpyBinStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpyBinStore.swift; sourceTree = "<group>"; };
 		A89CC0792607B9863ABAEC7E /* WXYCDJTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = WXYCDJTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AB62A3F31DE27BC96B7DD6B0 /* BuildEnvironmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildEnvironmentTests.swift; sourceTree = "<group>"; };
@@ -187,6 +190,7 @@
 		E5F7756BA1F6E80EAE710764 /* AnalyticsPrivacyFilterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyticsPrivacyFilterTests.swift; sourceTree = "<group>"; };
 		E7A31ADB62274BAB7A644659 /* AudioSessionProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioSessionProtocol.swift; sourceTree = "<group>"; };
 		E85422FA59D8966C8BE74197 /* DeepLinkAlbumCover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLinkAlbumCover.swift; sourceTree = "<group>"; };
+		E9C2C0E444549DD29D9F87FE /* PlaybackFailureCopyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackFailureCopyTests.swift; sourceTree = "<group>"; };
 		ED3C3F1A8A8E2B9449C84894 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		F34A2AEC7805A7689F66950F /* SearchViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchViewModelTests.swift; sourceTree = "<group>"; };
 		F5343B8F7A031F1038832D2B /* AudioSessionCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioSessionCoordinatorTests.swift; sourceTree = "<group>"; };
@@ -249,6 +253,7 @@
 				E3D261F44563666A5161E0B9 /* NowPlayingInfoCenterManager.swift */,
 				27A1DC455310B85848962614 /* PlaybackController.swift */,
 				3CD892F3341A76E193CF7FF3 /* PlaybackEngine.swift */,
+				A51A3DF82197FBDD94E50D80 /* PlaybackFailureCopy.swift */,
 				44D0958B3720CE174EFA8449 /* PlaybackInterruptionContext.swift */,
 				B8B259E74053BC903199F0E2 /* PlaybackInterruptionRouteHandler.swift */,
 				C9107A5710315B9388828080 /* PlaybackReason.swift */,
@@ -318,6 +323,7 @@
 				CE81F8B727E46FEF72DB8C32 /* AVQueuePlayerEngineTests.swift */,
 				6B12C616305EB22FBB2E177D /* NowPlayingInfoCenterManagerTests.swift */,
 				6BB4F1D8DB157BA5BD831649 /* PlaybackControllerTests.swift */,
+				E9C2C0E444549DD29D9F87FE /* PlaybackFailureCopyTests.swift */,
 				3DF620FEA55F62453796BA7E /* PlaybackInterruptionRouteHandlerTests.swift */,
 				AD5A29C844E67B9FA87B68D7 /* RemoteCommandCenterRegistrarTests.swift */,
 			);
@@ -605,6 +611,7 @@
 				D7683BE5C5C0E395CC4122E8 /* LoginViewModelTests.swift in Sources */,
 				3F85679AFD9200AD7BEE3F41 /* NowPlayingInfoCenterManagerTests.swift in Sources */,
 				6F539D33FF70A989ED17F9EA /* PlaybackControllerTests.swift in Sources */,
+				599F50519A3108159E6DF644 /* PlaybackFailureCopyTests.swift in Sources */,
 				B0CB1B93CBDF14C58929AC64 /* PlaybackInterruptionRouteHandlerTests.swift in Sources */,
 				CFB3DC8DE93C68D38B76CA75 /* PostHogPrivacyPipelineTests.swift in Sources */,
 				17839ED968EAB9F31988E247 /* RemoteCommandCenterRegistrarTests.swift in Sources */,
@@ -654,6 +661,7 @@
 				28F187742AAC9A2BCA5E895D /* OfflineBanner.swift in Sources */,
 				D87662286460C24B43763527 /* PlaybackController.swift in Sources */,
 				211AF6F896C1B7F9A82D7AC5 /* PlaybackEngine.swift in Sources */,
+				5F9860A3AD11B9F7737527AE /* PlaybackFailureCopy.swift in Sources */,
 				7D02DFC51B7F4CBC796715DA /* PlaybackInterruptionContext.swift in Sources */,
 				A1F08FFAE3849D2F6BF5EF19 /* PlaybackInterruptionRouteHandler.swift in Sources */,
 				95215091E4980FBE419DCA1E /* PlaybackReason.swift in Sources */,
