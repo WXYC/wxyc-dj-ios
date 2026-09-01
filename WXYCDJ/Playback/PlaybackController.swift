@@ -21,6 +21,23 @@ import WXYCAPI
 
 private let playbackLog = Logger(subsystem: "org.wxyc.dj", category: "playback")
 
+/// A failure together with the album it belongs to.
+///
+/// One value rather than two properties, because the album name is only
+/// correct if it was captured in the same statement as the failure: `fail(_:)`
+/// is reached from ten call sites, and two `private(set)` fields written
+/// separately are two fields a later edit can leave disagreeing. The mini-player
+/// spans every tab, so a failure rendered without its album lands under whatever
+/// screen the DJ happens to be looking at -- and the copy says "this album",
+/// which then points at the wrong one. Naming it is what makes the sentence
+/// resolve; see ADR 0008 Amendment 6.
+///
+/// `albumTitle` is `nil` only when the controller genuinely never had one.
+struct PlaybackFailureRecord: Equatable, Sendable {
+    let failure: PlaybackFailure
+    let albumTitle: String?
+}
+
 /// Why playback stopped, or never started. Closed so issue #139's telemetry and
 /// issue #145's UI can switch over it with no `default:`.
 enum PlaybackFailure: Equatable, Sendable {
@@ -175,8 +192,26 @@ final class PlaybackController: PlaybackInterruptionContext {
     private(set) var position: TimeInterval = 0
 
     /// The most recent failure, or `nil` if the current queue has had none.
-    /// Cleared at every ``start(manifest:albumTitle:artistName:)``.
-    private(set) var lastFailure: PlaybackFailure?
+    /// Cleared at exactly three points: every
+    /// ``start(manifest:albumTitle:artistName:)``, ``stop()``, and
+    /// ``dismissFailure()``. A natural end-of-queue and every other transport
+    /// call leave it alone.
+    ///
+    /// **Issue #151 -- this is the property the app had no production reader
+    /// for.** `MainView`'s mini-player renders a failed state instead of
+    /// vanishing whenever this is non-`nil` (ADR 0008 Amendment 6): every
+    /// exit that sets it (`fail(_:)`) also empties the queue when the queue
+    /// wasn't already empty, so `currentItem == nil` and `lastFailure != nil`
+    /// are the two halves of one mutually-exclusive pair -- the mini-player is
+    /// never asked to render both a live transport and a failure at once. The
+    /// reset at the top of `start(...)` runs *before* a fresh attempt's own
+    /// guards, so it only ever clears a failure the DJ is choosing to retry
+    /// past, not one mid-display.
+    ///
+    /// It carries the **album** alongside the case, not the case alone: this
+    /// bar spans every tab, so an unattributed failure reads against whichever
+    /// screen the DJ walks back to. See ``PlaybackFailureRecord``.
+    private(set) var lastFailure: PlaybackFailureRecord?
 
     /// ``PlaybackInterruptionContext`` conformance: whether playback was
     /// active immediately before the most recent route disconnect (e.g.
@@ -337,7 +372,7 @@ final class PlaybackController: PlaybackInterruptionContext {
 
         guard hasUsableLifetime(manifest) else {
             playbackLog.info("Refusing playback: manifest for album \(manifest.libraryId, privacy: .public) expires too soon")
-            fail(.manifestExpiring)
+            fail(.manifestExpiring, albumTitle: albumTitle)
             return false
         }
 
@@ -346,14 +381,14 @@ final class PlaybackController: PlaybackInterruptionContext {
         // two never collapse into one indistinguishable refusal.
         guard !manifest.tracks.isEmpty else {
             playbackLog.info("Refusing playback: manifest for album \(manifest.libraryId, privacy: .public) carries no tracks")
-            fail(.emptyManifest)
+            fail(.emptyManifest, albumTitle: albumTitle)
             return false
         }
 
         let items = Self.playbackItems(from: manifest, albumTitle: albumTitle, artistName: artistName)
         guard !items.isEmpty else {
             playbackLog.info("Refusing playback: no playable rendition for album \(manifest.libraryId, privacy: .public)")
-            fail(.noPlayableRendition)
+            fail(.noPlayableRendition, albumTitle: albumTitle)
             return false
         }
 
@@ -434,7 +469,26 @@ final class PlaybackController: PlaybackInterruptionContext {
         isPlaybackRequested = false
         isPlaying = false
         cuedAt = nil
+        // Issue #151: clear the recorded failure too. `AppDependencies` outlives
+        // a sign-out and calls this from `handleAuthChange`'s sign-out arm, so
+        // a failure left standing here renders its mini-player bar over the
+        // *next* session -- plausibly a different DJ on a shared control-room
+        // device, who has played nothing. `fail(_:)` deliberately does not
+        // route through here (it repeats the teardown inline and sets
+        // `lastFailure` itself), so this cannot erase the failure it reports.
+        lastFailure = nil
         clearQueue()
+    }
+
+    /// Clears a recorded failure, leaving everything else untouched.
+    ///
+    /// One of the three points that clear ``lastFailure`` -- the others being a
+    /// fresh ``start(manifest:albumTitle:artistName:)`` and ``stop()``. Lets the DJ
+    /// dismiss the mini-player's failed state (ADR 0008 Amendment 6) once
+    /// they've read it, rather than it standing until the next play attempt.
+    /// A no-op with nothing to clear.
+    func dismissFailure() {
+        lastFailure = nil
     }
 
     // MARK: - Rendition selection
@@ -628,7 +682,7 @@ final class PlaybackController: PlaybackInterruptionContext {
     /// manifest is not a signature problem.
     private func handleFailure(_ failure: PlaybackEngineFailure) {
         guard failure == .mediaForbidden, !didRefetchManifest, let albumID else {
-            fail(.engine(failure))
+            fail(.engine(failure), albumTitle: self.albumTitle)
             return
         }
         didRefetchManifest = true
@@ -666,22 +720,22 @@ final class PlaybackController: PlaybackInterruptionContext {
                 reporter.report(error, context: "PlaybackController.refetchManifest", extra: [:])
             }
             playbackLog.error("Playback manifest refetch failed for album \(albumID, privacy: .public)")
-            fail(.refetchFailed)
+            fail(.refetchFailed, albumTitle: self.albumTitle)
             return
         }
         if Task.isCancelled { return }
 
         guard hasUsableLifetime(manifest) else {
-            fail(.manifestExpiring)
+            fail(.manifestExpiring, albumTitle: self.albumTitle)
             return
         }
         guard !manifest.tracks.isEmpty else {
-            fail(.emptyManifest)
+            fail(.emptyManifest, albumTitle: self.albumTitle)
             return
         }
         let items = Self.playbackItems(from: manifest, albumTitle: albumTitle, artistName: artistName)
         guard !items.isEmpty else {
-            fail(.noPlayableRendition)
+            fail(.noPlayableRendition, albumTitle: self.albumTitle)
             return
         }
 
@@ -825,7 +879,7 @@ final class PlaybackController: PlaybackInterruptionContext {
         // pins the third. Both arrive here as `.audioSessionUnavailable`,
         // which is true of each -- the cause is the coordinator's to report.
         guard audioSession.activationPending else {
-            fail(.audioSessionUnavailable)
+            fail(.audioSessionUnavailable, albumTitle: self.albumTitle)
             return
         }
         let limit = activationWaitLimit
@@ -888,7 +942,7 @@ final class PlaybackController: PlaybackInterruptionContext {
         guard didActivate else {
             playbackLog.error("Audio session never activated; abandoning playback")
             reporter.report(AudioSessionActivationTimeout(), context: "PlaybackController.activation", extra: [:])
-            fail(.audioSessionUnavailable)
+            fail(.audioSessionUnavailable, albumTitle: self.albumTitle)
             return
         }
         engine.play()
@@ -965,12 +1019,21 @@ final class PlaybackController: PlaybackInterruptionContext {
     /// playing album A who taps an about-to-expire album B must stop hearing A
     /// rather than be left with a transport that reads stopped over a queue
     /// still running.
-    private func fail(_ failure: PlaybackFailure) {
+    /// `albumTitle` is deliberately **not** defaulted. `self.albumTitle` is
+    /// assigned only *after* `start(...)`'s guards pass, and
+    /// `clearAlbumIdentity()` does not reset it, so at the three refusal arms
+    /// it still holds the **previous** album's title -- a default reading
+    /// `self.albumTitle` would name the wrong album there, which is the very
+    /// defect this parameter exists to fix, inverted. Those three arms pass
+    /// their local parameter; every other site passes `self.albumTitle`,
+    /// which by then is this album's. An empty string normalizes to `nil`.
+    private func fail(_ failure: PlaybackFailure, albumTitle: String?) {
         clearAlbumIdentity()
         cancelActivationWait()
         retireAutoResumeState(reason: nil)
         if !queue.isEmpty { clearQueue() }
-        lastFailure = failure
+        let named = (albumTitle?.isEmpty ?? true) ? nil : albumTitle
+        lastFailure = PlaybackFailureRecord(failure: failure, albumTitle: named)
         isPlaybackRequested = false
         isPlaying = false
         cuedAt = nil

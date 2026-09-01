@@ -66,6 +66,15 @@ struct AlbumDetailView: View {
     // fetch. Reset to `.idle` at the top of every `loadAll()`, mirroring
     // `cloneRow`/`metadataError` above.
     @State private var manifestState: PlaybackManifestState = .idle
+    // Issue #151: the outcome of the most recent `playback.start(...)` call
+    // this screen made, captured at the tap rather than read reactively off
+    // `playback.lastFailure` -- two `AlbumDetailView` instances for two
+    // different albums can be mounted at once (Search's and Bin's tabs each
+    // keep their own `NavigationStack`), and `fail(_:)` always clears the
+    // queue, so every mounted instance would otherwise see the same
+    // `lastFailure` with no way to tell whose start it belonged to. Reset at
+    // the top of every `loadAll()`, mirroring `manifestState`.
+    @State private var playbackStartFailure: PlaybackFailure?
 
     init(albumId: Int, fallback: AlbumSearchResult? = nil, origin: AlbumDetailOrigin) {
         self.albumId = albumId
@@ -325,6 +334,30 @@ struct AlbumDetailView: View {
                 )
                 .frame(maxWidth: .infinity)
             }
+            // Issue #151: a `start()` refusal for *this* album's manifest,
+            // rendered in the same faint register as the LML footer note
+            // below -- not a red banner. `playbackStartFailure` is captured
+            // at the tap (see `togglePlayback(manifest:)`), not read
+            // reactively off `playback.lastFailure`, so it can never be
+            // misattributed to a different album's screen. Reachable here
+            // are exactly two of the three cases `start()` returns `false`
+            // for: `.manifestExpiring` and `.noPlayableRendition`.
+            // `.emptyManifest` is not, because `loadPlaybackManifest()` maps
+            // an empty `tracks[]` to `.unavailable` and this section renders
+            // only from `.loaded`, so `start()`'s empty-tracks guard cannot
+            // fire from this screen. Everything else -- a mid-cue
+            // `.audioSessionUnavailable` that lands while `start()` still
+            // returns `true`, and every failure `refetchManifest` raises
+            // mid-playback (including `.manifestExpiring` and
+            // `.emptyManifest` again, reached with no `start()` in the path)
+            // -- is the mini-player's job. See ADR 0008 Amendment 6: the
+            // synchronous and mid-playback sets overlap, so neither surface
+            // can be derived by filtering the enum.
+            if let playbackStartFailure {
+                Text(PlaybackFailureCopy.message(for: playbackStartFailure))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -338,7 +371,12 @@ struct AlbumDetailView: View {
         } else {
             let title = info?.albumTitle ?? resolution.catalogRow?.albumTitle ?? ""
             let artist = info?.artistName ?? resolution.catalogRow?.artistName ?? ""
-            playback.start(manifest: manifest, albumTitle: title, artistName: artist)
+            let didStart = playback.start(manifest: manifest, albumTitle: title, artistName: artist)
+            // The bare case, not the record: this caption renders beneath the
+            // album's own header, so naming the album here would repeat what
+            // the screen already says. The mini-player needs the name because
+            // it has no such context; see `PlaybackFailureRecord`.
+            playbackStartFailure = didStart ? nil : playback.lastFailure?.failure
         }
     }
 
@@ -954,6 +992,7 @@ struct AlbumDetailView: View {
         cloneRow = nil
         metadataError = nil
         manifestState = .idle
+        playbackStartFailure = nil
         // The clone is read *alongside* the network legs, not after them: were
         // it awaited later, a clone-sourced cover would land after LML's and
         // the header would visibly swap — the exact defect this screen's
