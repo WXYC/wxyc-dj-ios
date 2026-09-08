@@ -108,16 +108,50 @@ struct APIClientTests {
         #expect(q.contains("album_id=100"))
     }
 
-    @Test func addToBinPostsBodyWithAlbumId() async throws {
+    @Test func getBinDecodesTheBareArrayResponse() async throws {
         let (client, _, session) = try await Self.makeSignedInClient()
         session.enqueue(StubRequestSession.Stub(
-            statusCode: 201,
-            body: Data(Fixtures.binEntryJSON.utf8)
+            statusCode: 200,
+            body: Data(Fixtures.binResponseJSON.utf8)
         ))
 
-        let added = try await client.addToBin(albumId: 200, trackTitle: nil)
+        let entries = try await client.getBin()
 
-        #expect(added.albumId == 200)
+        #expect(entries.count == 2)
+        #expect(Set(entries.map(\.albumId)) == [100, 200])
+        #expect(session.recordedRequests.last?.url?.path == "/djs/bin")
+    }
+
+    /// A `null` body must not read as an empty bin: `BinViewModel` persists what
+    /// this returns, and an `[]` would overwrite the offline snapshot with
+    /// authoritative emptiness. Fail closed so the last-good bin survives.
+    @Test func getBinRejectsANullBodyRatherThanReadingItAsEmpty() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data("null".utf8)))
+
+        await #expect(throws: APIError.self) { try await client.getBin() }
+    }
+
+    /// A genuinely empty bin is still authoritative emptiness — the distinction
+    /// issue #60's snapshot-present marker exists to carry.
+    @Test func getBinDecodesAnEmptyArrayAsAnEmptyBin() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data("[]".utf8)))
+
+        #expect(try await client.getBin().isEmpty)
+    }
+
+    @Test func addToBinPostsBodyWithAlbumId() async throws {
+        let (client, _, session) = try await Self.makeSignedInClient()
+        // The 201 body is the raw `bins` row, which the client never decodes —
+        // enqueued here to prove that shape can't fail the call.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 201,
+            body: Data(Fixtures.addToBinResponseJSON.utf8)
+        ))
+
+        try await client.addToBin(albumId: 200, trackTitle: nil)
+
         let request = session.recordedRequests.last!
         #expect(request.httpMethod == "POST")
         let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""

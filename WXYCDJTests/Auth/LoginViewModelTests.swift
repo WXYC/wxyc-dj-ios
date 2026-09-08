@@ -3,8 +3,10 @@
 //  WXYCDJTests
 //
 //  Pins LoginViewModel: canSubmit gates on field+auth state, submit() trims
-//  whitespace on the username (not the password) before forwarding to
-//  AuthService, and a guarded submit() with empty fields is a no-op.
+//  whitespace on the identifier (not the password) before forwarding to
+//  AuthService, and a guarded submit() with empty fields is a no-op. Since
+//  issue #97 that identifier may be a username or an email, so the field's
+//  pass-through is pinned for both.
 //
 //  Created by Jake on 5/20/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -29,7 +31,7 @@ struct LoginViewModelTests {
         )
     }
 
-    @Test func canSubmitFalseWhenUsernameEmpty() {
+    @Test func canSubmitFalseWhenIdentifierEmpty() {
         let session = StubRequestSession()
         let viewModel = LoginViewModel(auth: makeAuth(session: session))
         viewModel.password = "hunter2"
@@ -40,7 +42,20 @@ struct LoginViewModelTests {
     @Test func canSubmitFalseWhenPasswordEmpty() {
         let session = StubRequestSession()
         let viewModel = LoginViewModel(auth: makeAuth(session: session))
-        viewModel.username = "juana"
+        viewModel.identifier = "juana"
+
+        #expect(viewModel.canSubmit == false)
+    }
+
+    @Test func canSubmitFalseWhenIdentifierIsOnlyWhitespace() {
+        // submit() trims, so a whitespace-only identifier would post an empty
+        // one and come back "Incorrect username or email, or password" — a
+        // credential verdict on a field the DJ never filled in. Gate on the
+        // trimmed value so the button stays disabled instead.
+        let session = StubRequestSession()
+        let viewModel = LoginViewModel(auth: makeAuth(session: session))
+        viewModel.identifier = "   \n "
+        viewModel.password = "hunter2"
 
         #expect(viewModel.canSubmit == false)
     }
@@ -48,17 +63,30 @@ struct LoginViewModelTests {
     @Test func canSubmitTrueWhenBothFieldsPopulated() {
         let session = StubRequestSession()
         let viewModel = LoginViewModel(auth: makeAuth(session: session))
-        viewModel.username = "juana"
+        viewModel.identifier = "juana"
         viewModel.password = "hunter2"
 
         #expect(viewModel.canSubmit == true)
     }
 
-    @Test func submitTrimsUsernameWhitespaceButPreservesPassword() async throws {
+    /// The view model's whole job on submit: trim the identifier, leave the
+    /// password alone, forward. Driven with both credential kinds because the
+    /// field takes either since issue #97 — the routing itself is `AuthService`'s
+    /// business (and pinned there), so this asserts only that whichever kind the
+    /// DJ typed arrives trimmed and intact on the route it belongs to.
+    @Test(arguments: [
+        ("  juana \n", "/auth/sign-in/username", "username", "juana"),
+        (" juana@wxyc.org ", "/auth/sign-in/email", "email", "juana@wxyc.org"),
+    ])
+    func submitTrimsTheIdentifierButPreservesThePassword(
+        typed: String,
+        expectedPath: String,
+        expectedKey: String,
+        expectedIdentifier: String
+    ) async throws {
         let session = StubRequestSession()
-        let auth = makeAuth(session: session)
-        let viewModel = LoginViewModel(auth: auth)
-        viewModel.username = "  juana \n"
+        let viewModel = LoginViewModel(auth: makeAuth(session: session))
+        viewModel.identifier = typed
         viewModel.password = "  hunter2 "
 
         session.enqueue(StubRequestSession.Stub(statusCode: 200, headers: Self.signInSuccessHeaders))
@@ -70,9 +98,10 @@ struct LoginViewModelTests {
         await viewModel.submit()
 
         let signInRequest = try #require(session.recordedRequests.first)
+        #expect(signInRequest.url?.path == expectedPath)
         let body = try #require(signInRequest.httpBody)
         let payload = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
-        #expect(payload["username"] as? String == "juana")
+        #expect(payload[expectedKey] as? String == expectedIdentifier)
         #expect(payload["password"] as? String == "  hunter2 ")
     }
 
@@ -93,7 +122,7 @@ struct LoginViewModelTests {
             session: session
         )
         let viewModel = LoginViewModel(auth: auth)
-        viewModel.username = "juana"
+        viewModel.identifier = "juana"
         viewModel.password = "hunter2"
 
         let firstSubmit = Task { await viewModel.submit() }

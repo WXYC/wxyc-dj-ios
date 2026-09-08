@@ -9,6 +9,23 @@
 //  matches proxy.controller.ts's serializer, not the snake_case library
 //  catalog shape.
 //
+//  Deliberately kept hand-authored, not generated (issue #75) — and not the
+//  "exact-name match" it looks like at first glance. Two separate problems:
+//  (1) api.yaml's schema for this exact endpoint is named
+//  `AlbumMetadataResponse`, not `AlbumMetadata` — the api.yaml schema
+//  literally called `AlbumMetadata` is an unrelated, much smaller shape used
+//  elsewhere (album_id/artwork_url/discogs_url/release_year/last_fetched
+//  only, no genres/styles/tracklist). (2) Even against the correctly-named
+//  `AlbumMetadataResponse`, the generated type has no `artistBio` /
+//  `artistWikipediaUrl` fields — `artistWikipediaURL` is actively rendered
+//  in AlbumDetailView.swift (the "Wikipedia" external link), so aliasing to
+//  the generated type would either fail to compile at that call site or,
+//  worse, require deleting a live UI feature to make it compile. Until
+//  wxyc-shared's `AlbumMetadataResponse` schema grows those two fields (the
+//  schema's own doc comment already acknowledges a similar undeclared-field
+//  gap for `artistName`/`releaseTitle`/`trackTitle`), this stays hand-written.
+//  See CLAUDE.md's "Code Generation" section.
+//
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
 //

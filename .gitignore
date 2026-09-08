@@ -25,3 +25,6 @@ Packages/*/.build/
 # IDE
 .vscode/
 .idea/
+
+# Local development worktrees (see the org CLAUDE.md git workflow)
+.worktrees/

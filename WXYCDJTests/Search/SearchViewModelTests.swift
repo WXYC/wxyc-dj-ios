@@ -133,8 +133,8 @@ struct SearchViewModelTests {
         let viewModel = Self.makeViewModel(client)
         let row = try AlbumSearchResult.fixture(matchedTrackTitles: ["In a Sentimental Mood"])
         session.enqueue(StubRequestSession.Stub(
-            statusCode: 200,
-            body: Data(Fixtures.singleBinEntryJSON.utf8)
+            statusCode: 201,
+            body: Data(Fixtures.addToBinResponseJSON.utf8)
         ))
 
         let added = await viewModel.addToBin(row)
@@ -153,8 +153,8 @@ struct SearchViewModelTests {
         let viewModel = Self.makeViewModel(client)
         let row = try AlbumSearchResult.fixture(matchedTrackTitles: [])
         session.enqueue(StubRequestSession.Stub(
-            statusCode: 200,
-            body: Data(Fixtures.singleBinEntryJSON.utf8)
+            statusCode: 201,
+            body: Data(Fixtures.addToBinResponseJSON.utf8)
         ))
 
         let added = await viewModel.addToBin(row)

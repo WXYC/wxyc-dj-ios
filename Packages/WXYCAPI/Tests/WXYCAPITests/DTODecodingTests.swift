@@ -71,30 +71,29 @@ struct DTODecodingTests {
         let data = Data(Fixtures.albumInfoJSON.utf8)
         let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: data)
         #expect(info.albumTitle == "DOGA")
-        #expect(info.rotation?.rotationBin == .heavy)
+        // rotationBin is the raw wire string (see the AlbumInfo.Rotation doc
+        // comment); rotationCohort is the derived, forward-compat-safe enum.
+        #expect(info.rotation?.rotationBin == "H")
+        #expect(info.rotation?.rotationCohort == .heavy)
         #expect(info.rotation?.killDate == nil)
-        // Rotation date arrives as a date-only YYYY-MM-DD string; the
-        // custom JSONDecoder strategy must parse it as a Date.
-        let components = Calendar(identifier: .gregorian).dateComponents(
-            in: TimeZone(identifier: "UTC")!,
-            from: try #require(info.rotation?.addDate)
-        )
-        #expect(components.year == 2025)
-        #expect(components.month == 10)
-        #expect(components.day == 15)
+        // Both rotation dates are held as the raw `"YYYY-MM-DD"` the wire
+        // carries, never decoded to `Date` — see AlbumInfo.Rotation.killDate for
+        // why. Nothing reinterprets them, so the value is byte-identical to the
+        // fixture.
+        #expect(info.rotation?.addDate == "2025-10-15")
     }
 
     @Test func rotationDateRendersInGMTRegardlessOfHostTimeZone() throws {
-        // Regression: `JSONCoders.decoder` parses date-only fields like
-        // `"2025-10-15"` as midnight GMT. If the render side uses
-        // Calendar.current / TimeZone.current it slips to the previous day
-        // on any negative-UTC host (PT/MT/CT/ET). Pin the render path to
-        // GMT via `WXYCDateFormatting.dateOnlyFormatStyle`.
+        // Regression: `dateOnly(fromISOString:)` parses a date-only value as
+        // midnight GMT before formatting it. If either leg used
+        // Calendar.current / TimeZone.current it would slip to the previous day
+        // on any negative-UTC host (PT/MT/CT/ET). The rotation dates are now
+        // raw wire strings, so this pins the render path that reads them.
         let data = Data(Fixtures.albumInfoJSON.utf8)
         let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: data)
-        let date = try #require(info.rotation?.addDate)
+        let addDate = try #require(info.rotation?.addDate)
 
-        let rendered = date.formatted(WXYCDateFormatting.dateOnlyFormatStyle)
+        let rendered = WXYCDateFormatting.dateOnly(fromISOString: addDate)
         // The fixture uses "2025-10-15". The day component must survive
         // through the render layer, no matter the host time zone.
         #expect(rendered.contains("15"))
@@ -102,9 +101,38 @@ struct DTODecodingTests {
 
         // Pin against the exact en_US_POSIX abbreviated rendering so a
         // future locale/calendar drift would surface here.
-        let posix = WXYCDateFormatting.dateOnlyFormatStyle
-            .locale(Locale(identifier: "en_US_POSIX"))
-        #expect(date.formatted(posix) == "Oct 15, 2025")
+        #expect(
+            WXYCDateFormatting.dateOnly(fromISOString: addDate, locale: Locale(identifier: "en_US_POSIX"))
+                == "Oct 15, 2025"
+        )
+    }
+
+    @Test func rotationDatesAreHeldVerbatimRatherThanReinterpreted() throws {
+        // The reason the two rotation dates are raw strings rather than `Date`s
+        // (see AlbumInfo.Rotation.killDate): a `Date` is an instant, not a
+        // calendar day, so recovering the wire day means picking a zone to
+        // render it back through — and GMT, right for a bare "YYYY-MM-DD", is
+        // off by one for an offset-bearing timestamp that crosses midnight UTC.
+        // Holding the string sidesteps the question, so the online path compares
+        // exactly what the server wrote, as the cloned CatalogRow path does.
+        let raw = """
+            {
+              "id": 402,
+              "album_title": "On Your Own Love Again",
+              "artist_name": "Jessica Pratt",
+              "rotation": {
+                "id": 14,
+                "rotation_bin": "L",
+                "add_date": "2026-06-23T20:00:00-04:00",
+                "kill_date": "2026-06-23T20:00:00-04:00"
+              }
+            }
+            """
+        let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
+        let rotation = try #require(info.rotation)
+        // Untouched — not shifted into GMT, where this instant lands on the 24th.
+        #expect(rotation.addDate == "2026-06-23T20:00:00-04:00")
+        #expect(rotation.killDate == "2026-06-23T20:00:00-04:00")
     }
 
     @Test func decodesAlbumSearchResultWithNullLabel() throws {
@@ -160,6 +188,105 @@ struct DTODecodingTests {
             """
         let row = try JSONCoders.decoder.decode(AlbumSearchResult.self, from: Data(raw.utf8))
         #expect(row.rotationBin == nil)
+    }
+
+    @Test func unrecognizedAlbumInfoRotationBinDoesNotFailTheWholeDecode() throws {
+        // Issue #93: a present `rotation` object carrying a `rotation_bin` value
+        // outside the current H/M/L/S set must not throw out of AlbumInfo's
+        // decode — the same forward-compat hedge CatalogRow.rotationBin
+        // documents, applied to the /library/info shape. `rotationBin` decodes
+        // as the raw wire string; `rotationCohort` degrades to nil rather than
+        // failing the surrounding album.
+        let raw = """
+            {
+              "id": 401,
+              "album_title": "Edits",
+              "artist_name": "Chuquimamani-Condori",
+              "rotation": {
+                "id": 12,
+                "rotation_bin": "N",
+                "add_date": "2025-10-15",
+                "kill_date": null
+              }
+            }
+            """
+        let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
+        #expect(info.albumTitle == "Edits")
+        #expect(info.rotation?.rotationBin == "N")
+        #expect(info.rotation?.rotationCohort == nil)
+    }
+
+    @Test func emptyAlbumInfoRotationBinNormalizesToNil() throws {
+        // A dirty empty bin is no rotation assignment, exactly as
+        // CatalogRow.init(from:) already treats it — both types read the same
+        // underlying rotation column, so they must not disagree about what an
+        // empty string means. It matters beyond tidiness: bin presence is the
+        // first guard both isInRotation predicates open with (see
+        // AlbumInfoRotationTests), so an empty string carried through verbatim
+        // would satisfy it and render "In rotation" for a record that asserts
+        // no rotation at all.
+        let raw = """
+            {
+              "id": 401,
+              "album_title": "DOGA",
+              "artist_name": "Juana Molina",
+              "rotation": { "id": 12, "rotation_bin": "", "add_date": "2025-10-15" }
+            }
+            """
+        let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
+        #expect(info.rotation != nil)
+        #expect(info.rotation?.rotationBin == nil)
+        #expect(info.rotation?.rotationCohort == nil)
+    }
+
+    @Test(arguments: [
+        // Bin key absent entirely.
+        #"{ "id": 13, "add_date": "2025-10-15" }"#,
+        // Bin key present but null.
+        #"{ "id": 13, "rotation_bin": null, "add_date": "2025-10-15" }"#,
+        // Only the bin — no id, no add_date.
+        #"{ "rotation_bin": "H" }"#,
+        // Empty object: contract-legal, since the nested `rotation` schema
+        // declares no required properties.
+        #"{}"#,
+    ])
+    func partialAlbumInfoRotationDoesNotFailTheWholeDecode(rotationObject: String) throws {
+        // Issue #93 review: api.yaml's nested `rotation` object declares no
+        // `required` list, and the generated AlbumInfoResponseAllOfRotation
+        // agrees (all fields optional). Rotation reads every field with
+        // decodeIfPresent; a plain `decode` on any one of them would throw
+        // keyNotFound out of the enclosing AlbumInfo on a present-but-partial
+        // rotation — the same whole-decode failure the raw-String hedge closes,
+        // reached through a different door.
+        let raw = """
+            {
+              "id": 401,
+              "album_title": "DOGA",
+              "artist_name": "Juana Molina",
+              "rotation": \(rotationObject)
+            }
+            """
+        let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
+        #expect(info.albumTitle == "DOGA")
+        // The rotation object survives as a present-but-partial value rather
+        // than taking the whole album down with it.
+        #expect(info.rotation != nil)
+    }
+
+    @Test func absentAlbumInfoRotationDecodesToNil() throws {
+        let raw = """
+            { "id": 1, "album_title": "On Your Own Love Again", "artist_name": "Jessica Pratt" }
+            """
+        let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
+        #expect(info.rotation == nil)
+    }
+
+    @Test func nullAlbumInfoRotationDecodesToNil() throws {
+        let raw = """
+            { "id": 1, "album_title": "On Your Own Love Again", "artist_name": "Jessica Pratt", "rotation": null }
+            """
+        let info = try JSONCoders.decoder.decode(AlbumInfo.self, from: Data(raw.utf8))
+        #expect(info.rotation == nil)
     }
 
     @Test func decodesEmptyMatchedViaWhenFieldAbsent() throws {
@@ -266,11 +393,16 @@ struct DTODecodingTests {
         #expect(row.matchedVia.first?.source == .libraryIdentity)
     }
 
-    @Test func decodesUnknownMatchedViaSourceAsNil() throws {
+    @Test func decodesUnknownMatchedViaSourceAsUnknownDefaultCase() throws {
         // Forward compatibility: server may introduce new TrackMatchSource
         // enum cases (e.g. `musicbrainz_recording`) ahead of the client. The
-        // row must still decode; the hint's `source` is nil for the
-        // unrecognized variant. Mirrors `RotationBin`'s tolerant fallback.
+        // row must still decode. TrackMatchHint is now the generated
+        // WXYCAPIModels type (issue #75), whose swift6-generator
+        // `enumUnknownDefaultCase` support maps an unrecognized value to
+        // `.unknownDefaultOpenApi` rather than nil — `source` is
+        // non-optional on the generated type, so this replaces the old
+        // hand-rolled `nil`-fallback behavior with an explicit case that
+        // carries the same "unrecognized" meaning.
         let raw = """
             {
               "id": 1,
@@ -291,7 +423,7 @@ struct DTODecodingTests {
         let row = try JSONCoders.decoder.decode(AlbumSearchResult.self, from: Data(raw.utf8))
         let hint = try #require(row.matchedVia.first)
         #expect(hint.title == "song")
-        #expect(hint.source == nil)
+        #expect(hint.source == .unknownDefaultOpenApi)
     }
 
     @Test func decodesExplicitEmptyMatchedViaArray() throws {
@@ -328,6 +460,53 @@ struct DTODecodingTests {
         #expect(row.matchedVia.count == 3)
         #expect(row.matchedVia.map(\.title) == ["VI Scose Poise", "Eutow", "Pen Expers"])
         #expect(row.matchedVia.allSatisfy { $0.source == .discogsMaster })
+    }
+
+    @Test func matchedViaDropsHintWithMissingSource() throws {
+        // Regression (issue #75 review, finding F1): TrackMatchHint is now
+        // the generated WXYCAPIModels type, whose `source` is non-optional
+        // and whose init(from:) is synthesized (no hand-rolled tolerance).
+        // LML is a separately deployed service and Backend-Service passes
+        // `matched_via` through unvalidated (library-search.service.ts), so
+        // a single hint missing `source` must not fail the whole row -- and
+        // the row's decode must not fail the whole `[AlbumSearchResult]`
+        // array `APIClient.searchLibrary` decodes all-or-nothing. Only the
+        // malformed hint is dropped; its well-formed siblings survive.
+        let raw = """
+            {
+              "id": 60359,
+              "album_title": "Confield",
+              "artist_name": "Autechre",
+              "matched_via": [
+                { "title": "VI Scose Poise", "source": "discogs_master" },
+                { "title": "no source key at all" }
+              ]
+            }
+            """
+        let row = try JSONCoders.decoder.decode(AlbumSearchResult.self, from: Data(raw.utf8))
+        #expect(row.matchedVia.count == 1)
+        #expect(row.matchedVia.first?.title == "VI Scose Poise")
+    }
+
+    @Test func matchedViaDropsHintWithNullSource() throws {
+        // Sibling of the above: an explicit `"source": null` must also be
+        // dropped rather than thrown, since the generated TrackMatchSource's
+        // CaseIterableDefaultsLast fallback only tolerates an *unrecognized
+        // string*, not a null value in that field's slot.
+        let raw = """
+            {
+              "id": 60360,
+              "album_title": "Amber",
+              "artist_name": "Autechre",
+              "matched_via": [
+                { "title": "null source hint", "source": null },
+                { "title": "Slip", "source": "cta" }
+              ]
+            }
+            """
+        let row = try JSONCoders.decoder.decode(AlbumSearchResult.self, from: Data(raw.utf8))
+        #expect(row.matchedVia.count == 1)
+        #expect(row.matchedVia.first?.title == "Slip")
     }
 
     @Test func decodesAlbumMetadata() throws {
@@ -385,12 +564,23 @@ struct DTODecodingTests {
         #expect(m.youtubeMusicURL != nil)
     }
 
-    @Test func decodesDJBinResponse() throws {
-        let data = Data(Fixtures.djBinResponseJSON.utf8)
-        let bin = try JSONCoders.decoder.decode(DJBinResponse.self, from: data)
-        #expect(bin.djId == 42)
-        #expect(bin.entries.count == 1)
-        #expect(bin.entries.first?.artistName == "Juana Molina")
+    /// `GET /djs/bin` returns a bare array of denormalized library rows — no
+    /// envelope object, no per-row bin id, no added-at timestamp. Decoding it as
+    /// an object was the "Expected to decode Dictionary<String, Any> but found
+    /// an array instead" failure the Bin tab showed on every load.
+    @Test func decodesBinAsABareArray() throws {
+        let data = Data(Fixtures.binResponseJSON.utf8)
+        let entries = try JSONCoders.decoder.decode([BinEntry].self, from: data)
+        #expect(entries.count == 2)
+        let juana = try #require(entries.first { $0.albumId == 100 })
+        #expect(juana.artistName == "Juana Molina")
+        #expect(juana.alphabeticalName == "Molina, Juana")
+        #expect(juana.label == "Sonamos")
+        #expect(juana.formatName == "CD")
+        #expect(juana.genreName == "Rock")
+        // The album is the bin's key: the wire carries no bins.id.
+        #expect(juana.id == 100)
+        #expect(juana.callNumber == "MOL 1/12")
     }
 
     @Test func decodesBinEntryWithNullCallNumberLegs() throws {
@@ -399,14 +589,16 @@ struct DTODecodingTests {
         // refusing to render the bin row.
         let raw = """
             {
-              "id": 3,
-              "dj_id": 42,
               "album_id": 300,
-              "added_at": "2025-11-03T08:00:00.000Z",
               "album_title": "Edits",
               "artist_name": "Chuquimamani-Condori",
+              "alphabetical_name": "Chuquimamani-Condori",
+              "label": null,
               "code_letters": null,
-              "code_number": null
+              "code_artist_number": null,
+              "code_number": null,
+              "format_name": "CD",
+              "genre_name": "Electronic"
             }
             """
         let entry = try JSONCoders.decoder.decode(BinEntry.self, from: Data(raw.utf8))

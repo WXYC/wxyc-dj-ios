@@ -2,11 +2,13 @@
 //  AuthService.swift
 //  WXYCAPI
 //
-//  Owns the better-auth session lifecycle for a single signed-in DJ: takes
-//  username + password, calls /auth/sign-in/username (with the bearer
-//  plugin's `set-auth-token` header capture), exchanges the session for a
-//  short-lived JWT via /auth/token, and refreshes the JWT before it expires.
-//  All state is gated to the MainActor so SwiftUI views can observe directly.
+//  Owns the better-auth session lifecycle for a single signed-in DJ: takes an
+//  identifier + password, calls whichever sign-in route the identifier belongs
+//  to (`SignInIdentifier` picks /auth/sign-in/email or /auth/sign-in/username,
+//  issue #97) with the bearer plugin's `set-auth-token` header capture,
+//  exchanges the session for a short-lived JWT via /auth/token, and refreshes
+//  the JWT before it expires. All state is gated to the MainActor so SwiftUI
+//  views can observe directly.
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -20,14 +22,28 @@ public enum AuthError: Error, Sendable, Equatable {
     case network(message: String)
     case missingSessionToken
     case serverFailure(status: Int, message: String?)
+    /// The server understood the request and refused it for a stated reason the
+    /// DJ can act on — a malformed email (`400 INVALID_EMAIL`), an unverified
+    /// address (`403 EMAIL_NOT_VERIFIED`, since Backend-Service sets
+    /// `requireEmailVerification: true`). Distinct from ``invalidCredentials``,
+    /// which asserts the username/password pair was wrong: folding these into it
+    /// would have a DJ retyping a correct password against a problem retyping
+    /// can't fix. Distinct from ``serverFailure`` too, because that renders
+    /// behind a "Server error (4xx)" prefix, reading as a backend fault for
+    /// something the DJ mistyped.
+    case rejected(message: String?)
     case notSignedIn
 
     public var localizedMessage: String {
         switch self {
-        case .invalidCredentials: "Invalid username or password."
+        case .invalidCredentials: "Incorrect username or email, or password."
         case .network(let m): "Network error: \(m)"
         case .missingSessionToken: "Sign-in did not return a session token."
         case .serverFailure(let s, let m): "Server error (\(s))\(m.map { ": \($0)" } ?? "")."
+        // Empty-guarded rather than a bare `map`, so a `{"message": ""}` body
+        // renders the fallback instead of a lone ".". No period-doubling guard:
+        // better-auth's messages arrive unpunctuated, so it would be dead code.
+        case .rejected(let m): m.flatMap { $0.isEmpty ? nil : "\($0)." } ?? "Sign-in was rejected."
         case .notSignedIn: "You are signed out."
         }
     }
@@ -173,7 +189,14 @@ public final class AuthService {
         }
     }
 
-    public func signIn(username: String, password: String) async {
+    /// Sign a DJ in with the credentials they use on dj.wxyc.org.
+    ///
+    /// - Parameters:
+    ///   - identifier: A username **or** an email address, as the one login
+    ///     field accepts — ``SignInIdentifier`` routes it to the better-auth
+    ///     endpoint that can accept it (issue #97). Expected pre-trimmed.
+    ///   - password: Passed through verbatim; whitespace is significant.
+    public func signIn(identifier: String, password: String) async {
         state = .signingIn
         lastError = nil
 
@@ -189,7 +212,7 @@ public final class AuthService {
         // no session to keep, so roll back and stop before the JWT exchange.
         let token: String
         do {
-            token = try await performSignIn(username: username, password: password)
+            token = try await performSignIn(identifier: identifier, password: password)
             try storage.save(token, for: .sessionToken)
             sessionToken = token
             sessionEpoch &+= 1  // a new generation, so a stale refresh of any prior session can't clobber it (issue #66)
@@ -319,6 +342,24 @@ public final class AuthService {
     /// machine — is byte-for-byte unchanged. Pure observation: the only added
     /// effect is the `onOutcome` call.
     private func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        var request = request
+        // This client authenticates with a bearer token and never wants a cookie
+        // jar, and an unwanted one is actively fatal here. better-auth's
+        // `bearer()` after-hook ADDS `set-auth-token` without stripping the
+        // `Set-Cookie` it rides alongside, so a default `URLSession` stores the
+        // session cookie and replays it on every later request to the host —
+        // including the next sign-in. better-auth registers
+        // `originCheckMiddleware` globally on every non-GET, and it enforces the
+        // `Origin` header *only when a cookie is present*; a native client sends
+        // no Origin, so a cookie-bearing sign-in is refused with
+        // `403 MISSING_OR_NULL_ORIGIN` before any credential check. (Verified
+        // against production on both sign-in routes — this is not specific to
+        // the issue-#97 email route.) Suppressing cookie handling stops the jar
+        // filling in the first place *and* stops any pre-existing cookie from an
+        // older build being sent, so the middleware never arms. It also keeps the
+        // session off disk outside the Keychain, which `clearLocalSession()`
+        // can't reach — issue #52's leave-no-trace contract.
+        request.httpShouldHandleCookies = false
         do {
             let result = try await session.data(for: request)
             onOutcome?(true)
@@ -339,13 +380,19 @@ public final class AuthService {
         }
     }
 
-    private func performSignIn(username: String, password: String) async throws -> String {
-        let url = configuration.authBaseURL.appending(path: "sign-in/username")
+    private func performSignIn(identifier rawIdentifier: String, password: String) async throws -> String {
+        // One field, two better-auth routes: an email posted to the username
+        // route is rejected on shape alone (422 "Username is invalid") before
+        // any credential check, so the identifier decides both the path and the
+        // body key. Everything after this — the `set-auth-token` capture, the
+        // JWT exchange, the issue-#53/#66 state machine — is route-agnostic.
+        let identifier = SignInIdentifier(rawIdentifier)
+        let url = configuration.authBaseURL.appending(path: identifier.path)
         var request = URLRequest(url: url, timeoutInterval: configuration.timeout)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.httpBody = try JSONCoders.encoder.encode(SignInRequest(username: username, password: password))
+        request.httpBody = try identifier.encodedBody(password: password)
 
         let (data, response) = try await send(request)
         guard let http = response as? HTTPURLResponse else {
@@ -360,12 +407,25 @@ public final class AuthService {
                 return bodyToken
             }
             throw AuthError.missingSessionToken
-        case 401, 403:
+        case 401:
             throw AuthError.invalidCredentials
+        case 400, 403:
+            // The server refused for a reason it named, and the reason is not
+            // "wrong password": a malformed email, an unverified address, a
+            // rejected origin. Surface its message rather than asserting a
+            // credential failure the DJ would try to fix by retyping.
+            throw AuthError.rejected(message: Self.serverMessage(in: data))
         default:
-            let message = (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data))?.message
-            throw AuthError.serverFailure(status: http.statusCode, message: message)
+            throw AuthError.serverFailure(status: http.statusCode, message: Self.serverMessage(in: data))
         }
+    }
+
+    /// The `message` out of a non-2xx body, or `nil` if it isn't shaped like one.
+    /// Mirrors ``APIClient/httpError(status:body:)``'s reason for existing: keep
+    /// the "what does an error body look like" decision in one place, so a second
+    /// message key or a decode fallback is a single edit rather than one per arm.
+    private static func serverMessage(in data: Data) -> String? {
+        (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data))?.message
     }
 
     private func refreshJWT() async throws -> JWTPayload {

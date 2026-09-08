@@ -4,7 +4,7 @@
 //
 //  Raw-SQLite (import SQLite3) implementation of BinStore for the on-device bin
 //  snapshot (issue #60). Mirrors SQLiteCatalogStore: rows are JSONCoders-encoded
-//  BinEntry BLOBs keyed by BinEntry.id, a meta row marks "snapshot present" so a
+//  BinEntry BLOBs keyed by album id, a meta row marks "snapshot present" so a
 //  written-but-empty bin ([]) is distinguishable from never-written (nil), and a
 //  saveSnapshot replaces the whole bin in a single rolled-back-on-error
 //  transaction. Its own DB + actor, deliberately separate from the catalog clone
@@ -118,7 +118,7 @@ public actor SQLiteBinStore: BinStore {
                         throw Self.error(db, "bind row")
                     }
                 }
-                // Plain INSERT (not OR REPLACE): a duplicate id raises
+                // Plain INSERT (not OR REPLACE): a duplicate album id raises
                 // SQLITE_CONSTRAINT, which fails the whole save and rolls back —
                 // keeping the last-good snapshot, the same fail-closed posture as
                 // the catalog store.

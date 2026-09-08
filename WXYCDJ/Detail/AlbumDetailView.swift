@@ -33,6 +33,10 @@ struct AlbumDetailView: View {
     // on-device catalog clone, read only once the live fetch has failed.
     @State private var infoFailed: Bool = false
     @State private var cloneRow: CatalogRow?
+    // Issue #86: URLs the header's `AsyncImage` has genuinely finished failing to
+    // load. Permanent for the life of this view, so a dead URL is retried at most
+    // once; see `preferredArtworkURL` for why it is keyed by URL.
+    @State private var failedArtworkURLs: Set<URL> = []
     @State private var addError: String?
     @State private var addedToBin: Bool = false
     @State private var addInFlight: Bool = false
@@ -61,7 +65,22 @@ struct AlbumDetailView: View {
             if let metadata, let tracks = metadata.tracklist, !tracks.isEmpty {
                 tracklistSection(tracks)
             }
-            if let rotation = info?.rotation {
+            // A present `rotation` object is no longer evidence of a rotation
+            // assignment: since issue #93 every field on it is optional, so a
+            // `{}` or `{"rotation_bin": null}` object decodes fine and would
+            // otherwise render "In rotation" for a payload that asserts none.
+            // Ask the same question the clone path asks —
+            // `AlbumInfo.Rotation.isInRotation()` is deliberately the identical
+            // predicate to `CatalogRow.isInRotation()`, bin presence plus strict
+            // kill-date expiry — so the two paths can't give one album two
+            // answers.
+            //
+            // A rotation object that fails it is treated exactly as an absent
+            // one, which in practice means no Rotation section: `resolveCatalog`
+            // supplies a `rotationRow` only once `/library/info` has *failed*, so
+            // the clone never fills in behind a successful response. That's the
+            // pre-existing rule for an absent `rotation`, left alone here.
+            if let rotation = info?.rotation, rotation.isInRotation() {
                 rotationSection(rotation)
             } else if let rotationRow = resolution.rotationRow, rotationRow.isInRotation() {
                 offlineRotationSection(rotationRow)
@@ -100,14 +119,48 @@ struct AlbumDetailView: View {
         Section {
             VStack(alignment: .leading, spacing: 4) {
                 if let url = Self.preferredArtworkURL(
-                    info: info?.artworkURL,
-                    fallback: resolution.catalogRow?.artworkURL,
-                    metadata: metadata?.artworkURL
+                    info: info,
+                    fallback: fallback,
+                    cloneRow: cloneRow,
+                    metadata: metadata,
+                    failedURLs: failedArtworkURLs
                 ) {
                     AsyncImage(url: url) { phase in
                         switch phase {
-                        case .success(let image): image.resizable().scaledToFit()
-                        default: Color.clear
+                        case .success(let image):
+                            image.resizable().scaledToFit()
+                        case .failure(let error):
+                            // Genuinely failed to load (not "still loading" —
+                            // `.empty` is handled separately below), so mark
+                            // it and let the next `body` evaluation's
+                            // `preferredArtworkURL` call skip past it.
+                            // `.onAppear` runs after this phase has already
+                            // rendered, not during body evaluation, so
+                            // mutating `@State` here is safe.
+                            //
+                            // Only a failure that indicts the *URL* is recorded:
+                            // a connectivity blip must not retire a healthy
+                            // cover (see `ArtworkFailureClassification`).
+                            //
+                            // `.id(url)` ties this node's identity to the URL, so
+                            // a `.failure(a)` → `.failure(b)` transition is a
+                            // fresh mount (and a fresh `onAppear`) by
+                            // construction, rather than depending on whether
+                            // `AsyncImage` happens to pass back through `.empty`
+                            // between the two. Without it the
+                            // `_ConditionalContent` branch would be unchanged,
+                            // `onAppear` would not re-fire, and the chain would
+                            // stall on `b` with candidates unvisited.
+                            Color.clear
+                                .onAppear {
+                                    guard ArtworkFailureClassification.indictsURL(error) else { return }
+                                    failedArtworkURLs.insert(url)
+                                }
+                                .id(url)
+                        case .empty:
+                            Color.clear
+                        @unknown default:
+                            Color.clear
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -217,21 +270,39 @@ struct AlbumDetailView: View {
     }
 
     private func rotationSection(_ rotation: AlbumInfo.Rotation) -> some View {
-        // Rotation dates are date-only wire values decoded as midnight GMT.
-        // Formatting with `Calendar.current` / `TimeZone.current` slips to
-        // the previous day on negative-UTC hosts (PT/MT/CT/ET); use the
-        // GMT-anchored style from WXYCAPI so the displayed day matches
-        // the wire day.
+        // Rotation dates are the raw `"YYYY-MM-DD"` wire strings (see
+        // AlbumInfo.Rotation.killDate for why they are not decoded to `Date`),
+        // so they render through the same `dateOnly(fromISOString:)` helper
+        // `offlineRotationSection` uses for the cloned row — GMT-anchored, and
+        // passing the value through verbatim if it somehow isn't a calendar
+        // date. Both sections now make character-for-character the same call.
         Section("Rotation") {
             HStack {
-                RotationBadge(bin: rotation.rotationBin)
-                Text(rotation.rotationBin.label)
+                // A bin outside the H/M/L/S cohorts (issue #93's forward-compat
+                // hedge) still means the album is in rotation, just with no
+                // display cohort — render a plain label rather than crashing
+                // the decode or silently dropping the section. Both halves are
+                // identical to offlineRotationSection's below: this
+                // missing-cohort fallback, and the caller's gate, which goes
+                // through the same `isInRotation` predicate (bin plus strict
+                // kill-date expiry) that the cloned row uses.
+                if let cohort = rotation.rotationCohort {
+                    RotationBadge(bin: cohort)
+                    Text(cohort.label)
+                } else {
+                    Text("In rotation")
+                }
                 Spacer()
-                Text(rotation.addDate.formatted(WXYCDateFormatting.dateOnlyFormatStyle))
-                    .foregroundStyle(.secondary)
+                // Optional for the same reason as the bin (see AlbumInfo.Rotation):
+                // nothing in the contract guarantees add_date on a present
+                // rotation object.
+                if let addDate = rotation.addDate {
+                    Text(WXYCDateFormatting.dateOnly(fromISOString: addDate))
+                        .foregroundStyle(.secondary)
+                }
             }
             if let kill = rotation.killDate {
-                metadataRow("Kill date", value: kill.formatted(WXYCDateFormatting.dateOnlyFormatStyle))
+                metadataRow("Kill date", value: WXYCDateFormatting.dateOnly(fromISOString: kill))
             }
         }
     }
@@ -239,9 +310,9 @@ struct AlbumDetailView: View {
     /// Offline rotation, derived from the raw cloned ``CatalogRow`` (the bridged
     /// `detailFallback` drops `rotationBin`). The caller gates this on
     /// ``CatalogRow/isInRotation(asOf:timeZone:)``, so the row is known to be in
-    /// rotation; a non-cohort bin (e.g. `"N"`) is still in rotation but carries no
-    /// `H`/`M`/`L`/`S` badge, so render a plain "In rotation" label rather than
-    /// collapsing it to out-of-rotation. The kill date is the raw `"YYYY-MM-DD"`
+    /// rotation; a bin outside the `H`/`M`/`L`/`S` cohorts is still in rotation but
+    /// has no badge, so render a plain "In rotation" label rather than collapsing
+    /// it to out-of-rotation. The kill date is the raw `"YYYY-MM-DD"`
     /// string the export carries; ``WXYCDateFormatting/dateOnly(fromISOString:locale:)``
     /// renders it in the same GMT-anchored abbreviated form as the online
     /// ``rotationSection`` (no leaked ISO string), passing through verbatim if it
@@ -319,13 +390,51 @@ struct AlbumDetailView: View {
 
     /// Header artwork precedence. The catalog row is the source of truth for
     /// shelf data, so its art wins: `/library/info` first, then the live
-    /// search-row `fallback` that renders before `/library/info` lands.
-    /// LML's best-effort `metadata` art is only a last resort — it can
-    /// resolve to a label-level image rather than the cover (e.g. Autechre —
-    /// Confield coming back as the Warp Records logo), so it must never
-    /// replace catalog art that's already on screen.
-    static func preferredArtworkURL(info: URL?, fallback: URL?, metadata: URL?) -> URL? {
-        info ?? fallback ?? metadata
+    /// search-row `fallback`, then the on-device clone. LML's best-effort
+    /// `metadata` art is only a last resort — it can resolve to a label-level
+    /// image rather than the cover (e.g. Autechre — Confield coming back as the
+    /// Warp Records logo), so it must never replace catalog art already on screen.
+    ///
+    /// The catalog sources are read **directly**, not through
+    /// ``resolveCatalog(info:fallback:cloneRow:infoFailed:)``: that resolver drops
+    /// the search row the moment `info` lands (correct for shelf *fields*, which
+    /// `/library/info` re-states authoritatively), but Backend-Service's
+    /// `getAlbumFromDB` select doesn't project `artwork_url`, so `info.artworkURL`
+    /// is in practice always `nil`. Routing artwork through the resolver therefore
+    /// knocked the search row's cover out of the running the instant `/library/info`
+    /// landed, and LML's label logo took the slot — the visible "cover replaced a
+    /// beat after tapping" bug. The clone is only ever loaded on a failed `info`
+    /// fetch, so including it here doesn't change the online path.
+    ///
+    /// **Issue #86 — dead-URL fallthrough.** `failedURLs` is the set of URLs the
+    /// header's `AsyncImage` has already tried and genuinely failed to load
+    /// (never "still loading" — see the call site's phase switch, which only
+    /// inserts on `.failure`, not `.empty`). Candidates are walked in the precedence
+    /// order above and the first one **not** in `failedURLs` wins, so a dead catalog
+    /// URL (expired pre-signed CDN signature, purged asset) falls through to the
+    /// next source instead of leaving the header blank. Keying by URL rather than a
+    /// bare "the catalog failed" bool matters twice: (1) the search row and the
+    /// clone commonly carry the *same* dead URL (same underlying column), so one
+    /// failure record retires both in a single step instead of needing two failed
+    /// `AsyncImage` attempts against an identical URL; (2) a failure recorded
+    /// against one source's URL can never suppress a *different*, healthy URL from
+    /// another source — e.g. a failed clone URL cannot mask a working `info` URL
+    /// if `/library/info` ever starts projecting `artwork_url`. An empty
+    /// `failedURLs` (nothing has been recorded as failed yet) reproduces the
+    /// pre-#86 behavior exactly, which is what keeps the #83 invariant intact:
+    /// a source that is merely still loading is never treated as failed.
+    static func preferredArtworkURL(
+        info: AlbumInfo?,
+        fallback: AlbumSearchResult?,
+        cloneRow: CatalogRow?,
+        metadata: AlbumMetadata?,
+        failedURLs: Set<URL> = []
+    ) -> URL? {
+        let candidates = [info?.artworkURL, fallback?.artworkURL, cloneRow?.artworkURL, metadata?.artworkURL]
+        for case let url? in candidates where !failedURLs.contains(url) {
+            return url
+        }
+        return nil
     }
 
     /// What the header + catalog sections render from once `/library/info`
@@ -449,38 +558,83 @@ struct AlbumDetailView: View {
         return merged.filter { tag in seen.insert(tag.lowercased()).inserted }
     }
 
+    /// Whether the on-device clone has to be read to have any chance at catalog
+    /// artwork. `/library/info` never carries `artwork_url`, so the `fallback`
+    /// row is the only other catalog source — when it carries no cover, the
+    /// clone is the last thing standing between the header and LML's
+    /// label-logo-prone art. This branches on the **cover**, not on whether a
+    /// `fallback` exists, which is what keeps the Bin → Detail path (issue #87:
+    /// a `BinEntry.detailFallback`, always artwork-less, since the `/djs/bin`
+    /// projection carries no `artwork_url`) and a Spotlight clone miss (no
+    /// `fallback` at all) both reading the clone. Pure + `static` so the
+    /// decision is testable without rendering.
+    static func shouldReadCloneForArtwork(fallback: AlbumSearchResult?) -> Bool {
+        fallback?.artworkURL == nil
+    }
+
     private func loadAll() async {
         infoFailed = false
         cloneRow = nil
         metadataError = nil
-        // If we have a fallback (Search → Detail), kick metadata off in
-        // parallel with the catalog fetch. If we don't (Bin → Detail), we
-        // need the catalog row's artist/title to even build the metadata
-        // request, so await it first.
+        // The clone is read *alongside* the network legs, not after them: were
+        // it awaited later, a clone-sourced cover would land after LML's and
+        // the header would visibly swap — the exact defect this screen's
+        // artwork precedence exists to prevent.
+        let readsClone = Self.shouldReadCloneForArtwork(fallback: fallback)
+        // A `fallback` already names the artist/release, so metadata can be
+        // fetched in parallel with the catalog fetch — the case for every tab
+        // push: Search → Detail (the live/local search row) and, since issue
+        // #87, Bin → Detail (`BinEntry.detailFallback`; the bin projection and
+        // `/library/info` read `artists.artist_name` / `library.album_title`
+        // off the same joins, so the LML lookup keys are the same strings,
+        // just a round-trip earlier). Without one — a Spotlight deep link that
+        // missed the on-device clone — the catalog row is the only source of
+        // an artist name to look up with, so await it first.
         if fallback != nil {
             async let infoTask: AlbumInfo? = loadInfo()
             async let metaTask: AlbumMetadata? = loadMetadata(artistName: fallback?.artistName,
                                                               releaseTitle: fallback?.albumTitle)
-            let (loadedInfo, loadedMeta) = await (infoTask, metaTask)
+            async let cloneTask: CatalogRow? = readsClone ? await loadCloneRow() : nil
+            let (loadedInfo, loadedMeta, loadedClone) = await (infoTask, metaTask, cloneTask)
             if let loadedInfo { info = loadedInfo }
             infoLoaded = true
             if let loadedMeta { metadata = loadedMeta }
+            cloneRow = loadedClone
         } else {
-            let loadedInfo = await loadInfo()
+            // No fallback at all, so `readsClone` is unconditionally true here.
+            async let infoTask: AlbumInfo? = loadInfo()
+            async let cloneTask: CatalogRow? = loadCloneRow()
+            let (loadedInfo, loadedClone) = await (infoTask, cloneTask)
             if let loadedInfo { info = loadedInfo }
             infoLoaded = true
+            cloneRow = loadedClone
             let loadedMeta = await loadMetadata(artistName: loadedInfo?.artistName,
                                                 releaseTitle: loadedInfo?.albumTitle)
             if let loadedMeta { metadata = loadedMeta }
         }
+        // A failed `/library/info` needs the clone for shelf data + rotation
+        // even when the live row already carried a cover (so the artwork read
+        // above was skipped).
+        if infoFailed, cloneRow == nil {
+            cloneRow = await loadCloneRow()
+        }
+    }
+
+    /// O(1) read of the on-device catalog clone. `nil` when there's no store,
+    /// no row for this album, or the read fails — all of which degrade to the
+    /// next artwork source rather than surfacing an error.
+    private func loadCloneRow() async -> CatalogRow? {
+        try? await deps.catalogStore?.row(id: albumId)
     }
 
     /// `/library/info` is the shelf source of truth, but a failure (offline, or a
     /// server error — indistinguishable without connectivity detection, which #56
-    /// owns) is no longer a red banner: we mark the load failed and read the
-    /// on-device catalog clone so the detail screen still renders saved shelf data
-    /// (call number, format, genre, rotation) behind a quiet note. A clone miss
-    /// (no store / absent row / read error) degrades to a minimal header.
+    /// owns) is no longer a red banner: we mark the load failed, and `loadAll`
+    /// reads the on-device catalog clone so the detail screen still renders saved
+    /// shelf data (call number, format, genre, rotation) behind a quiet note. A
+    /// clone miss (no store / absent row / read error) degrades to a minimal
+    /// header. The clone read itself lives in `loadAll` rather than here, so the
+    /// artwork-backstop read and this failure read can't fire twice for one load.
     private func loadInfo() async -> AlbumInfo? {
         do {
             return try await deps.api.albumInfo(albumId: albumId)
@@ -488,7 +642,6 @@ struct AlbumDetailView: View {
             let message = (error as? APIError)?.localizedMessage ?? error.localizedDescription
             detailLog.error("library/info failed for album \(albumId): \(message, privacy: .public); falling back to catalog clone")
             infoFailed = true
-            cloneRow = try? await deps.catalogStore?.row(id: albumId)
             return nil
         }
     }
@@ -527,7 +680,7 @@ struct AlbumDetailView: View {
         addError = nil
         defer { addInFlight = false }
         do {
-            _ = try await deps.api.addToBin(albumId: albumId)
+            try await deps.api.addToBin(albumId: albumId)
             addedToBin = true
         } catch {
             // Surface to a dedicated addError state so the add-to-bin

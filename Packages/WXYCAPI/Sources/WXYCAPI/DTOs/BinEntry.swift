@@ -2,8 +2,38 @@
 //  BinEntry.swift
 //  WXYCAPI
 //
-//  Decoded shape of a row in the DJ's personal bin
-//  (GET /djs/bin → DJBinResponse.entries). Mirrors BinEntry in api.yaml.
+//  Decoded shape of a row in the DJ's personal bin (GET /djs/bin, which
+//  returns a bare array): the denormalized library join Backend-Service
+//  actually emits. Modelled on the *handler projection*, not on api.yaml —
+//  today it is a superset of api.yaml's BinLibraryDetails, which doesn't yet
+//  declare `alphabetical_name`. Interim: WXYC/wxyc-shared#344 points the 200 at
+//  an array of BinLibraryDetails and adds that field; #359 covers POST/DELETE.
+//
+//  Deliberately kept hand-authored, not generated (issue #75) — blocked on
+//  exactly one field. NOT the required-vs-nullable gap an earlier version of
+//  this comment cited; see AlbumSearchResult.swift for why the "V/A rows
+//  carry NULL" premise is false in general. `code_letters` / `code_number`
+//  are kept optional below defensively, and `decodesBinEntryWithNullCallNumberLegs`
+//  stays as a regression test, but that isn't the load-bearing reason either.
+//
+//  The generated types NAMED BinEntry / DJBinResponse are a false cognate:
+//  api.yaml's `/djs/bin` GET still refs a `{dj_id, entries: [...]}` wrapper
+//  that no handler has ever emitted, so WXYCAPIModels.BinEntry declares
+//  `id` / `dj_id` / `added_at` non-optional and would throw on the real
+//  response. The generated type that DOES match the wire is
+//  WXYCAPIModels.BinLibraryDetails — every field optional, and field-for-field
+//  identical to the struct below except that it lacks `alphabetical_name`,
+//  which `BinViewModel.normalized` sorts on. (Same trap the AddToBinRequest
+//  and AlbumMetadata rows in CLAUDE.md's table catch: match the schema the
+//  PATH refs, not the one that shares a name.)
+//
+//  So the blocker is one field, not a modeling disagreement. When
+//  WXYC/wxyc-shared#344 lands — it points the 200 at an array of
+//  BinLibraryDetails and declares `alphabetical_name` — this becomes a
+//  typealias plus an extension carrying `id` / `callNumber` / `sortName` /
+//  `deduplicatedByAlbum`. Residual cost to weigh then: BinLibraryDetails
+//  types `album_id` as `Int?`, which ripples into BinStore, BinView, and
+//  AlbumRoute. See CLAUDE.md's "Code Generation" section.
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -11,43 +41,100 @@
 
 import Foundation
 
+/// One release in the DJ's bin, as projected by `djs.service.getBinFromDB` —
+/// the `bins` row joined out to `library` / `artists` / `format` / `genres`.
+///
+/// The wire carries **no** `bins.id`, `dj_id`, or added-at timestamp: the
+/// projection is library data only (`bins` has no timestamp column at all), and
+/// `DELETE /djs/bin` removes every row for a `(dj, album)` pair. `albumId` is
+/// therefore the bin's effective key, and is what ``id`` reports.
 public struct BinEntry: Codable, Sendable, Hashable, Identifiable {
-    public let id: Int
-    public let djId: Int
+    /// The library row's id. See the type's note on why this is the bin's key
+    /// rather than a per-row bin identifier.
+    public var id: Int { albumId }
+
     public let albumId: Int
-    public let addedAt: Date
     public let albumTitle: String
     public let artistName: String
-    // `code_letters` / `code_number` are nullable in the catalog (V/A
-    // compilations, unfiled adds), so the bin denormalization can carry
-    // nulls through. Keep these optional to match AlbumSearchResult.
+    /// Filing form of `artistName` ("Molina, Juana"). `NOT NULL` upstream, but
+    /// optional here so a projection change can't fail the whole row; it only
+    /// drives sort order, which falls back to `artistName`.
+    public let alphabeticalName: String?
+    public let label: String?
+    // The call-number legs are nullable in the catalog (V/A compilations,
+    // unfiled adds), so keep them optional to match AlbumSearchResult.
     public let codeLetters: String?
+    public let codeArtistNumber: Int?
     public let codeNumber: Int?
+    public let formatName: String?
+    public let genreName: String?
 
-    /// `<letters> <number>` — BinEntry doesn't carry the artist code today,
-    /// so this is shorter than AlbumSearchResult.callNumber.
+    public init(
+        albumId: Int,
+        albumTitle: String,
+        artistName: String,
+        alphabeticalName: String? = nil,
+        label: String? = nil,
+        codeLetters: String? = nil,
+        codeArtistNumber: Int? = nil,
+        codeNumber: Int? = nil,
+        formatName: String? = nil,
+        genreName: String? = nil
+    ) {
+        self.albumId = albumId
+        self.albumTitle = albumTitle
+        self.artistName = artistName
+        self.alphabeticalName = alphabeticalName
+        self.label = label
+        self.codeLetters = codeLetters
+        self.codeArtistNumber = codeArtistNumber
+        self.codeNumber = codeNumber
+        self.formatName = formatName
+        self.genreName = genreName
+    }
+
+    /// Shelf call number in the form `<letters> <artistNumber>/<releaseNumber>`
+    /// (e.g. "MOL 1/12") — the same rendering as ``AlbumSearchResult/callNumber``,
+    /// since the bin projection carries all three legs.
     public var callNumber: String {
-        AlbumSearchResult.formatCallNumber(letters: codeLetters, artistNumber: nil, releaseNumber: codeNumber)
+        AlbumSearchResult.formatCallNumber(
+            letters: codeLetters,
+            artistNumber: codeArtistNumber,
+            releaseNumber: codeNumber
+        )
+    }
+
+    /// Key the bin sorts on: the librarian's filing name, falling back to the
+    /// display name when the projection omits it.
+    public var sortName: String { alphabeticalName ?? artistName }
+
+    /// Collapse rows that address the same album, keeping first-seen order.
+    ///
+    /// **Required before any ``BinStore/saveSnapshot(_:)``.** The store is keyed
+    /// by album id (`bin(id INTEGER PRIMARY KEY)`) and inserts with a plain
+    /// `INSERT`, so a duplicate raises `SQLITE_CONSTRAINT` and rolls back the
+    /// *entire* save — one repeated row costs the whole offline bin. It lives
+    /// here, next to that invariant, rather than in a view model: the wire can
+    /// genuinely repeat an album (the `/djs/bin` projection omits `track_title`,
+    /// so an album binned under two tracks arrives twice, and `DELETE /djs/bin`
+    /// clears the album wholesale — they are one row to every reader), and the
+    /// issue-#61 pending-intention writer will need the same collapse when it
+    /// merges queued adds into a snapshot.
+    public static func deduplicatedByAlbum(_ entries: [BinEntry]) -> [BinEntry] {
+        var seen: Set<Int> = []
+        return entries.filter { seen.insert($0.albumId).inserted }
     }
 
     enum CodingKeys: String, CodingKey {
-        case id
-        case djId = "dj_id"
         case albumId = "album_id"
-        case addedAt = "added_at"
         case albumTitle = "album_title"
         case artistName = "artist_name"
+        case alphabeticalName = "alphabetical_name"
+        case label
         case codeLetters = "code_letters"
+        case codeArtistNumber = "code_artist_number"
         case codeNumber = "code_number"
-    }
-}
-
-public struct DJBinResponse: Codable, Sendable, Hashable {
-    public let djId: Int
-    public let entries: [BinEntry]
-
-    enum CodingKeys: String, CodingKey {
-        case djId = "dj_id"
-        case entries
+        case formatName = "format_name"
+        case genreName = "genre_name"
     }
 }

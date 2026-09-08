@@ -7,57 +7,131 @@
 
 import SwiftUI
 import AVFoundation
-import AVKit //for photo quality I think; don't think is used
 
 struct CameraView: View {
-
     @Binding var showScanner: Bool
     @Binding var scannedCode: String?
     @State private var cameraManager = CameraManager()
     let onDismiss: () -> Void
     
     var body: some View {
-        //ZStack for layering preview w/ controls
         ZStack {
+            // Camera Preview configured to fill the entire sheet
             if cameraManager.authorizationStatus == .authorized {
-                CameraPreview(session: cameraManager.session) .ignoresSafeArea()
+                CameraPreview(session: cameraManager.session)
+                    .ignoresSafeArea()
             } else {
-                VStack{
-                    Image(systemName: "camera.fill")
-                        .font(.largeTitle)
-                        .foregroundStyle(.gray)
-                    Text("Camera Access Required")
-                        .font(.largeTitle)
-                        .foregroundStyle(.gray)
-                    
-                    if cameraManager.authorizationStatus == .denied{
-                        Text("please enable camera in settings")
-                        
-                        Button("Open Settings"){
-                            if let settingsURL = URL(string:
-                                                        UIApplication.openSettingsURLString){
-                                UIApplication.shared.open(settingsURL)
-                            }
+                fallbackView
+            }
+            
+            // Scanner UI Overlay
+            if cameraManager.authorizationStatus == .authorized {
+                VStack {
+                    // Top Bar: Cancel Button
+                    HStack {
+                        Button("Cancel") {
+                            onDismiss()
                         }
-                        .buttonStyle(.borderedProminent)
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 24)
+                        .padding(.top, 24)
+                        
+                        Spacer()
                     }
+                    
+                    Spacer()
+                    
+                    // Center: QR Outline
+                    ScannerReticle()
+                        .frame(width: 260, height: 260)
+                    
+                    // Bottom: Instructions
+                    VStack(spacing: 8) {
+                        Text("Point at the QR on **dj.wxyc.org**")
+                            .font(.system(size: 16, weight: .regular))
+                            .foregroundColor(.white)
+                    }
+                    .padding(.top, 40)
+                    
+                    Spacer()
+                    Spacer() // Extra spacer to elevate the center slightly
                 }
             }
-            }
+        }
         .onAppear {
             cameraManager.checkAuthorization()
         }
         .onChange(of: cameraManager.capturedCode) { oldCode, newCode in
-            if let metadataString = cameraManager.capturedCode {
+            if let metadataString = newCode {
                 if metadataString != "No QR code is detected" {
                     scannedCode = metadataString
                     onDismiss()
                 }
             }
         }
-        .padding()
+    }
+    
+    // Extracted fallback view for permission handling
+    @ViewBuilder
+    var fallbackView: some View {
+        VStack {
+            Image(systemName: "camera.fill")
+                .font(.largeTitle)
+                .foregroundStyle(.gray)
+            Text("Camera Access Required")
+                .font(.title2)
+                .foregroundStyle(.gray)
+                .padding(.top, 8)
+            
+            if cameraManager.authorizationStatus == .denied {
+                Text("Please enable camera in settings")
+                    .padding(.top, 16)
+                
+                Button("Open Settings") {
+                    if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(settingsURL)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .padding(.top, 8)
+            }
         }
-        
-        
-     
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black)
+    }
+}
+
+// Custom Shape for the rounded QR corners
+struct ScannerReticle: View {
+    var body: some View {
+        Path { path in
+            let size: CGFloat = 260
+            let length: CGFloat = 40
+            let radius: CGFloat = 16
+            
+            // Top Left
+            path.move(to: CGPoint(x: 0, y: length))
+            path.addArc(tangent1End: CGPoint(x: 0, y: 0), tangent2End: CGPoint(x: length, y: 0), radius: radius)
+            path.addLine(to: CGPoint(x: length, y: 0))
+            
+            // Top Right
+            path.move(to: CGPoint(x: size - length, y: 0))
+            path.addArc(tangent1End: CGPoint(x: size, y: 0), tangent2End: CGPoint(x: size, y: length), radius: radius)
+            path.addLine(to: CGPoint(x: size, y: length))
+            
+            // Bottom Right
+            path.move(to: CGPoint(x: size, y: size - length))
+            path.addArc(tangent1End: CGPoint(x: size, y: size), tangent2End: CGPoint(x: size - length, y: size), radius: radius)
+            path.addLine(to: CGPoint(x: size - length, y: size))
+            
+            // Bottom Left
+            path.move(to: CGPoint(x: length, y: size))
+            path.addArc(tangent1End: CGPoint(x: 0, y: size), tangent2End: CGPoint(x: 0, y: size - length), radius: radius)
+            path.addLine(to: CGPoint(x: 0, y: size - length))
+        }
+        .stroke(Color.white, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+        // Optional dark shadow to increase contrast against bright environments
+        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+    }
 }

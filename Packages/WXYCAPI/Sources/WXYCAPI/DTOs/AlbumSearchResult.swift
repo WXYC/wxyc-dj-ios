@@ -5,11 +5,55 @@
 //  Decoded shape of a row returned by Backend-Service GET /library/.
 //  Mirrors the AlbumSearchResult schema in wxyc-shared/api.yaml.
 //
+//  Deliberately kept hand-authored, not generated (issue #75). NOT because
+//  `code_letters`/`code_number`/`code_artist_number`/`format_name`/
+//  `genre_name`/`label` carry NULL for V/A compilations or unfiled adds, as
+//  an earlier version of this comment claimed — that's false. Those five
+//  code/format/genre columns are `.notNull()` in Backend-Service's schema
+//  (shared/database/src/schema.ts) and `library_artist_view` (the source
+//  `GET /library/` reads) reaches every one of them through an INNER JOIN,
+//  so a row missing one is simply absent from the result set, never present
+//  with a null in that field. `label` (~schema.ts:566) is the one column in
+//  that family that's actually nullable — and it's the one field the
+//  generated type ALSO declares non-optional-but-required, matching
+//  api.yaml's schema exactly (no gap there either, since
+//  library-search.service.ts coalesces a null `library.label` to `""`
+//  before it ever reaches the wire).
+//
+//  The real reasons: (1) the generated `matchedVia` is `[TrackMatchHint]?`
+//  (optional — api.yaml doesn't mark it required), where this app's
+//  contract is a non-optional `[TrackMatchHint]` that callers index into
+//  without unwrapping — `row.matchedVia.first?.title`
+//  (SearchViewModel.swift), `TrackMatchBadge(hints: row.matchedVia)`
+//  (SearchResultRow.swift) — so the generated form would push an extra
+//  optional layer into the UI (see the property doc below);
+//  (2) the generated `RotationBin`'s cases are spelled `.h`/`.m`/`.l`/`.s`
+//  (+ `.unknownDefaultOpenApi`), not this app's `.heavy`/`.medium`/`.light`/
+//  `.single` below — `SearchResultRow.swift` already switches exhaustively
+//  over the latter, so adopting the generated enum would ripple a rename
+//  through the UI, not just this file. `matchedVia`'s element type,
+//  `TrackMatchHint`, IS generated (see TrackMatchHint.swift) — that schema
+//  has neither gap. See CLAUDE.md's "Code Generation" section.
+//
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
 //
 
 import Foundation
+
+/// Wraps a `Decodable` element so a failed per-element decode inside an
+/// array (unparseable JSON shape, a required field the wire omitted, etc.)
+/// drops just that element instead of failing the whole array decode. Used
+/// by `AlbumSearchResult.matchedVia` (see the doc comment on its
+/// `init(from:)`) to isolate one malformed `TrackMatchHint` from the rest of
+/// a search-result row.
+struct FailableDecodable<Base: Decodable>: Decodable {
+    let value: Base?
+
+    init(from decoder: any Decoder) throws {
+        value = try? Base(from: decoder)
+    }
+}
 
 // Codable, not decode-only: besides decoding from Backend-Service
 // (`GET /library/` and, per issue #19, the bulk `GET /library/catalog`),
@@ -117,15 +161,42 @@ public struct AlbumSearchResult: Codable, Sendable, Hashable, Identifiable {
         genreName = try c.decodeIfPresent(String.self, forKey: .genreName)
         label = try c.decodeIfPresent(String.self, forKey: .label)
         labelId = try c.decodeIfPresent(Int.self, forKey: .labelId)
-        // Unknown rotation_bin values (e.g. the legacy 'N') are decoded as nil
-        // rather than blowing up the row.
+        // An unknown rotation_bin decodes to nil rather than blowing up the
+        // row — the same forward-compat hedge CatalogRow.rotationBin documents,
+        // applied to the search projection.
         rotationBin = (try? c.decodeIfPresent(RotationBin.self, forKey: .rotationBin)) ?? nil
         rotationId = try c.decodeIfPresent(Int.self, forKey: .rotationId)
         plays = try c.decodeIfPresent(Int.self, forKey: .plays)
         onStreaming = try c.decodeIfPresent(Bool.self, forKey: .onStreaming)
         albumArtist = try c.decodeIfPresent(String.self, forKey: .albumArtist)
         artworkURL = try c.decodeIfPresent(URL.self, forKey: .artworkURL)
-        matchedVia = (try c.decodeIfPresent([TrackMatchHint].self, forKey: .matchedVia)) ?? []
+        // Per-element, not `decodeIfPresent([TrackMatchHint].self, ...)`: LML
+        // is a separately deployed service, and Backend-Service passes
+        // `matched_via` through unvalidated (library-search.service.ts), so
+        // one malformed hint on the wire must not fail this whole row (and,
+        // by extension, the whole `[AlbumSearchResult]` array
+        // `APIClient.searchLibrary` decodes all-or-nothing). TrackMatchHint
+        // is the generated WXYCAPIModels type: `source` is non-optional and
+        // its `init(from:)` is synthesized, so a hint with `source` absent
+        // or `source: null` throws instead of tolerating it the way the old
+        // hand-rolled `try?` decode did. `FailableDecodable` isolates each
+        // element's decode failure instead of letting it propagate through
+        // the array decode.
+        //
+        // Note this is a deliberate NARROWING relative to the pre-codegen
+        // DTO, not a strict improvement. That decode was
+        // `source = try? c.decode(...)` into a `TrackMatchSource?`, and
+        // `try?` swallows `keyNotFound`, `valueNotFound`, and
+        // `dataCorrupted` alike -- so a hint missing `source` was KEPT with
+        // `source == nil`, and TrackMatchBadge still rendered its title
+        // (and SearchViewModel still sent `track_title` on add-to-bin).
+        // Here such a hint is dropped entirely, so the badge disappears.
+        // That is contract-legal -- api.yaml marks `source` required -- and
+        // it is strictly safer than failing the entire search response, but
+        // if the badge matters more than the strictness, decode a fallback
+        // hint with `source = .unknownDefaultOpenApi` instead of dropping.
+        matchedVia = (try c.decodeIfPresent([FailableDecodable<TrackMatchHint>].self, forKey: .matchedVia))?
+            .compactMap(\.value) ?? []
     }
 
     /// Shelf call number in the form "<codeLetters> <codeArtistNumber>/<codeNumber>"
@@ -133,6 +204,66 @@ public struct AlbumSearchResult: Codable, Sendable, Hashable, Identifiable {
     /// never render an Optional() literal.
     public var callNumber: String {
         Self.formatCallNumber(letters: codeLetters, artistNumber: codeArtistNumber, releaseNumber: codeNumber)
+    }
+
+    /// Build an `AlbumSearchResult` that stands in for a row not yet fetched,
+    /// so `AlbumDetailView` (whose `fallback` is typed `AlbumSearchResult?`)
+    /// can render its header immediately from data already in hand.
+    ///
+    /// This is the one place that decides what a stand-in **drops**, and it is
+    /// shared by every `detailFallback` bridge (``CatalogRow/detailFallback``
+    /// for the Spotlight deep link, ``BinEntry/detailFallback`` for Bin →
+    /// Detail) so the decision can't drift between them. Callers pass only the
+    /// twelve fields a stand-in can ever carry; the six below are fixed here:
+    ///
+    /// - `rotationBin` / `rotationId` are **always** `nil`. `RotationBin` is a
+    ///   closed `H`/`M`/`L`/`S` cohort enum and cannot faithfully represent the
+    ///   raw catalog bin, which `CatalogRow` keeps as a `String?` precisely so a
+    ///   bin added server-side ahead of this app survives — bridging through the
+    ///   enum would collapse such a value to `nil` and read as *out* of rotation
+    ///   when the server predicate says it is in. Rotation for a cloned row
+    ///   comes from `CatalogRow.isInRotation(asOf:timeZone:)` / `rotationCohort`;
+    ///   the bin projection carries no rotation data at all.
+    /// - `addDate`, `labelId`, `albumArtist`, `matchedVia` exist only to
+    ///   decorate a real search response and have no meaning on a stand-in.
+    ///
+    /// Lossless **for the header render**, not a full round-trip: the detail
+    /// view's authoritative shelf and rotation data still come from
+    /// `/library/info`.
+    static func headerStandIn(
+        id: Int,
+        albumTitle: String,
+        artistName: String,
+        codeLetters: String?,
+        codeNumber: Int?,
+        codeArtistNumber: Int?,
+        formatName: String?,
+        genreName: String?,
+        label: String?,
+        plays: Int? = nil,
+        onStreaming: Bool? = nil,
+        artworkURL: URL? = nil
+    ) -> AlbumSearchResult {
+        AlbumSearchResult(
+            id: id,
+            addDate: nil,
+            albumTitle: albumTitle,
+            artistName: artistName,
+            codeLetters: codeLetters,
+            codeNumber: codeNumber,
+            codeArtistNumber: codeArtistNumber,
+            formatName: formatName,
+            genreName: genreName,
+            label: label,
+            labelId: nil,
+            rotationBin: nil,
+            rotationId: nil,
+            plays: plays,
+            onStreaming: onStreaming,
+            albumArtist: nil,
+            artworkURL: artworkURL,
+            matchedVia: []
+        )
     }
 
     static func formatCallNumber(letters: String?, artistNumber: Int?, releaseNumber: Int?) -> String {

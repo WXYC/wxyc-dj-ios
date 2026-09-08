@@ -18,6 +18,10 @@ struct SearchView: View {
     @Environment(AuthService.self) private var auth
     @State private var viewModel: SearchViewModel?
     @State private var searchText: String = ""
+    @State var showSheet: Bool = false
+    @State var showScanner: Bool = false
+    @State var scannedCode: String?
+    @State var showDeviceAuth: Bool = false
 
     var body: some View {
         Group {
@@ -47,15 +51,31 @@ struct SearchView: View {
                 viewModel = SearchViewModel(search: deps.librarySearch, api: deps.api)
             }
         }
+        .sheet(isPresented: $showScanner, content: {CameraView(showScanner: $showScanner, scannedCode: $scannedCode, onDismiss: {
+            showScanner = false
+            showDeviceAuth = true
+        }
+        )})
+        .sheet(isPresented: $showDeviceAuth, content: {DeviceAuthView(scannedCode: $scannedCode)})
     }
-
+    
     @ToolbarContentBuilder
     private var signOutMenu: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
-                Button("Sign Out", role: .destructive) {
+                Button {
+                 } label: {
+                     Label("Profile", systemImage: "person")
+                 }
+                Button { showScanner = true
+                 } label: {
+                     Label("QR Code Scanner", systemImage: "person")
+                 }
+                Button("Sign Out", role: .destructive) { /*insert symbol thing*/
                     Task { await auth.signOut() }
                 }
+                
+                
             } label: {
                 Image(systemName: "person.crop.circle")
             }
@@ -116,4 +136,5 @@ struct SearchView: View {
             .listStyle(.plain)
         }
     }
+    
 }

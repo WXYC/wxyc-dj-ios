@@ -80,11 +80,16 @@ struct CatalogRowTests {
     }
 
     @Test func preservesNonCohortRotationBinAndCountsAsInRotation() throws {
-        // "N" is a CURRENT server bin (Backend-Service app.yaml enum [S,L,M,H,N])
-        // outside the H/M/L/S display cohorts. It must be preserved RAW, have no
-        // display cohort, and — per the server predicate (non-null bin = in
-        // rotation) — count as in rotation. Collapsing "N" to nil (the old enum
-        // decode) wrongly reported it out of rotation.
+        // The fixture value is "N" for historical reasons — it is the bin that
+        // motivated this hedge — but it is NOT a current server bin, and this
+        // test does not depend on it being one. BS#2173 established it was never
+        // a rotation bin and removed it from Backend-Service's freq_enum. What
+        // is under test is the general rule: a bin outside the H/M/L/S display
+        // cohorts must be preserved RAW, have no display cohort, and count as in
+        // rotation per the server predicate (non-null bin = in rotation).
+        // Collapsing it to nil (the old enum decode) wrongly reported it out of
+        // rotation. Keeping an out-of-cohort literal here is the point of the
+        // test; only the claim that the server currently emits one was wrong.
         let raw = #"{"id":1,"artist_name":"y","album_title":"x","code_letters":"X","code_number":1,"code_artist_number":1,"genre_name":"Rock","format_name":"LP","rotation_bin":"N","rotation_kill_date":null}"#
         let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
         #expect(row.rotationBin == "N")
@@ -100,6 +105,42 @@ struct CatalogRowTests {
         let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
         #expect(row.rotationBin == nil)
         #expect(row.isInRotation(localDay: "2026-06-22") == false)
+    }
+
+    @Test(arguments: ["not-a-date", "", "2026-6-2", "20260622", "twenty-twenty-six"])
+    func unreadableKillDateFailsClosedRatherThanOpen(killDate: String) throws {
+        // The catalog export is the ONLY rotation source that runs in production
+        // today — `/library/info` projects no rotation columns at all — so this
+        // is the path where a wrong answer actually reaches a DJ's shelf. The
+        // behavior was previously pinned only on the `AlbumInfo.Rotation` side,
+        // which meant `calendarDay` could be deleted or weakened with CI fully
+        // green while dead records silently returned to every shelf.
+        //
+        // `rotation_kill_date` is held raw (a `::text` cast server-side), so an
+        // unreadable value is not rejected at decode. A bare `killDay > today`
+        // would then read "not-a-date" as in rotation forever — it sorts above
+        // every real "YYYY-MM-DD". Unreadable therefore means expired.
+        let raw = """
+            {"id":1,"artist_name":"Jessica Pratt","album_title":"On Your Own Love Again",\
+            "code_letters":"PRA","code_number":1,"code_artist_number":1,"genre_name":"Rock",\
+            "format_name":"LP","rotation_bin":"H","rotation_kill_date":"\(killDate)"}
+            """
+        let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
+        // The row still decodes — losing rotation must never cost the whole row,
+        // which would drop the album from the offline clone entirely.
+        #expect(row.albumTitle == "On Your Own Love Again")
+        #expect(row.rotationBin == "H")
+        #expect(row.isInRotation(localDay: "2026-06-22") == false)
+    }
+
+    @Test func killDateAsAFullTimestampStillCompares() throws {
+        // The prefix rule, on the live path: a date-time stays comparable against
+        // a bare day, so a server that someday widens this column doesn't
+        // silently retire every rotation record at once.
+        let raw = #"{"id":1,"artist_name":"y","album_title":"x","code_letters":"X","code_number":1,"code_artist_number":1,"genre_name":"Rock","format_name":"LP","rotation_bin":"H","rotation_kill_date":"2026-07-01T20:00:00-04:00"}"#
+        let row = try JSONCoders.decoder.decode(CatalogRow.self, from: Data(raw.utf8))
+        #expect(row.isInRotation(localDay: "2026-06-22"))
+        #expect(row.isInRotation(localDay: "2026-08-01") == false)
     }
 
     @Test func decodesNullRotationFields() throws {
@@ -128,9 +169,10 @@ struct CatalogRowTests {
     }
 
     @Test func roundTripsNonCohortBin() throws {
-        // The headline Fix-2 protection: a persisted "N" row must survive
-        // encode -> decode (the old enum-typed field collapsed it on decode,
-        // silently corrupting the clone on reload).
+        // The headline Fix-2 protection: a persisted out-of-cohort bin must
+        // survive encode -> decode (the old enum-typed field collapsed it,
+        // silently corrupting the clone on reload). "N" is the historical
+        // example, not a bin the server emits — see the note above.
         let original = makeRow(bin: "N", killDate: nil)
         let roundTripped = try JSONCoders.decoder.decode(
             CatalogRow.self,
@@ -202,15 +244,15 @@ struct CatalogRowTests {
         var utc = Calendar(identifier: .gregorian)
         utc.timeZone = TimeZone(identifier: "UTC")!
         let jan5 = utc.date(from: DateComponents(year: 2026, month: 1, day: 5))!
-        #expect(CatalogRow.localDay(jan5, timeZone: TimeZone(identifier: "UTC")!) == "2026-01-05")
+        #expect(RotationPredicate.localDay(jan5, timeZone: TimeZone(identifier: "UTC")!) == "2026-01-05")
     }
 
     @Test func localDayShiftsWithTimeZone() {
         var utc = Calendar(identifier: .gregorian)
         utc.timeZone = TimeZone(identifier: "UTC")!
         let instant = utc.date(from: DateComponents(year: 2026, month: 6, day: 22, hour: 0, minute: 30))!
-        #expect(CatalogRow.localDay(instant, timeZone: TimeZone(identifier: "UTC")!) == "2026-06-22")
-        #expect(CatalogRow.localDay(instant, timeZone: TimeZone(identifier: "America/New_York")!) == "2026-06-21")
+        #expect(RotationPredicate.localDay(instant, timeZone: TimeZone(identifier: "UTC")!) == "2026-06-22")
+        #expect(RotationPredicate.localDay(instant, timeZone: TimeZone(identifier: "America/New_York")!) == "2026-06-21")
     }
 
     // MARK: - Helpers

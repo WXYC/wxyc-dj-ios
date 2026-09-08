@@ -135,14 +135,47 @@ public final class APIClient: Sendable {
             throw Self.httpError(status: http.statusCode, body: data)
         }
     }
-    
-    public func getBin() async throws -> DJBinResponse {
+
+
+    /// The DJ's bin, newest server truth. The response is a **bare array** of
+    /// denormalized library rows (api.yaml `BinLibraryDetails`), not an
+    /// envelope object — the DJ is identified by the bearer token, so nothing
+    /// wraps it.
+    ///
+    /// `[]` and `null` are **not** the same answer here, and the asymmetry is
+    /// deliberate:
+    ///
+    /// - `[]` is a real, authoritative empty bin — a normal state a DJ reaches
+    ///   by removing their last release. It decodes, and `BinViewModel`
+    ///   persists it as written-empty (issue #60's written-empty vs.
+    ///   never-written distinction).
+    /// - `null` is not a bin at all, so it fails to decode and throws. dj-site
+    ///   coerces it (`BinLibraryDetails[] | null`); we must not, because
+    ///   `BinViewModel` persists whatever this returns and `[]` sets the
+    ///   store's snapshot-present marker — a coerced `null` would overwrite the
+    ///   DJ's last-good offline bin with authoritative emptiness, reading "Bin
+    ///   is empty" across cold launches until a real refresh landed. dj-site
+    ///   has no offline snapshot to lose; we do.
+    ///
+    /// Throwing hands the decision to `BinViewModel.handleRefreshFailure`,
+    /// which keeps the last good snapshot on screen — that, not anything here,
+    /// is the structural analog of `CatalogRefreshService`'s
+    /// `.skippedEmptyExport`. Note the catalog's *policy* is the *opposite* of
+    /// the bin's: an empty catalog export is treated as a backend hiccup and
+    /// refused, because an empty catalog is never legitimate — whereas an empty
+    /// bin is. Don't unify them.
+    public func getBin() async throws -> [BinEntry] {
         try await getJSON("/djs/bin", query: [])
     }
-    
-    @discardableResult
-    public func addToBin(albumId: Int, trackTitle: String? = nil) async throws -> BinEntry {
-        try await postJSON("/djs/bin", body: AddToBinRequest(albumId: albumId, trackTitle: trackTitle))
+
+    /// Add a release to the signed-in DJ's bin. The `201` body is the raw
+    /// inserted `bins` row (`id` / `dj_id` / `album_id` / `track_title`) — not
+    /// a bin entry, and not something any caller needs — so it's deliberately
+    /// left undecoded; the 2xx is the acknowledgement.
+    public func addToBin(albumId: Int, trackTitle: String? = nil) async throws {
+        let body = try JSONCoders.encoder.encode(AddToBinRequest(albumId: albumId, trackTitle: trackTitle))
+        _ = try await sendRaw(path: "/djs/bin", method: "POST", query: [], body: body)
+
     }
     
     public func removeFromBin(albumId: Int, trackTitle: String? = nil) async throws {
@@ -162,6 +195,7 @@ public final class APIClient: Sendable {
         return try decode(T.self, from: data)
     }
     
+
     private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         do {
             return try JSONCoders.decoder.decode(T.self, from: data)
@@ -298,6 +332,14 @@ public final class APIClient: Sendable {
     }
     
     private func fire(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        var request = request
+        // Bearer-only, same as `AuthService.send`: every request here already
+        // carries `Authorization: Bearer <jwt>`, so a cookie jar adds nothing
+        // and costs something. See the full argument there — in short, a stored
+        // better-auth session cookie arms better-auth's global origin check and
+        // gets the *next sign-in* refused with a 403, and it parks a session
+        // credential on disk where `clearLocalSession()` can't reach it.
+        request.httpShouldHandleCookies = false
         do {
             let result = try await session.data(for: request)
             // The server answered (any status code) — we reached it, so the

@@ -97,34 +97,80 @@ enum Fixtures {
         }
         """
 
-    static let djBinResponseJSON = """
-        {
-          "dj_id": 42,
-          "entries": [
-            {
-              "id": 1,
-              "dj_id": 42,
-              "album_id": 100,
-              "added_at": "2025-11-01T22:15:00.000Z",
-              "album_title": "DOGA",
-              "artist_name": "Juana Molina",
-              "code_letters": "MOL",
-              "code_number": 12
-            }
-          ]
-        }
+    /// Wire body for GET /djs/bin — a bare array of the denormalized library
+    /// join `djs.service.getBinFromDB` projects (api.yaml `BinLibraryDetails`).
+    /// No envelope, no `bins.id` / `dj_id` / added-at: this is the shape the
+    /// server actually emits, and the shape dj-site decodes.
+    static let binResponseJSON = """
+        [
+          {
+            "album_id": 200,
+            "album_title": "On Your Own Love Again",
+            "artist_name": "Jessica Pratt",
+            "alphabetical_name": "Pratt, Jessica",
+            "label": "Drag City",
+            "code_letters": "PRA",
+            "code_artist_number": 1,
+            "code_number": 5,
+            "format_name": "LP",
+            "genre_name": "Rock",
+            "legacy_release_id": 88221
+          },
+          {
+            "album_id": 100,
+            "album_title": "DOGA",
+            "artist_name": "Juana Molina",
+            "alphabetical_name": "Molina, Juana",
+            "label": "Sonamos",
+            "code_letters": "MOL",
+            "code_artist_number": 1,
+            "code_number": 12,
+            "format_name": "CD",
+            "genre_name": "Rock",
+            "legacy_release_id": 55123
+          }
+        ]
         """
 
-    static let binEntryJSON = """
+    /// The two `binResponseJSON` rows, decoded. Shared by every suite that
+    /// needs `[BinEntry]` so the bin projection is spelled once — the same
+    /// arrangement as ``catalogRows()``. Preserves wire order (Pratt, then
+    /// Molina), which is what makes it useful for testing the shelf sort.
+    static func binEntries() throws -> [BinEntry] {
+        try JSONCoders.decoder.decode([BinEntry].self, from: Data(binResponseJSON.utf8))
+    }
+
+    /// The Juana Molina / DOGA row from ``binEntries()``, named so a suite that
+    /// wants one representative bin row doesn't re-spell the projection as a
+    /// literal — a literal drifts silently the next time `/djs/bin` gains a
+    /// field (wxyc-shared#344 adds `alphabetical_name` to the schema), whereas
+    /// this decodes from the same wire body every other bin test uses.
+    static func dogaBinEntry() throws -> BinEntry {
+        guard let row = try binEntries().first(where: { $0.albumId == 100 }) else {
+            throw FixtureError.missingRow("bin row album_id 100 (Juana Molina / DOGA)")
+        }
+        return row
+    }
+
+    enum FixtureError: Error, CustomStringConvertible {
+        case missingRow(String)
+
+        var description: String {
+            switch self {
+            case let .missingRow(what): "Fixtures is missing \(what)"
+            }
+        }
+    }
+
+    /// Wire body for POST /djs/bin (201). The server returns the raw inserted
+    /// `bins` row — NOT a bin entry — so the client deliberately doesn't decode
+    /// it. Kept so the addToBin test proves that body can't fail the call.
+    static let addToBinResponseJSON = """
         {
-          "id": 2,
-          "dj_id": 42,
+          "id": 7,
+          "dj_id": "yzT4kQ2mNc8fVb1L",
           "album_id": 200,
-          "added_at": "2025-11-02T12:30:00.000Z",
-          "album_title": "On Your Own Love Again",
-          "artist_name": "Jessica Pratt",
-          "code_letters": "PRA",
-          "code_number": 5
+          "track_title": null
         }
         """
 

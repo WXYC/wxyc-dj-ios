@@ -19,10 +19,28 @@ final class DeviceAuthViewModel {
     init(api: APIClient /*need to put in something for scannedCode too? */) {
         self.api = api
     }
+    
+    enum AuthWorkflowState: Sendable, Equatable {
+        case verifying
+        case readyToApprove
+        case unrecognized(String)
+    }
+    
+    var workflowState: AuthWorkflowState = .verifying
 
     func processCode(scannedCode: String?) -> String? {
-        guard let code = scannedCode else { return nil }
-        return DeviceCodeParser.userCode(fromScanned: code)
+        guard let code = scannedCode else { self.workflowState = .unrecognized("Could not read QR code.")
+            return nil }
+        var userCode = DeviceCodeParser.userCode(fromScanned: code)
+        Task {
+            if let verifyCode = userCode {
+                await verify(userCode: verifyCode)
+            }
+            else {
+                self.workflowState = .unrecognized("Could not read QR code.")
+            }
+        }
+        return userCode
     }
     
     func approve(userCode: String) async -> String {
@@ -46,7 +64,7 @@ final class DeviceAuthViewModel {
                 return "Unknown error. Try again later." // unknown error
             }
         }
-        catch let e as APIError {
+        catch _ as APIError {
             //for transport errors
             return "Network error. Try again later."
         }
@@ -77,7 +95,7 @@ final class DeviceAuthViewModel {
                 return "Unknown error. Try again later." // unknown error
             }
         }
-        catch let e as APIError {
+        catch _ as APIError {
             //for transport errors
             return "Network error"
         }
@@ -86,20 +104,25 @@ final class DeviceAuthViewModel {
         }
     }
     //The QR_LOGIN_HANDOFF mentioned an optional verify option but I'm not quite sure what it means
-    /*
-     func verify() async {
-     guard canApprove else { return }
-     do {
-     await api.verifyDevice(userCode: userCode)
-     
-     
+    
+     func verify(userCode: String) async {
+         workflowState = .verifying
+         
+         do {
+             _ = try await api.verifyDevice(userCode: userCode)
+             workflowState = .readyToApprove
      } catch let e as DeviceAuthActionError {
      //for typed cases
-     switch (e.status, e.code) { … }
+     switch (e.status, e.code) {
+     case (400, .invalidRequest), (400, .expiredToken):
+         workflowState = .unrecognized("This code is invalid or expired. Ask for a fresh QR.")
+     default:
+         workflowState = .unrecognized("Unknown error. Try again later.")
      }
-     catch let e as APIError {
-     //for transport errors
+         
+     } catch {
+         workflowState = .unrecognized("Network error. Try again later.")
      }
      }
-     */
+     
 }
