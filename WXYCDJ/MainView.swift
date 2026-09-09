@@ -23,12 +23,8 @@ import WXYCAPI
 
 struct MainView: View {
     @Environment(AuthService.self) private var auth
-<<<<<<< HEAD
-    
-=======
     @Environment(PlaybackController.self) private var playback
 
->>>>>>> main
     var body: some View {
         TabView {
             Tab("Search", systemImage: "magnifyingglass") {

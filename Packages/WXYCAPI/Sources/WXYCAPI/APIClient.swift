@@ -172,9 +172,6 @@ public final class APIClient: Sendable {
     public func albumInfo(albumId: Int) async throws -> AlbumInfo {
         try await getJSON("/library/info", query: [URLQueryItem(name: "album_id", value: String(albumId))])
     }
-<<<<<<< HEAD
-    
-=======
 
     /// GET /digital-archive/albums/{id}/playback (#417) — the archive player's
     /// playback manifest for `albumId`. A 404 (no bound digital audio) surfaces
@@ -191,7 +188,6 @@ public final class APIClient: Sendable {
         try await getJSON("/digital-archive/albums/\(albumId)/playback", query: [])
     }
 
->>>>>>> main
     /// GET /proxy/metadata/album — LML-enriched release record: year, label,
     /// genres/styles, streaming URLs, tracklist, Discogs/Wikipedia URLs.
     public func albumMetadata(artistName: String, releaseTitle: String?, trackTitle: String? = nil) async throws -> AlbumMetadata {
@@ -313,9 +309,6 @@ public final class APIClient: Sendable {
             throw APIError.decoding(detail: Self.describe(error))
         }
     }
-<<<<<<< HEAD
-    
-=======
 
     /// Renders a `DecodingError` into the string `APIError.decoding(detail:)`
     /// carries — the one deliberate exception to this package's "never
@@ -352,7 +345,6 @@ public final class APIClient: Sendable {
     /// `Context.debugDescription` this whole function exists to drop, so a
     /// future fifth case reaching this arm would silently reopen the channel
     /// through the one branch a test can't exercise to catch it.
->>>>>>> main
     private static func describe(_ error: DecodingError) -> String {
         switch error {
         case .keyNotFound(let key, let ctx):
@@ -516,9 +508,7 @@ public final class APIClient: Sendable {
             throw Self.classifyTransportFailure(error)
         }
     }
-<<<<<<< HEAD
-    
-=======
+
 
     /// The classification shared by every site in this file that discards a
     /// raw, non-`APIError` transport error into this enum: ``fire(_:)``'s
@@ -536,7 +526,6 @@ public final class APIClient: Sendable {
             : .network(error.localizedDescription)
     }
 
->>>>>>> main
     private func currentJWT() async throws -> String {
         do {
             return try await authService.currentJWT()
