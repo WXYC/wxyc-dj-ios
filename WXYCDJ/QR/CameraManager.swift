@@ -2,13 +2,14 @@
 //  CameraManager.swift
 //  WXYCDJ
 //
+//  Manages AVCaptureSession lifecycle, camera authorization, and QR metadata extraction.
+//
 //  Created by Meira Volk on 8/7/26.
+//  Copyright © 2026 WXYC. All rights reserved.
 //
 
 import AVFoundation
 import SwiftUI
-import Combine
-
 
 @MainActor
 @Observable
@@ -18,112 +19,113 @@ class CameraManager {
     var authorizationStatus: AVAuthorizationStatus = .notDetermined
     
     private let cameraService = CameraService()
-    /*
-    init(capturedCode: String? = nil, isSessionRunning: Bool = false, authorizationStatus: AVAuthorizationStatus, session: AVCaptureSession) {
-        self.capturedCode = capturedCode
-        self.isSessionRunning = isSessionRunning
-        self.authorizationStatus = authorizationStatus
-        self.session = session
-    }
-     */
     
     var session: AVCaptureSession {
         cameraService.session
     }
     
     func checkAuthorization() {
-        Task {
-            let status = AVCaptureDevice.authorizationStatus(for: .video)
-            switch status {
-            case .authorized:
-                self.authorizationStatus = .authorized
-                self.startCamera()
-                
-            case .notDetermined:
-                self.authorizationStatus = .notDetermined
-                
-                // Using the modern async version eliminates the closure and 'self' errors
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        self.authorizationStatus = status
+        
+        switch status {
+        case .authorized:
+            self.startCamera()
+            
+        case .notDetermined:
+            Task {
                 let granted = await AVCaptureDevice.requestAccess(for: .video)
                 self.authorizationStatus = granted ? .authorized : .denied
                 if granted {
                     self.startCamera()
                 }
-                
-            case .denied, .restricted:
-                self.authorizationStatus = .denied
-            @unknown default:
-                self.authorizationStatus = .denied
+            }
+            
+        case .denied, .restricted:
+            self.authorizationStatus = .denied
+            
+        @unknown default:
+            self.authorizationStatus = .denied
+        }
+    }
+    
+    func startCamera() {
+        Task {
+            let success = await cameraService.setupAndStartSession { [weak self] resultString in
+                Task { @MainActor in
+                    self?.capturedCode = resultString
+                }
+            }
+            if success {
+                self.isSessionRunning = true
             }
         }
     }
     
-    private func startCamera() {
+    func stopCamera() {
         Task {
-            // Create a stream to yield results. The continuation is inherently Sendable.
-            let stream = AsyncStream<String> { continuation in
-                Task {
-                    // Pass a closure that ONLY captures the continuation, not 'self'
-                    let success = await cameraService.setupSession { resultString in
-                        continuation.yield(resultString)
-                    }
-                    
-                    if success {
-                        await cameraService.startSession()
-                        // Ensure we update the Published property on the MainActor
-                        await MainActor.run {
-                            self.isSessionRunning = true
-                        }
-                    }
-                }
-            }
-            
-            // Loop over the stream safely on the MainActor
-            for await code in stream {
-                self.capturedCode = code
-            }
+            await cameraService.stopSession()
+            self.isSessionRunning = false
         }
     }
 }
 
-
 actor CameraService {
     nonisolated(unsafe) let session = AVCaptureSession()
-    var qrOutput = AVCaptureMetadataOutput()
-    private let metadataObjectsQueue = DispatchQueue(label: "metadata objects queue")
-    
+    private let qrOutput = AVCaptureMetadataOutput()
+    private let metadataObjectsQueue = DispatchQueue(label: "org.wxyc.dj.metadataObjectsQueue")
     private var scannerDelegate: QRScannerDelegate?
+    private var isConfigured = false
     
-    func setupSession(onResult: @escaping @Sendable (String) -> Void) -> Bool {
-        session.beginConfiguration()
-        session.sessionPreset = .high
+    func setupAndStartSession(onResult: @escaping @Sendable (String) -> Void) -> Bool {
+        let delegate = QRScannerDelegate(onResult: onResult)
+        self.scannerDelegate = delegate
         
-        guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
-              let input = try? AVCaptureDeviceInput(device: camera),
-              session.canAddInput(input) else {
+        if !isConfigured {
+            session.beginConfiguration()
+            session.sessionPreset = .high
+            
+            let device: AVCaptureDevice? = {
+                if let backCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) {
+                    return backCamera
+                }
+                return AVCaptureDevice.DiscoverySession(
+                    deviceTypes: [.builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera, .builtInWideAngleCamera],
+                    mediaType: .video,
+                    position: .back
+                ).devices.first
+            }()
+            
+            guard let camera = device,
+                  let input = try? AVCaptureDeviceInput(device: camera),
+                  session.canAddInput(input) else {
+                session.commitConfiguration()
+                return false
+            }
+            
+            session.addInput(input)
+            
+            if session.canAddOutput(qrOutput) {
+                session.addOutput(qrOutput)
+                qrOutput.setMetadataObjectsDelegate(delegate, queue: metadataObjectsQueue)
+                if qrOutput.availableMetadataObjectTypes.contains(.qr) {
+                    qrOutput.metadataObjectTypes = [.qr]
+                }
+            }
+            
             session.commitConfiguration()
-            return false
-        }
-        
-        session.addInput(input)
-        
-        if session.canAddOutput(qrOutput) {
-            session.addOutput(qrOutput)
-            
-            let delegate = QRScannerDelegate(onResult: onResult)
-            self.scannerDelegate = delegate
-            
+            isConfigured = true
+        } else {
             qrOutput.setMetadataObjectsDelegate(delegate, queue: metadataObjectsQueue)
-            qrOutput.metadataObjectTypes = [.qr]
+            if qrOutput.availableMetadataObjectTypes.contains(.qr) {
+                qrOutput.metadataObjectTypes = [.qr]
+            }
         }
         
-        session.commitConfiguration()
-        return true
-    }
-    
-    func startSession() {
         if !session.isRunning {
             session.startRunning()
         }
+        return true
     }
     
     func stopSession() {
@@ -142,11 +144,10 @@ final class QRScannerDelegate: NSObject, AVCaptureMetadataOutputObjectsDelegate,
     }
     
     func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
-        guard !metadataObjects.isEmpty,
-              let metadataObj = metadataObjects[0] as? AVMetadataMachineReadableCodeObject,
+        guard let metadataObj = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
               metadataObj.type == .qr,
-              let stringValue = metadataObj.stringValue else {
-            onResult("No QR code is detected")
+              let stringValue = metadataObj.stringValue,
+              !stringValue.isEmpty else {
             return
         }
         
@@ -155,109 +156,4 @@ final class QRScannerDelegate: NSObject, AVCaptureMetadataOutputObjectsDelegate,
 }
 
 
-/*
-@Observable
-class CameraManager: NSObject, ObservableObject, AVCaptureMetadataOutputObjectsDelegate{
-    var capturedCode: String?
-    var isSessionRunning = false
-    var authorizationStatus: AVAuthorizationStatus = .notDetermined
-    //AVFoundation Components
-    let session = AVCaptureSession()
-    private let metadataObjectsQueue = DispatchQueue(label: "metadata objects queue", attributes: [], target: nil)
-    let qrOutput = AVCaptureMetadataOutput()
-    
-    private var currentInput: AVCaptureDeviceInput?
-    
-    private let sessionQueue = DispatchQueue(label: "com.customcamera.sesssionQueue")
-    
-    override init() {
-        super.init()
-    }
-    func checkAuthorization () {
-        switch AVCaptureDevice.authorizationStatus(for: .video){
-        case .authorized:
-            authorizationStatus = .authorized
-            setupSession()
-            
-        case .notDetermined:
-            authorizationStatus = .notDetermined
-            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
-                DispatchQueue.main.async {
-                    self?.authorizationStatus = granted ? .authorized : .denied
-                    if granted {
-                        self?.setupSession()
-                    }
-                }
-                
-            }
-        case .denied, .restricted:
-            authorizationStatus = .denied
-        @unknown default:
-            authorizationStatus = .denied
-        }
-    }
-    //Config AVSetup
-    private func setupSession() {
-        sessionQueue.async {
-            [weak self] in
-            guard let self = self else {return}
-            
-            //set session preset
-            self.session.beginConfiguration()
-            self.session.sessionPreset = .high
-            
-            // Set delegate and use the default dispatch queue to execute the call back
-            //camera input
-            
-            guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back), let input = try? AVCaptureDeviceInput(device: camera) else {
-                print("Failed to access camera")
-                self.session.commitConfiguration()
-                return
-            }
-            if self.session.canAddInput(input){
-                self.session.addInput(input)
-                self.currentInput = input
-            }
-            // add qr output
-            
-            if self.session.canAddOutput(self.qrOutput){
-                self.session.addOutput(self.qrOutput)
-                //May need to add more here from appcoda
-                qrOutput.setMetadataObjectsDelegate(self, queue: metadataObjectsQueue)
-                qrOutput.metadataObjectTypes = [AVMetadataObject.ObjectType.qr]
-            }
-            self.session.commitConfiguration()
-            
-            //start the session
-            
-            self.session.startRunning()
-                       
-            DispatchQueue.main.async {
-                self.isSessionRunning = self.session.isRunning
-            }
-        }
-    }
-    
-       nonisolated func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection){
-        
-        Task { @MainActor in
-            // Checks metadataObjects array is not empty
-            
-            if metadataObjects.count == 0 {
-                self.capturedCode = "No QR code is detected"
-                return
-            }
-            // Safely unwrap the metadata object
-            guard let metadataObj = metadataObjects[0] as? AVMetadataMachineReadableCodeObject else { return }
-           
-                if metadataObj.type == .qr {
-                    // If a string value exists, update your @Published property
-                    if let metadataString = metadataObj.stringValue {
-                        self.capturedCode = metadataString
-                    }
-                }
-            
-        }
-    }
-}
-*/
+

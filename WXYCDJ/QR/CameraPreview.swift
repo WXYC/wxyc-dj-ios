@@ -2,7 +2,10 @@
 //  CameraPreview.swift
 //  WXYCDJ
 //
+//  UIViewRepresentable wrapper for AVCaptureVideoPreviewLayer.
+//
 //  Created by Meira Volk on 8/7/26.
+//  Copyright © 2026 WXYC. All rights reserved.
 //
 
 import SwiftUI
@@ -11,32 +14,28 @@ import AVFoundation
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
     
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView(frame: .zero)
+    func makeUIView(context: Context) -> VideoPreviewUIView {
+        let view = VideoPreviewUIView()
         view.backgroundColor = .black
-        
-        let previewLayer = AVCaptureVideoPreviewLayer(session: session)
-        previewLayer.videoGravity = .resizeAspectFill
-        previewLayer.frame = view.bounds
-        view.layer.addSublayer(previewLayer)
-        context.coordinator.previewLayer = previewLayer
-        
+        view.videoPreviewLayer.session = session
+        view.videoPreviewLayer.videoGravity = .resizeAspectFill
         return view
+    }
+    
+    func updateUIView(_ uiView: VideoPreviewUIView, context: Context) {
+        if uiView.videoPreviewLayer.session != session {
+            uiView.videoPreviewLayer.session = session
         }
-        
-        func  updateUIView(_ uiView: UIView, context: Context) {
-            if let previewLayer = context.coordinator.previewLayer {
-                DispatchQueue.main.async {
-                    previewLayer.frame = uiView.bounds
-                }
-            }
-        }
-        //communicates changes in view to rest of Swift UI interface
-        func makeCoordinator() -> Coordinator {
-            Coordinator()
-        }
-        
-        class Coordinator {
-            var previewLayer: AVCaptureVideoPreviewLayer?
-        }
+    }
 }
+
+final class VideoPreviewUIView: UIView {
+    override class var layerClass: AnyClass {
+        AVCaptureVideoPreviewLayer.self
+    }
+    
+    var videoPreviewLayer: AVCaptureVideoPreviewLayer {
+        layer as! AVCaptureVideoPreviewLayer
+    }
+}
+

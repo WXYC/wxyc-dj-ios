@@ -2,7 +2,10 @@
 //  CameraView.swift
 //  WXYCDJ
 //
+//  Renders the live camera viewfinder and reticle overlay for scanning QR codes.
+//
 //  Created by Meira Volk on 8/7/26.
+//  Copyright © 2026 WXYC. All rights reserved.
 //
 
 import SwiftUI
@@ -30,10 +33,11 @@ struct CameraView: View {
                     // Top Bar: Cancel Button
                     HStack {
                         Button("Cancel") {
+                            cameraManager.stopCamera()
                             onDismiss()
                         }
                         .font(.headline)
-                        .foregroundColor(.white)
+                        .foregroundStyle(.white)
                         .padding(.horizontal, 24)
                         .padding(.top, 24)
                         
@@ -50,31 +54,33 @@ struct CameraView: View {
                     VStack(spacing: 8) {
                         Text("Point at the QR on **dj.wxyc.org**")
                             .font(.system(size: 16, weight: .regular))
-                            .foregroundColor(.white)
+                            .foregroundStyle(.white)
                     }
                     .padding(.top, 40)
                     
                     Spacer()
-                    Spacer() // Extra spacer to elevate the center slightly
+                    Spacer()
                 }
             }
         }
         .onAppear {
             cameraManager.checkAuthorization()
         }
-        .onChange(of: cameraManager.capturedCode) { oldCode, newCode in
-            if let metadataString = newCode {
-                if metadataString != "No QR code is detected" {
-                    scannedCode = metadataString
-                    onDismiss()
-                }
+        .onDisappear {
+            cameraManager.stopCamera()
+        }
+        .onChange(of: cameraManager.capturedCode) { _, newCode in
+            if let metadataString = newCode, !metadataString.isEmpty, metadataString != "No QR code is detected" {
+                scannedCode = metadataString
+                cameraManager.stopCamera()
+                onDismiss()
             }
         }
     }
     
     // Extracted fallback view for permission handling
     @ViewBuilder
-    var fallbackView: some View {
+    private var fallbackView: some View {
         VStack {
             Image(systemName: "camera.fill")
                 .font(.largeTitle)
@@ -86,6 +92,7 @@ struct CameraView: View {
             
             if cameraManager.authorizationStatus == .denied {
                 Text("Please enable camera in settings")
+                    .foregroundStyle(.gray)
                     .padding(.top, 16)
                 
                 Button("Open Settings") {
@@ -131,7 +138,7 @@ struct ScannerReticle: View {
             path.addLine(to: CGPoint(x: 0, y: size - length))
         }
         .stroke(Color.white, style: StrokeStyle(lineWidth: 5, lineCap: .round))
-        // Optional dark shadow to increase contrast against bright environments
         .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
     }
 }
+
