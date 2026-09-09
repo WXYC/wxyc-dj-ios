@@ -85,8 +85,8 @@ struct DeviceAuthView: View {
                     Text(viewModel.hostDomain)
                         .font(.system(size: 19, weight: .bold))
                         .foregroundStyle(.primary)
-                    
-                    Text("Studio computer · Chrome · Requested \(elapsedSeconds)s ago")
+                    //TO-DO: Add browser info, such as Macbook pro · Firefox"
+                    Text("Requested \(elapsedSeconds)s ago")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
@@ -346,7 +346,7 @@ struct DeviceAuthSuccessView: View {
                         .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(.primary)
 
-                    Text("\(domain) is now signed in as **\(username)** on the studio computer.")
+                    Text("\(domain) is now signed in as **\(username)** on your browser.")
                         .font(.system(size: 15))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
