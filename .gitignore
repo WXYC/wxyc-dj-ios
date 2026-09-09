@@ -11,7 +11,12 @@ xcuserdata/
 *.xcworkspace/xcuserdata/
 *.xcodeproj/xcuserdata/
 *.xcodeproj/project.xcworkspace/xcuserdata/
-*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+# Matching the directory itself (no trailing /*) excludes the directory, and a
+# bare negation below it is a no-op -- git never descends into an excluded
+# directory to find what to un-ignore. Matching contents instead lets the
+# Package.resolved negation below actually take effect.
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/*
+!WXYCDJ.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 
 # Swift Package Manager
 .build/
@@ -28,3 +33,10 @@ Packages/*/.build/
 
 # Local development worktrees (see the org CLAUDE.md git workflow)
 .worktrees/
+
+# Sentry CLI config (contains an auth token) -- see scripts/upload-debug-symbols.sh
+.sentryclirc
+
+# Tools a future release-pipeline installer might vendor into the checkout
+# (sentry-cli, etc). Binaries, per-machine, reinstalled on demand.
+.ci-tools/

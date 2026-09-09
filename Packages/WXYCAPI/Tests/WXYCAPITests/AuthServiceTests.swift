@@ -234,6 +234,37 @@ struct AuthServiceTests {
         #expect(try storage.load(.sessionToken) == nil)
     }
 
+    /// A 429 is a rate limit, not a credential failure and not a backend fault.
+    ///
+    /// This is the **password** route deliberately, even though the case arrived
+    /// with issue #100's OTP work: `establishSession` classifies status for every
+    /// credential route, so the 429 arm is shared, and pinning it only on the new
+    /// route would leave the change to the shipped one uncovered. Before #100 this
+    /// fell to `.serverFailure` and rendered "Server error (429)", which reads as
+    /// something broken server-side that the DJ can only wait out blindly.
+    ///
+    /// Reachable in ordinary use: the limiter is keyed on `X-Real-IP` at 10 per
+    /// 15 minutes, and the control room shares one egress address.
+    @Test func rateLimitedSignInSaysSoRatherThanReadingAsAServerFault() async throws {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+
+        // The Express limiter's body is `{error: …}`, which APIErrorResponse
+        // (required `message`) can't decode — so the copy must not depend on it.
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 429,
+            body: Data(#"{"error":"Too many requests, please try again later."}"#.utf8)
+        ))
+
+        await service.signIn(identifier: "juana", password: "pw")
+
+        #expect(service.state == .signedOut)
+        #expect(service.lastError == .rateLimited)
+        #expect(service.lastError?.localizedMessage == "Too many attempts. Wait a few minutes and try again.")
+        #expect(try storage.load(.sessionToken) == nil)
+    }
+
     @Test func signInWithFailedJWTExchangeLeavesNoStoredToken() async throws {
         // The two-leg handshake: /auth/sign-in/username succeeds (session token
         // issued + persisted), then /auth/token returns 401 — the session bearer
@@ -1241,6 +1272,78 @@ struct AuthServiceTests {
         // The error still propagated to restoreSession's transient arm (it was
         // rethrown, not swallowed): with no grace anchors persisted, that arm
         // lands `.signedOut`.
+        #expect(service.state == .signedOut)
+    }
+
+    // MARK: - Transport classification (issue #106)
+
+    /// A `RequestSession` whose response is not an `HTTPURLResponse`,
+    /// exercising `postJSON`'s "Non-HTTP response" guard — which must stay
+    /// `.network`, never `.offline`, per the issue-#106 split: a response
+    /// that reaches the HTTP layer without a status code is a client-side
+    /// defect, not evidence of being offline.
+    private struct NonHTTPResponseSession: RequestSession {
+        func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+            (Data(), URLResponse(url: request.url!, mimeType: nil, expectedContentLength: 0, textEncodingName: nil))
+        }
+    }
+
+    @Test func signInConnectivityTransportFailureFlattensToOffline() async throws {
+        // completeSignIn's leg-1 catch-all: a connectivity-class URLError
+        // thrown before any response arrives must classify as `.offline`, not
+        // the pre-#106 blanket `.network` — being offline is a supported mode
+        // (the on-device catalog clone, issues #58/#81), never a defect worth
+        // reporting.
+        let session = StubRequestSession()
+        let service = AuthService(configuration: Self.config, storage: InMemoryTokenStorage(), session: session)
+        session.enqueue(failure: URLError(.notConnectedToInternet))
+
+        await service.signIn(identifier: "dj", password: "pw")
+
+        guard case .offline = service.lastError else {
+            Issue.record("expected .offline, got \(String(describing: service.lastError))")
+            return
+        }
+        #expect(service.state == .signedOut)
+        // Same user-facing wording `.network` always rendered — the split
+        // changes only which case a caller matches on, not what's on screen.
+        #expect(service.lastError?.localizedMessage.hasPrefix("Network error:") == true)
+    }
+
+    @Test func signInNonConnectivityTransportFailureStaysNetwork() async throws {
+        // The complement: a non-URLError (or a resource-level URLError, per
+        // ConnectivityErrorClassification) transport throw at the same
+        // flatten site is a genuine defect and must stay `.network`.
+        let session = StubRequestSession()
+        let service = AuthService(configuration: Self.config, storage: InMemoryTokenStorage(), session: session)
+        session.enqueue(failure: CocoaError(.fileReadCorruptFile))
+
+        await service.signIn(identifier: "dj", password: "pw")
+
+        guard case .network = service.lastError else {
+            Issue.record("expected .network, got \(String(describing: service.lastError))")
+            return
+        }
+        #expect(service.state == .signedOut)
+    }
+
+    @Test func signInWithNonHTTPResponseStaysNetworkNotOffline() async throws {
+        // postJSON's own "Non-HTTP response" throw already constructs
+        // `AuthError.network` directly, so it reaches completeSignIn's
+        // `catch let error as AuthError` arm — never the generic catch-all
+        // this issue changes — and must remain `.network` untouched.
+        let service = AuthService(
+            configuration: Self.config,
+            storage: InMemoryTokenStorage(),
+            session: NonHTTPResponseSession()
+        )
+
+        await service.signIn(identifier: "dj", password: "pw")
+
+        guard case .network = service.lastError else {
+            Issue.record("expected .network, got \(String(describing: service.lastError))")
+            return
+        }
         #expect(service.state == .signedOut)
     }
 }

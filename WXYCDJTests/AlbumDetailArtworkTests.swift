@@ -201,6 +201,48 @@ struct AlbumDetailArtworkTests {
         #expect(!AlbumDetailView.shouldReadCloneForArtwork(fallback: Self.dogaSearchRow()))
     }
 
+    // Issue #136 made `loadAll`'s clone read unconditional so the digital-audio
+    // badge has a source, and `artworkCloneRow` is what keeps artwork seeing
+    // only what it saw before. The `infoFailed` arm below is the one that got
+    // missed on the first pass: the pre-#136 code populated `cloneRow` on the
+    // `infoFailed` retry too, so gating on `shouldReadCloneForArtwork` alone
+    // narrowed the candidate list rather than preserving it.
+    @Test("artwork ignores the clone when the search row already carries a cover")
+    func artworkCloneHiddenBehindACoveredRow() {
+        #expect(
+            AlbumDetailView.artworkCloneRow(
+                cloneRow: Self.dogaCloneRow(),
+                fallback: Self.dogaSearchRow(),
+                infoFailed: false
+            ) == nil
+        )
+    }
+
+    @Test("artwork sees the clone when the search row is artless")
+    func artworkCloneVisibleBehindAnArtlessRow() {
+        #expect(
+            AlbumDetailView.artworkCloneRow(
+                cloneRow: Self.dogaCloneRow(),
+                fallback: Self.dogaSearchRow(artworkURL: nil),
+                infoFailed: false
+            ) != nil
+        )
+    }
+
+    @Test("artwork still sees the clone when /library/info failed under a cover-bearing row")
+    func artworkCloneVisibleWhenInfoFailed() {
+        // Drop `|| infoFailed` from `artworkCloneRow` and this is the test that
+        // fails: a dead search-row cover would then fall through to LML's
+        // label logo instead of the clone.
+        #expect(
+            AlbumDetailView.artworkCloneRow(
+                cloneRow: Self.dogaCloneRow(),
+                fallback: Self.dogaSearchRow(),
+                infoFailed: true
+            ) != nil
+        )
+    }
+
     @Test("no artwork anywhere yields nil")
     func noneYieldsNil() throws {
         let url = AlbumDetailView.preferredArtworkURL(
@@ -355,5 +397,74 @@ struct AlbumDetailArtworkTests {
             metadata: try Self.labelLogoMetadata()
         )
         #expect(url == Self.cloneArt)
+    }
+
+    // MARK: Issue #108 — artworkRetiredSource classification
+
+    // The pure decision behind `artwork_url_retired`'s `source` property.
+    // Walks the identical precedence `preferredArtworkURL` does, so a URL
+    // that matches more than one source (the search row and the clone
+    // commonly share a value) attributes to the earliest source in that
+    // order — matching which source's URL a DJ would actually have been
+    // shown when it failed to load.
+
+    @Test("a failed info URL classifies as info")
+    func retiredInfoURLClassifiesAsInfo() throws {
+        let source = AlbumDetailView.artworkRetiredSource(
+            for: Self.infoArt,
+            info: try Self.dogaInfo(artworkURL: Self.infoArt),
+            fallback: Self.dogaSearchRow(),
+            cloneRow: Self.dogaCloneRow(),
+            metadata: try Self.labelLogoMetadata()
+        )
+        #expect(source == .info)
+    }
+
+    @Test("a failed search-row URL classifies as search_row")
+    func retiredSearchRowURLClassifiesAsSearchRow() throws {
+        let source = AlbumDetailView.artworkRetiredSource(
+            for: Self.searchArt,
+            info: nil,
+            fallback: Self.dogaSearchRow(),
+            cloneRow: Self.dogaCloneRow(),
+            metadata: try Self.labelLogoMetadata()
+        )
+        #expect(source == .searchRow)
+    }
+
+    @Test("a failed clone URL classifies as clone")
+    func retiredCloneURLClassifiesAsClone() throws {
+        let source = AlbumDetailView.artworkRetiredSource(
+            for: Self.cloneArt,
+            info: nil,
+            fallback: nil,
+            cloneRow: Self.dogaCloneRow(),
+            metadata: try Self.labelLogoMetadata()
+        )
+        #expect(source == .clone)
+    }
+
+    @Test("a failed LML URL classifies as lml")
+    func retiredLMLURLClassifiesAsLML() throws {
+        let source = AlbumDetailView.artworkRetiredSource(
+            for: Self.lmlArt,
+            info: nil,
+            fallback: nil,
+            cloneRow: nil,
+            metadata: try Self.labelLogoMetadata()
+        )
+        #expect(source == .lml)
+    }
+
+    @Test("a URL matching no live candidate classifies as nil")
+    func retiredUnknownURLClassifiesAsNil() throws {
+        let source = AlbumDetailView.artworkRetiredSource(
+            for: URL(string: "https://unrelated.example/cover.jpg")!,
+            info: try Self.dogaInfo(artworkURL: Self.infoArt),
+            fallback: Self.dogaSearchRow(),
+            cloneRow: Self.dogaCloneRow(),
+            metadata: try Self.labelLogoMetadata()
+        )
+        #expect(source == nil)
     }
 }

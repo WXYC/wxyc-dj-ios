@@ -61,6 +61,36 @@ enum SignInIdentifier: Equatable, Sendable {
         self = raw.contains("@") ? .email(raw) : .username(raw)
     }
 
+    /// The DJ's own typed email, when that is what they typed (issue #100).
+    ///
+    /// The same `@` classification answers a second question: whether the app
+    /// already knows the DJ's email, or had to *ask the server for it*.
+    /// `POST /auth/wxyc/lookup-email` resolves a username to an address — a call
+    /// Backend-Service documents as "a mild enumeration vector", accepted because
+    /// it is rate-limited and no worse than the existing sign-in leak. Rendering
+    /// its answer would take a vector bounded by request rate and put it on
+    /// screen, so a looked-up address is never displayed; only one the DJ typed
+    /// themselves is. dj-site draws the identical line in `LoginFormSwitcher.tsx`.
+    ///
+    /// This lives here, beside the routing decision, rather than in the view
+    /// model, so the `@` predicate is applied in exactly one place — the same
+    /// argument this type's doc comment makes against forking `isValidEmail`.
+    /// `AuthService.sendLoginCode` hands the result out as
+    /// ``LoginCodeDestination/typedEmail`` so the app layer never needs to see
+    /// this (internal) type.
+    ///
+    /// Returns the *fact* — "the DJ typed this address" — rather than display
+    /// copy. An earlier version returned the literal "your registered email" for
+    /// the username case, which put a user-facing English string in the
+    /// networking package where a second surface couldn't reword it. The nil is
+    /// the same information and the wording belongs to whoever renders it.
+    var typedEmail: String? {
+        switch self {
+        case .email(let email): email
+        case .username: nil
+        }
+    }
+
     /// Path component appended to ``WXYCAPIConfiguration/authBaseURL``.
     var path: String {
         switch self {

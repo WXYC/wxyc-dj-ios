@@ -105,6 +105,37 @@ public actor SQLiteCatalogStore: CatalogStore {
         }
     }
 
+    /// One `WHERE id IN (…)` query rather than the protocol default's N
+    /// sequential `row(id:)` awaits — the digital-archive badge's one batch
+    /// read per search-result page (issue #136). Empty `ids` skips the query
+    /// entirely (SQLite tolerates `IN ()` as always-false, but there's nothing
+    /// to ask for).
+    public func rows(ids: [Int]) throws -> [Int: CatalogRow] {
+        guard !ids.isEmpty else { return [:] }
+        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
+        let stmt = try Self.prepare(db, "SELECT id, row FROM catalog WHERE id IN (\(placeholders));")
+        defer { sqlite3_finalize(stmt) }
+        for (offset, id) in ids.enumerated() {
+            guard sqlite3_bind_int64(stmt, Int32(offset + 1), Int64(id)) == SQLITE_OK else {
+                throw Self.error(db, "bind id \(offset)")
+            }
+        }
+        var results: [Int: CatalogRow] = [:]
+        rowLoop: while true {
+            switch sqlite3_step(stmt) {
+            case SQLITE_ROW:
+                let id = Int(sqlite3_column_int64(stmt, 0))
+                guard let bytes = sqlite3_column_blob(stmt, 1) else { continue }
+                let count = Int(sqlite3_column_bytes(stmt, 1))
+                let data = Data(bytes: bytes, count: count)
+                results[id] = try JSONCoders.decoder.decode(CatalogRow.self, from: data)
+            case SQLITE_DONE: break rowLoop
+            default: throw Self.error(db, "step select ids")
+            }
+        }
+        return results
+    }
+
     public func count() throws -> Int {
         let stmt = try Self.prepare(db, "SELECT COUNT(*) FROM catalog;")
         defer { sqlite3_finalize(stmt) }

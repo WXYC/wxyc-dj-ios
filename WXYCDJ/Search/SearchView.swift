@@ -65,14 +65,19 @@ struct SearchView: View {
         // warning; keying on AlbumRoute also lets the in-app tap and the
         // deep-link push (step 7) share one destination. (issue #19 step 6)
         .navigationDestination(for: AlbumRoute.self) { route in
-            AlbumDetailView(albumId: route.id, fallback: route.fallback)
+            AlbumDetailView(albumId: route.id, fallback: route.fallback, origin: .search)
         }
         .navigationTitle("Library")
         .searchable(text: $searchText, prompt: "Artist or album")
         .toolbar { signOutMenu }
         .onAppear {
             if viewModel == nil {
-                viewModel = SearchViewModel(search: deps.librarySearch, api: deps.api)
+                viewModel = SearchViewModel(
+                    search: deps.librarySearch,
+                    api: deps.api,
+                    catalogStore: deps.catalogStore,
+                    analytics: deps.analytics
+                )
             }
         }
         .sheet(isPresented: $showScanner, content: {
@@ -189,7 +194,7 @@ struct SearchView: View {
                         // Carry the live row as the route's fallback so the detail
                         // header renders instantly while /library/info + LML load.
                         NavigationLink(value: AlbumRoute(id: row.id, fallback: row)) {
-                            SearchResultRow(row: row) {
+                            SearchResultRow(row: row, hasDigitalAudio: viewModel.digitalAudioIDs.contains(row.id)) {
                                 Task { _ = await viewModel.addToBin(row) }
                             }
                         }

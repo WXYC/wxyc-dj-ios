@@ -2,9 +2,9 @@
 //  LoginView.swift
 //  WXYCDJ
 //
-//  Sign-in form: one identifier field (username or email, as dj.wxyc.org
-//  accepts) plus a password. Delegates the call to LoginViewModel; surfaces
-//  any AuthError inline.
+//  Sign-in screen. Leads with the mailed one-time code — one identifier field
+//  and "Send login code" — and keeps the password form a tap away. Delegates
+//  to LoginViewModel; surfaces failures inline via its coalesced error.
 //
 //  Created by Jake on 5/14/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -15,6 +15,11 @@ import WXYCAPI
 
 struct LoginView: View {
     @Environment(AuthService.self) private var auth
+    // Issue #106: the real error reporter lives on the composition root, not
+    // AuthService — LoginViewModel needs it to report a sign-in defect
+    // (AuthService itself never throws to this layer; it only records into
+    // `lastError`, so the view model is the capture point).
+    @Environment(AppDependencies.self) private var deps
     @State private var viewModel: LoginViewModel?
     @FocusState private var focusedField: Field?
 
@@ -24,7 +29,7 @@ struct LoginView: View {
         NavigationStack {
             Group {
                 if let viewModel {
-                    formBody(viewModel: viewModel)
+                    stage(viewModel: viewModel)
                 } else {
                     ProgressView()
                 }
@@ -33,21 +38,71 @@ struct LoginView: View {
         }
         .onAppear {
             if viewModel == nil {
-                viewModel = LoginViewModel(auth: auth)
+                viewModel = LoginViewModel(auth: auth, reporter: deps.errorReporter, analytics: deps.analytics)
             }
         }
     }
 
     @ViewBuilder
-    private func formBody(viewModel: LoginViewModel) -> some View {
+    private func stage(viewModel: LoginViewModel) -> some View {
+        switch viewModel.stage {
+        case .identifier:
+            codeRequestForm(viewModel: viewModel)
+        case .awaitingCode(let destination):
+            OTPCodeView(viewModel: viewModel, destination: destination)
+        case .password:
+            passwordForm(viewModel: viewModel)
+        }
+    }
+
+    // MARK: - The path the screen leads with
+
+    @ViewBuilder
+    private func codeRequestForm(viewModel: LoginViewModel) -> some View {
         @Bindable var viewModel = viewModel
         Form {
             Section {
-                // One field for either credential, as dj.wxyc.org has: an
-                // email routes to a different better-auth endpoint than a
-                // username (issue #97), but that is AuthService's business.
-                // The email keyboard puts `@` and `.` on the primary layer and
-                // serves a username just as well.
+                // One field for either credential, as dj.wxyc.org has. The email
+                // keyboard puts `@` and `.` on the primary layer and serves a
+                // username just as well.
+                TextField("Username or email", text: $viewModel.identifier)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textContentType(.username)
+                    .keyboardType(.emailAddress)
+                    .submitLabel(.go)
+                    .focused($focusedField, equals: .identifier)
+                    .onSubmit { Task { await viewModel.requestCode() } }
+            } header: {
+                Text("Sign in to WXYC DJ")
+            } footer: {
+                Text("We'll send a 6-digit code to your registered email.")
+            }
+
+            SignInErrorSection(message: viewModel.displayedError)
+
+            Section {
+                PrimaryActionButton(
+                    title: "Send login code",
+                    isBusy: viewModel.isSendingCode,
+                    isEnabled: viewModel.canRequestCode
+                ) { await viewModel.requestCode() }
+
+                Button("Sign in with password instead") {
+                    viewModel.usePassword()
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    // MARK: - The secondary path
+
+    @ViewBuilder
+    private func passwordForm(viewModel: LoginViewModel) -> some View {
+        @Bindable var viewModel = viewModel
+        Form {
+            Section {
                 TextField("Username or email", text: $viewModel.identifier)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -65,26 +120,19 @@ struct LoginView: View {
                 Text("dj.wxyc.org credentials")
             }
 
-            if let error = auth.lastError {
-                Section {
-                    Text(error.localizedMessage)
-                        .foregroundStyle(.red)
-                }
-            }
+            SignInErrorSection(message: viewModel.displayedError)
 
             Section {
-                Button {
-                    Task { await viewModel.submit() }
-                } label: {
-                    if case .signingIn = auth.state {
-                        ProgressView()
-                    } else {
-                        Text("Sign In")
-                            .frame(maxWidth: .infinity)
-                            .bold()
-                    }
+                PrimaryActionButton(
+                    title: "Sign In",
+                    isBusy: auth.state == .signingIn,
+                    isEnabled: viewModel.canSubmit
+                ) { await viewModel.submit() }
+
+                Button("Email me a code instead") {
+                    viewModel.useCode()
                 }
-                .disabled(!viewModel.canSubmit)
+                .frame(maxWidth: .infinity)
             }
         }
     }

@@ -1,0 +1,33 @@
+{
+  "originHash" : "47bb71f373f8cce34adb110be9c1bb48285bbd33b66c62d745589d25c65c5001",
+  "pins" : [
+    {
+      "identity" : "posthog-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/PostHog/posthog-ios.git",
+      "state" : {
+        "revision" : "a437780deee17304deb4a0ee632c44ebc37aa04e",
+        "version" : "3.69.10"
+      }
+    },
+    {
+      "identity" : "sentry-cocoa",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/getsentry/sentry-cocoa.git",
+      "state" : {
+        "revision" : "f196cbb98e0388381d57908f2f5a9bdc385cde68",
+        "version" : "8.58.4"
+      }
+    },
+    {
+      "identity" : "wxyc-swift-auth",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/WXYC/wxyc-swift-auth.git",
+      "state" : {
+        "revision" : "ef2716afe9341bf7c4bdcf2043999199b12fd006",
+        "version" : "0.1.0"
+      }
+    }
+  ],
+  "version" : 3
+}

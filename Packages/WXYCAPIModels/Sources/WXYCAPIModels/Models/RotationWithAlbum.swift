@@ -12,14 +12,14 @@ public struct RotationWithAlbum: Sendable, Codable, Hashable {
     public var id: Int
     public var albumId: Int
     public var rotationBin: RotationBin
-    public var addDate: Date
-    public var killDate: Date?
+    public var addDate: CalendarDate
+    public var killDate: CalendarDate?
     public var albumTitle: String
     public var artistName: String
     public var codeLetters: String
     public var codeNumber: Int
 
-    public init(id: Int, albumId: Int, rotationBin: RotationBin, addDate: Date, killDate: Date? = nil, albumTitle: String, artistName: String, codeLetters: String, codeNumber: Int) {
+    public init(id: Int, albumId: Int, rotationBin: RotationBin, addDate: CalendarDate, killDate: CalendarDate? = nil, albumTitle: String, artistName: String, codeLetters: String, codeNumber: Int) {
         self.id = id
         self.albumId = albumId
         self.rotationBin = rotationBin

@@ -14,6 +14,12 @@ import WXYCAPI
 
 struct SearchResultRow: View {
     let row: AlbumSearchResult
+    /// Whether the on-device catalog clone marks this album as having digital
+    /// audio (issue #136) — a plain value, hydrated once per results page by
+    /// `SearchViewModel`, not a per-row async store read: every other badge
+    /// this row renders is synchronous off the row value, and this one stays
+    /// consistent with that.
+    let hasDigitalAudio: Bool
     let onAdd: () -> Void
     @Environment(AppDependencies.self) private var deps
 
@@ -32,6 +38,15 @@ struct SearchResultRow: View {
                     }
                     if let bin = row.rotationBin {
                         RotationBadge(bin: bin)
+                    }
+                    // Issue #145: the same role gate AlbumDetailView applies
+                    // to its header badge and Play section -- a `member`'s
+                    // JWT role denies `digital_archive` server-side, so
+                    // showing this badge to them would only earn a quiet 403
+                    // on tap. Fail-open (nil/unrecognized roles still show)
+                    // for the reason `DigitalArchiveRoleGate` documents.
+                    if hasDigitalAudio, !DigitalArchiveRoleGate.hidesDigitalAudioBadge(role: currentRole) {
+                        DigitalAudioBadge()
                     }
                 }
                 TrackMatchBadge(hints: row.matchedVia)
@@ -73,6 +88,14 @@ struct SearchResultRow: View {
             .frame(width: 44, height: 44)
             .overlay(Image(systemName: "music.note").foregroundStyle(.secondary))
     }
+
+    /// The decoded JWT role, or `nil` when signed out or in the issue-#53
+    /// pending-JWT window -- mirrors `AlbumDetailView.currentRole`. Read off
+    /// `deps.authService` rather than adding a second `@Environment` key.
+    private var currentRole: String? {
+        if case .signedIn(let payload) = deps.authService.state { return payload?.role }
+        return nil
+    }
 }
 
 struct FormatCapsule: View {
@@ -85,6 +108,22 @@ struct FormatCapsule: View {
             .padding(.vertical, 2)
             .background(.quaternary, in: .capsule)
             .foregroundStyle(.secondary)
+    }
+}
+
+/// "Digital audio available" badge (issue #136) — the on-device catalog
+/// clone's `has_digital_audio` flag, shown on a search row and the detail
+/// header. Purely informational: it decides where the archive player's Play
+/// control appears (WXYC/wxyc-dj-ios#138), not whether it does.
+struct DigitalAudioBadge: View {
+    var body: some View {
+        Image(systemName: "waveform")
+            .font(.caption2.bold())
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(.tint, in: .capsule)
+            .foregroundStyle(.white)
+            .accessibilityLabel("Digital audio available")
     }
 }
 

@@ -190,14 +190,16 @@ struct CatalogSpotlightTests {
         plays: Int? = 34,
         artworkURL: URL? = URL(string: "https://img.discogs.com/doga.jpg"),
         rotationBin: String? = "H",
-        rotationKillDate: String? = "2026-07-01"
+        rotationKillDate: CalendarDate? = day("2026-07-01"),
+        hasDigitalAudio: Bool = false
     ) -> CatalogRow {
         CatalogRow(
             id: id, artistName: artistName, albumTitle: albumTitle,
             codeLetters: codeLetters, codeNumber: codeNumber, codeArtistNumber: codeArtistNumber,
             label: label, genreName: genreName, formatName: formatName,
             onStreaming: onStreaming, plays: plays, artworkURL: artworkURL,
-            rotationBin: rotationBin, rotationKillDate: rotationKillDate
+            rotationBin: rotationBin, rotationKillDate: rotationKillDate,
+            hasDigitalAudio: hasDigitalAudio
         )
     }
 
@@ -229,9 +231,12 @@ struct CatalogSpotlightTests {
         #expect(CatalogSpotlight.fingerprint(for: Self.fingerprintRow(onStreaming: false)) == base)
         #expect(CatalogSpotlight.fingerprint(for: Self.fingerprintRow(plays: 9_999)) == base)
         #expect(CatalogSpotlight.fingerprint(for: Self.fingerprintRow(rotationBin: "L")) == base)
-        #expect(CatalogSpotlight.fingerprint(for: Self.fingerprintRow(rotationKillDate: "2099-01-01")) == base)
+        #expect(CatalogSpotlight.fingerprint(for: Self.fingerprintRow(rotationKillDate: day("2099-01-01"))) == base)
         // The id is the map KEY, not fingerprinted content — same content, same fp.
         #expect(CatalogSpotlight.fingerprint(for: Self.fingerprintRow(id: 999)) == base)
+        // Issue #136: not searchable text, and including it would re-upsert
+        // every newly-bound row for a change the CSSearchableItem never reflects.
+        #expect(CatalogSpotlight.fingerprint(for: Self.fingerprintRow(hasDigitalAudio: true)) == base)
     }
 
     @Test func fingerprintDistinguishesNilFromEmptyString() {

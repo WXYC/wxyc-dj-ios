@@ -14,9 +14,10 @@ public struct ArtistWithGenre: Sendable, Codable, Hashable {
     public var codeLetters: String
     public var codeArtistNumber: Int
     public var genreId: Int
-    public var genreName: Genre
+    /** Free-form: `genres.genre_name` is a `varchar(64)` in a lookup table `POST /library/genres` appends to. `GET /library/genres` is the authoritative enumeration (#367).  */
+    public var genreName: String
 
-    public init(id: Int, artistName: String, codeLetters: String, codeArtistNumber: Int, genreId: Int, genreName: Genre) {
+    public init(id: Int, artistName: String, codeLetters: String, codeArtistNumber: Int, genreId: Int, genreName: String) {
         self.id = id
         self.artistName = artistName
         self.codeLetters = codeLetters
@@ -47,10 +48,3 @@ public struct ArtistWithGenre: Sendable, Codable, Hashable {
     }
 }
 
-
-extension ArtistWithGenre: UnknownCaseCheckable {
-    public var containsUnknownDefaultOpenApiCase: Bool {
-        if genreName == .unknownDefaultOpenApi { return true }
-        return false
-    }
-}

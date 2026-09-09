@@ -81,7 +81,7 @@ struct LastCatalogSyncTextTests {
         let store = FlakyWatermarkStore(watermark: "Wed, 24 Jun 2026 12:00:00 GMT")
         let deps = AppDependencies(catalogStore: store)
 
-        await deps.refreshCatalog()
+        await deps.refreshCatalog(trigger: .launch)
 
         #expect(deps.lastCatalogSyncText?.contains("2026") == true)
     }
@@ -94,12 +94,12 @@ struct LastCatalogSyncTextTests {
         let store = FlakyWatermarkStore(watermark: "Wed, 24 Jun 2026 12:00:00 GMT")
         let deps = AppDependencies(catalogStore: store)
 
-        await deps.refreshCatalog()
+        await deps.refreshCatalog(trigger: .launch)
         let afterGoodSync = deps.lastCatalogSyncText
         #expect(afterGoodSync != nil)
 
         await store.startThrowing()
-        await deps.refreshCatalog()
+        await deps.refreshCatalog(trigger: .launch)
 
         // Preserved, not wiped to nil.
         #expect(deps.lastCatalogSyncText == afterGoodSync)

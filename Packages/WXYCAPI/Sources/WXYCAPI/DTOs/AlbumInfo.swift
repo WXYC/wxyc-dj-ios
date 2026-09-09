@@ -117,22 +117,42 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
         public let addDate: String?
 
         /// Date this rotation record expires, as the raw `"YYYY-MM-DD"` the wire
-        /// carries — **not** a decoded `Date`, exactly as
-        /// ``CatalogRow/rotationKillDate`` keeps the same column.
+        /// carries — **not** a decoded `Date`.
         ///
-        /// This is the field that makes rotation expiry a timezone-free
-        /// lexicographic compare, and decoding it would quietly undo that. A
-        /// `Date` is an *instant*, not a calendar day, so recovering the wire day
-        /// from one means picking a zone to render it back through — and any
-        /// choice is wrong for some input. Anchoring on GMT is right for a bare
-        /// `"2026-06-23"` (which ``JSONCoders`` decodes to midnight GMT) but off
-        /// by one for an offset-bearing timestamp like
-        /// `"2026-06-23T20:00:00-04:00"`, which lands on the 24th in GMT — so the
-        /// online path would report a day of rotation the cloned path (comparing
-        /// the raw string) does not. Since this whole type is a hedge against a
-        /// *future* `/library/info` rotation projection, the wire shape is
-        /// precisely the thing not to assume. Holding the string sidesteps the
-        /// question: whatever arrives is compared as the server wrote it.
+        /// The two row types **stop agreeing here**:
+        /// ``CatalogRow/rotationKillDate`` narrows at decode into a
+        /// ``RotationKillDate``; this one stays a `String?` and converts at the
+        /// call in ``isInRotation(asOf:timeZone:)``. Both reach the *same*
+        /// predicate with the same ``RotationKillDate``, so they cannot answer
+        /// differently — which is the invariant that actually matters, and the
+        /// one the issue-#95 parity matrix pins.
+        ///
+        /// **The asymmetry is a leftover, not a design.** An earlier version of
+        /// this comment defended it on decode tolerance — that a `String?` has
+        /// "nothing left to get wrong" where narrowing might throw. That is
+        /// false: `RotationKillDate(wireValue:)` cannot throw, and `CatalogRow`
+        /// decodes the same `try c.decodeIfPresent(String.self, …)` before
+        /// narrowing, so the two have byte-identical throw surfaces. The
+        /// remaining difference — that a parseable *timestamp* keeps its exact
+        /// wire bytes here and is normalized to its leading day there — has no
+        /// consumer, because `AlbumInfo` is decode-only in production and is
+        /// never persisted or re-encoded, where ``CatalogRow`` is a SQLite clone
+        /// blob.
+        ///
+        /// Making this a ``RotationKillDate`` too is the right end state and is
+        /// tracked separately, because it pairs with renaming the type to
+        /// something field-neutral so the sibling ``addDate`` — same shape, same
+        /// tolerance need — can use it instead of re-deriving the raw-string
+        /// plus render-time-parse shape. Doing only the `killDate` half here
+        /// would leave that migration halfway.
+        ///
+        /// A decoded `Date` would be strictly worse for the same reason it is
+        /// wrong on ``CatalogRow``. A `Date` is an *instant*, not a calendar
+        /// day, so recovering the wire day from one means picking a zone to
+        /// render it back through — and any choice is wrong for some input.
+        /// (``JSONCoders`` no longer parses a bare `"YYYY-MM-DD"` into one at
+        /// all; issue #79 retired that branch precisely so this can't be done by
+        /// accident.)
         public let killDate: String?
 
         enum CodingKeys: String, CodingKey {
@@ -163,7 +183,7 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
             // the safe direction, but for a kill date nil means *no expiry* — so
             // folding `""` into it would resurrect the forever-in-rotation bug
             // this type guards against. An empty kill date instead reaches
-            // ``RotationPredicate/isInRotation(bin:killDay:today:)`` intact and
+            // ``RotationPredicate/isInRotation(bin:killDate:today:)`` intact and
             // fails closed there, with the other unreadable values.
             addDate = (try c.decodeIfPresent(String.self, forKey: .addDate))
                 .flatMap { $0.isEmpty ? nil : $0 }
@@ -192,23 +212,23 @@ public struct AlbumInfo: Codable, Sendable, Hashable, Identifiable {
         /// render an expired record as in-rotation online while the clone
         /// correctly hid it.
         public func isInRotation(asOf now: Date = Date(), timeZone: TimeZone = .current) -> Bool {
-            isInRotation(localDay: RotationPredicate.localDay(now, timeZone: timeZone))
+            isInRotation(today: CalendarDate(now, in: timeZone))
         }
 
-        /// Pure core of ``isInRotation(asOf:timeZone:)``. `today` MUST be the
-        /// zero-padded `"YYYY-MM-DD"` local day
-        /// ``RotationPredicate/localDay(_:timeZone:)`` produces — the
-        /// lexicographic compare is equivalent to a chronological one only for
-        /// that fixed-width form — which is why this stays `internal` and callers
-        /// go through the public overload.
+        /// Pure core of ``isInRotation(asOf:timeZone:)``. `today` is the
+        /// client's local calendar day; `internal` so callers go through the
+        /// public overload, which derives it.
         ///
-        /// The rule itself is ``RotationPredicate/isInRotation(bin:killDay:today:)``,
-        /// shared with ``CatalogRow``. Because ``killDate`` is held raw, this
-        /// call is character-for-character the one ``CatalogRow`` makes — the two
-        /// paths reach the shared rule with the same kinds of value, not merely
-        /// with values converted to agree.
-        func isInRotation(localDay today: String) -> Bool {
-            RotationPredicate.isInRotation(bin: rotationBin, killDay: killDate, today: today)
+        /// The rule is ``RotationPredicate``'s, shared with ``CatalogRow`` —
+        /// **one** entry point, deliberately not an overload per representation
+        /// (see its doc). What differs is only where the narrowing happens:
+        /// ``CatalogRow/rotationKillDate`` is already a ``RotationKillDate`` by
+        /// the time it gets here, while ``killDate`` is still the raw wire
+        /// value, so this call site converts with `RotationKillDate(wireValue:)`
+        /// first. Both then compare the identical way, so the two paths cannot
+        /// answer differently for the same album.
+        func isInRotation(today: CalendarDate) -> Bool {
+            RotationPredicate.isInRotation(bin: rotationBin, killDate: RotationKillDate(wireValue: killDate), today: today)
         }
     }
 

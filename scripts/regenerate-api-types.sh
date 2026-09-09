@@ -179,7 +179,7 @@ GENERATED_ROOT="$WORK_DIR/generated/swift/Sources/WXYCAPI"
 # the Infrastructure/ keep-list, the RequestTask strip, the
 # `keyedBy: String.self` check) has to run BEFORE it, not after. An earlier
 # version deleted first and counted afterwards, so a generator run that
-# emitted an empty Models/ would have wiped the 256 committed files and then
+# emitted an empty Models/ would have wiped the 253 committed files and then
 # exited 0 -- the count it checked included the six Infrastructure files it
 # had just copied in.
 STAGE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/wxycapimodels-stage.XXXXXX") || fail "could not create staging dir"
@@ -211,6 +211,132 @@ rsync -a --delete "$GENERATED_ROOT/Models/" "$STAGE_DIR/Models/" || fail "rsync 
 rm -f "$STAGE_DIR/Models/HealthCheckResponse.swift"
 
 # ---------------------------------------------------------------------------
+# Drop the auth schemas WXYCAuth owns (WXYC/wxyc-swift-auth)
+# ---------------------------------------------------------------------------
+#
+# WXYCAuth vendors its own generated copy of the non-device /auth/* schema
+# closure and declares every one of them `public`. This package declares its
+# models `public` too, so vendoring the same schemas here would put a second
+# public declaration of each name into any build graph that holds both
+# packages -- ambiguity at every use site in whatever target links them, with
+# no import-level workaround, since both are libraries the app depends on
+# directly.
+#
+# The partition is by ownership, not by need: WXYCAuth owns the better-auth
+# wire surface, this package owns everything else. The device-authorization
+# (QR) schemas stay HERE -- WXYCAuth does not vend them (see the exclusion
+# comment in scripts/auth-schema-closure.mjs), so wxyc-dj-ios#64's
+# DeviceAuth* types are unaffected by this drop.
+#
+# Dropping these is behaviourally inert today: WXYCAPI hand-rolls
+# EmailSignInRequest, LookupEmailRequest/Response, SendLoginCodeRequest and
+# OTPSignInRequest itself, and a same-module declaration already silently
+# shadowed the generated one -- which is precisely the quiet failure mode
+# CLAUDE.md's "Code Generation" section warns about. The rest were vendored
+# and unreferenced.
+#
+# The list is checked in BOTH directions against a closure computed from
+# api.yaml (scripts/auth-schema-closure.mjs), not merely applied. A
+# hardcoded exclusion list cannot be its own guard: a 17th auth schema added
+# upstream would keep being vendored, and the collision would surface only as
+# a redeclaration error in whatever target links both packages, far from the
+# list that caused it. Deriving the expected set from api.yaml -- an input
+# independent of the list -- is what makes the comparison able to fail.
+AUTH_MODELS_DROP=(
+    AuthErrorResponse
+    AuthPlainErrorResponse
+    AuthRateLimitedResponse
+    AuthSendCodeResult
+    AuthSignInResult
+    AuthSignOutResult
+    AuthTokenAndUserResult
+    AuthTokenResponse
+    AuthUser
+    EmailSignInRequest
+    LookupEmailRequest
+    LookupEmailResponse
+    OTPSignInRequest
+    OTPType
+    SendLoginCodeRequest
+    UsernameSignInRequest
+)
+
+log "Computing the auth schema closure from api.yaml"
+AUTH_CLOSURE=("${(@f)$(node "$REPO_ROOT/scripts/auth-schema-closure.mjs" "$WORK_DIR")}") \
+    || fail "scripts/auth-schema-closure.mjs failed -- see its error above"
+(( ${#AUTH_CLOSURE[@]} > 0 )) || fail "auth-schema-closure.mjs printed nothing but exited 0 -- refusing to treat an empty closure as agreement with AUTH_MODELS_DROP"
+
+# zsh array subtraction: elements of the left array not present in the right.
+MISSING_FROM_DROP=("${(@)AUTH_CLOSURE:|AUTH_MODELS_DROP}")
+NOT_IN_CLOSURE=("${(@)AUTH_MODELS_DROP:|AUTH_CLOSURE}")
+if (( ${#MISSING_FROM_DROP[@]} > 0 )); then
+    fail "api.yaml's auth surface reaches schema(s) that AUTH_MODELS_DROP doesn't list: ${MISSING_FROM_DROP[*]} -- WXYCAuth vendors these, so leaving them here collides. Add them to AUTH_MODELS_DROP (and confirm WXYCAuth's own AUTH_MODELS_KEEP has them), then update CLAUDE.md's Code Generation section."
+fi
+if (( ${#NOT_IN_CLOSURE[@]} > 0 )); then
+    fail "AUTH_MODELS_DROP lists schema(s) no auth operation reaches any more: ${NOT_IN_CLOSURE[*]} -- if they moved out of the auth surface they belong back in this package's vendored tree, so remove them from the list rather than keeping a drop that deletes a type the app may need."
+fi
+
+# Guarded, unlike the HealthCheckResponse `rm -f` above, and for a reason
+# that inverts: that exclusion has a downstream sweep (`keyedBy: String.self`)
+# which catches the failure it exists to prevent regardless of filename, so a
+# silent no-op there is fine. This one has no such generalized sweep -- the
+# closure names schemas, and the generator's schema-name-to-filename mapping
+# is a separate assumption. If that mapping ever changes, an unguarded rm
+# would no-op silently and re-vendor every colliding type.
+for schema in "${AUTH_MODELS_DROP[@]}"; do
+    [[ -f "$STAGE_DIR/Models/$schema.swift" ]] \
+        || fail "AUTH_MODELS_DROP names '$schema' but the generator staged no Models/$schema.swift -- the schema-name-to-filename mapping changed; update the drop logic in $0"
+    rm -f "$STAGE_DIR/Models/$schema.swift"
+done
+log "Dropped ${#AUTH_MODELS_DROP[@]} auth model(s) owned by WXYCAuth"
+
+# The closure above is computed from `$ref`s, so it names only schemas
+# api.yaml declares under components/schemas. The generator ALSO synthesizes a
+# model per INLINE schema on a path -- here, the `oneOf` bodies on the two
+# password routes' 429 responses -- and names them after the operation. Those
+# wrappers are auth-surface types by construction, and each `case`s over two
+# members of the closure, so keeping them would leave the vendored tree
+# referencing types this script just deleted.
+#
+# WXYCAuth does not vend them either (its own allow-list is the closure), so
+# nothing is lost: they are unreachable from any non-auth operation, and this
+# models-only package never decoded a 429 body.
+AUTH_INLINE_MODELS_DROP=(
+    AuthSignInEmailPost429Response
+    AuthSignInUsernamePost429Response
+)
+
+# Guard for the half the closure cannot see. The generator names an inline
+# path model after its path, so every inline model on an /auth/* operation is
+# Auth-prefixed -- which makes "every staged Auth*-prefixed model is accounted
+# for" a tripwire derived from the generator's own naming rather than from the
+# list it checks. Without it, a 17th inline wrapper added upstream would be
+# vendored silently unless it happened to reference a dropped type (which is
+# what the dangling-reference check below catches, and only that).
+#
+# Note the prefix also covers /auth/device/* inline models, which this repo
+# KEEPS. None exists today; if one appears, this fires and the right answer is
+# to add it to a device carve-out, not to either drop list.
+UNACCOUNTED_AUTH=()
+for staged in "$STAGE_DIR/Models/"Auth*.swift(N); do
+    name="${${staged:t}%.swift}"
+    for known in "${AUTH_MODELS_DROP[@]}" "${AUTH_INLINE_MODELS_DROP[@]}"; do
+        [[ "$name" == "$known" ]] && continue 2
+    done
+    UNACCOUNTED_AUTH+=("$name")
+done
+if (( ${#UNACCOUNTED_AUTH[@]} > 0 )); then
+    fail "generator emitted Auth-prefixed model(s) that neither drop list accounts for: ${UNACCOUNTED_AUTH[*]} -- decide for each whether it is part of the surface WXYCAuth owns (add it to AUTH_MODELS_DROP if api.yaml declares it as a component schema, or AUTH_INLINE_MODELS_DROP if the generator synthesized it from an inline body) or part of the /auth/device/* surface this repo keeps (in which case add a carve-out here). Do NOT ignore this: an unaccounted auth model is a second public declaration of a name WXYCAuth also exports."
+fi
+
+for schema in "${AUTH_INLINE_MODELS_DROP[@]}"; do
+    [[ -f "$STAGE_DIR/Models/$schema.swift" ]] \
+        || fail "AUTH_INLINE_MODELS_DROP names '$schema' but the generator staged no Models/$schema.swift -- the operation-to-model naming changed, or the inline body became a \$ref; re-derive the list"
+    rm -f "$STAGE_DIR/Models/$schema.swift"
+done
+log "Dropped ${#AUTH_INLINE_MODELS_DROP[@]} inline auth model(s) the closure cannot name"
+
+# ---------------------------------------------------------------------------
 # Sync a curated Infrastructure/ subset (wxyc-dj-ios#75 review finding F3)
 # ---------------------------------------------------------------------------
 #
@@ -232,7 +358,7 @@ rm -f "$STAGE_DIR/Models/HealthCheckResponse.swift"
 # clean and produces silently wrong data, and the conformance leaks to every
 # file in the app the moment WXYCAPIModels is linked in (no import required
 # at the use site, since Swift conformances are visible process-wide once the
-# defining module is anywhere in the build graph). Zero of the 256 vendored
+# defining module is anywhere in the build graph). Zero of the 253 vendored
 # Models/ files reference anything else Extensions.swift provides
 # (`ParameterConvertible` and friends), so it is excluded outright.
 #
@@ -249,7 +375,23 @@ rm -f "$STAGE_DIR/Models/HealthCheckResponse.swift"
 # dead class, RequestTask is stripped from the vendored copy below (a
 # scripted, reproducible transform -- never a hand-edit of the committed
 # tree).
-INFRA_KEEP=(Models.swift Validation.swift JSONValue.swift CodableHelper.swift OpenAPIMutex.swift OpenISO8601DateFormatter.swift)
+# CalendarDate.swift is the one entry here that is NOT openapi-generator
+# output. It is hand-authored upstream at wxyc-shared's
+# openapi-config/swift-support/CalendarDate.swift and copied into the
+# generator's Infrastructure/ directory by that repo's `postgenerate:swift`
+# hook (scripts/copy-swift-support-files.js), so by the time this script
+# reads $GENERATED_ROOT it is indistinguishable from the rest -- which is
+# exactly why it belongs on this list rather than in some second mechanism.
+# It is load-bearing, not optional: swift6.yaml maps `format: date` to
+# CalendarDate, so every model with such a property (CatalogExportRow,
+# Concert, KillRotationRequest, Rotation, RotationEntry, RotationWithAlbum)
+# references a type that is only in scope if this file is staged. Dropping
+# it does not fail here -- the existence check below passes, and the count
+# guard at the bottom counts a directory built by looping over this very
+# array, so it is equal by construction and cannot notice an absent name.
+# The symptom would be `cannot find type 'CalendarDate' in scope` in
+# whatever target links the package next.
+INFRA_KEEP=(Models.swift Validation.swift JSONValue.swift CodableHelper.swift OpenAPIMutex.swift OpenISO8601DateFormatter.swift CalendarDate.swift)
 log "Staging curated Infrastructure/ subset: ${INFRA_KEEP[*]}"
 mkdir -p "$STAGE_DIR/Infrastructure"
 for f in "${INFRA_KEEP[@]}"; do
@@ -306,6 +448,38 @@ fi
 # Verify the staged tree, then swap it in
 # ---------------------------------------------------------------------------
 
+# No surviving staged file may reference a type this script just dropped --
+# otherwise the vendored tree doesn't compile, and the error lands in whatever
+# target links the package rather than here. This is a real possibility rather
+# than a formality: the drop list is the closure of the AUTH operations, and a
+# non-auth schema is free to `$ref` a member of it (an envelope reusing
+# AuthUser, say), which puts the referencing schema outside the closure and its
+# reference inside.
+#
+# Comments are stripped first, into a directory OUTSIDE $STAGE_DIR (the final
+# swap is an `rsync -a --delete` of $STAGE_DIR, so a subdirectory here would be
+# vendored). Without the strip this false-positives on the generator's own
+# `/** ... */` schema-description prose, which quotes these type names in
+# English.
+COMMENT_STRIPPED_DIR="$STAGE_DIR-comment-stripped"
+rm -rf "$COMMENT_STRIPPED_DIR"
+mkdir -p "$COMMENT_STRIPPED_DIR"
+while IFS= read -r staged; do
+    rel="${staged#$STAGE_DIR/}"
+    mkdir -p "$COMMENT_STRIPPED_DIR/${rel:h}"
+    perl -0pe 's{/\*.*?\*/}{}gs; s{//[^\n]*}{}g' "$staged" > "$COMMENT_STRIPPED_DIR/$rel"
+done < <(find "$STAGE_DIR" -name '*.swift')
+
+DANGLING=()
+for schema in "${AUTH_MODELS_DROP[@]}" "${AUTH_INLINE_MODELS_DROP[@]}"; do
+    if grep -rqw "$schema" "$COMMENT_STRIPPED_DIR"; then
+        DANGLING+=("$schema: $(grep -rlw "$schema" "$COMMENT_STRIPPED_DIR" | sed "s|^$COMMENT_STRIPPED_DIR/||" | tr '\n' ' ')")
+    fi
+done
+rm -rf "$COMMENT_STRIPPED_DIR"
+if (( ${#DANGLING[@]} > 0 )); then
+    fail "staged file(s) still reference a dropped auth type: ${(j:; :)DANGLING} -- the vendored tree would not compile. Either the referencing schema belongs in AUTH_MODELS_DROP too (if it is genuinely part of the auth surface), or WXYCAuth's ownership of that type needs revisiting."
+fi
 # The generalized form of the HealthCheckResponse exclusion above. Any model
 # reaching for a String-keyed container needs `String: CodingKey`, which this
 # package deliberately does not vendor (Extensions.swift is excluded), so
@@ -321,6 +495,55 @@ STAGED_MODELS=$(find "$STAGE_DIR/Models" -name '*.swift' | wc -l | tr -d ' ')
 (( STAGED_MODELS > 0 )) || fail "0 Swift files generated into Models/ -- refusing to sync, which would have deleted the committed tree"
 STAGED_INFRA=$(find "$STAGE_DIR/Infrastructure" -name '*.swift' | wc -l | tr -d ' ')
 (( STAGED_INFRA == ${#INFRA_KEEP[@]} )) || fail "staged Infrastructure/ has $STAGED_INFRA files, expected ${#INFRA_KEEP[@]}"
+
+# The check above is a CONSISTENCY check, not a tripwire, and reading it as
+# one has already cost us a regression: $STAGE_DIR/Infrastructure is built by
+# looping over INFRA_KEEP, so its file count equals ${#INFRA_KEEP[@]} by
+# construction and the comparison can never fail. It catches a `cp` that
+# silently wrote nothing; it cannot catch the failure that actually matters,
+# which is the generator emitting a support file NOBODY has classified.
+#
+# That is not hypothetical. CalendarDate.swift arrived exactly this way
+# (wxyc-shared#358 mapped `format: date` to it and copied it into
+# Infrastructure/ from the postgenerate:swift hook). Because the keep-list is
+# an allow-list, an unclassified file is DROPPED rather than vendored, so the
+# symptom is `cannot find type 'CalendarDate' in scope` in whatever target
+# links the package next -- far from the script that caused it. And nothing
+# upstream reports it either: verify-api-types.sh regenerates from the pinned
+# sha in contract-version.json, so this repo's CI stays green against a
+# wxyc-shared that has already moved, right up until a PR bumps the pin.
+#
+# So classify every file the generator emitted. INFRA_KEEP is what we vendor;
+# INFRA_DROP is what we deliberately don't, each with a reason recorded in the
+# Infrastructure/ curation comment above and in CLAUDE.md's "Code Generation"
+# section. Anything in neither list is new output nobody has looked at, and
+# the right response is to stop and look at it -- not to guess.
+INFRA_DROP=(
+    # An unused URLSession HTTP client this models-only package never calls.
+    APIs.swift
+    APIHelper.swift
+    JSONDataEncoding.swift
+    JSONEncodingHelper.swift
+    SynchronizedDictionary.swift
+    URLSessionImplementations.swift
+    # Worse than unused: declares `extension String: @retroactive CodingKey`,
+    # whose String.init?(intValue:) wins overload resolution over
+    # String.init(_:) wherever String.init is passed as a bare function value
+    # over an Int -- `[1, 2, 3].map(String.init)` becomes `[nil, nil, nil]`,
+    # app-wide, no import required at the use site.
+    Extensions.swift
+)
+UNCLASSIFIED=()
+while IFS= read -r generated; do
+    name=$(basename "$generated")
+    for known in "${INFRA_KEEP[@]}" "${INFRA_DROP[@]}"; do
+        [[ "$name" == "$known" ]] && continue 2
+    done
+    UNCLASSIFIED+=("$name")
+done < <(find "$GENERATED_ROOT/Infrastructure" -name '*.swift' | sort)
+if (( ${#UNCLASSIFIED[@]} > 0 )); then
+    fail "generator emitted unclassified Infrastructure/ file(s): ${UNCLASSIFIED[*]} -- decide whether each belongs in INFRA_KEEP (vendored; Models/ needs it) or INFRA_DROP (deliberately excluded, with the reason recorded), then update CLAUDE.md's Code Generation section to match. Do NOT ignore this: an unclassified file is silently dropped, and the symptom is a 'cannot find type' error in whatever target links the package."
+fi
 
 # `--delete` at the $DEST_DIR root, not per-subdirectory: the whole vendored
 # tree is machine-owned (CLAUDE.md: never hand-edit anything under it), so

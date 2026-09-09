@@ -76,6 +76,23 @@ public actor CatalogRefreshService {
         case skippedEmptyExport
     }
 
+    /// What one ``poll()`` learned. Three cases, not a `Bool`, because the
+    /// short-circuit and a genuine `304` mean different things to a caller that
+    /// *records* the answer as well as acting on it (issue #118 review): only
+    /// ``changed`` should schedule the reindex `BGProcessingTask`, but only
+    /// ``unchanged`` is evidence that the catalog is actually current.
+    public enum PollOutcome: Equatable, Sendable {
+        /// The server answered `200` — the catalog moved, so the charging-gated
+        /// reindex leg has real work to do.
+        case changed
+        /// The server answered `304` — the clone and index are already current.
+        case unchanged
+        /// No request was made: a ``refresh()`` was already in flight, and it
+        /// replaces the store and reindexes anyway, so this poll had nothing to
+        /// add. **Not** evidence either way about whether the catalog moved.
+        case skippedRefreshInFlight
+    }
+
     private let client: APIClient
     private let store: any CatalogStore
     /// Builds a fresh indexer per run (see the type's "fresh indexer per run"
@@ -271,16 +288,23 @@ public actor CatalogRefreshService {
     /// **Known cost (tracked as a follow-up).** On a `200` this still pays the
     /// full body download + ~50k-row decode just to return `true`; a body-less
     /// `HEAD`/lightweight probe would avoid it but needs a Backend-Service change.
-    public func poll() async throws -> Bool {
+    ///
+    /// Returns a ``PollOutcome`` rather than a `Bool` (issue #118 review) so the
+    /// short-circuit above is distinguishable from a genuine `304`. Both used to
+    /// collapse to `false`, which was harmless while the only consumer asked
+    /// "should I schedule a reindex?" — but the caller now also *records* the
+    /// answer, and reporting a skipped poll as "the catalog didn't move" is
+    /// exactly the null-answer bias issue #118 item 3 exists to remove.
+    public func poll() async throws -> PollOutcome {
         // Defer only to an in-flight refresh (which replaces the store + reindexes
         // and opens a batch). A thumbnail upsert in flight must NOT suppress the
         // poll — it doesn't reindex, so a real catalog change would be missed.
-        if refreshInFlight > 0 { return false }
+        if refreshInFlight > 0 { return .skippedRefreshInFlight }
         switch try await conditionalFetch(using: makeIndexer()) {
         case .notModified:
-            return false
+            return .unchanged
         case .modified:
-            return true
+            return .changed
         }
     }
 

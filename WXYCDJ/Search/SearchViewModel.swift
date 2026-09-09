@@ -37,16 +37,33 @@ final class SearchViewModel {
     /// the `.results` state to show a quiet "Showing saved library" note when
     /// results came from the on-device clone.
     private(set) var source: LibrarySearchOutcome.Source = .server
+    /// Album ids from the current `results` page that the on-device clone
+    /// marks as having digital audio (issue #136) — one batch
+    /// ``CatalogStore/rows(ids:)`` read per page, not a per-row store hit.
+    /// `SearchResultRow` reads membership synchronously off this set.
+    private(set) var digitalAudioIDs: Set<Int> = []
 
     private let search: LibrarySearch
     private let api: APIClient
+    private let catalogStore: (any CatalogStore)?
+    /// The app's product-analytics seam (issue #108). Defaults to
+    /// ``NoOpAnalytics`` so every existing construction site keeps compiling
+    /// unchanged; `SearchView` passes `deps.analytics`.
+    private let analytics: any Analytics
     private var searchTask: Task<Void, Never>?
     private static let minQueryLength = 2
     private static let debounce: Duration = .milliseconds(300)
 
-    init(search: LibrarySearch, api: APIClient) {
+    init(
+        search: LibrarySearch,
+        api: APIClient,
+        catalogStore: (any CatalogStore)? = nil,
+        analytics: any Analytics = NoOpAnalytics()
+    ) {
         self.search = search
         self.api = api
+        self.catalogStore = catalogStore
+        self.analytics = analytics
     }
 
     private func onQueryChanged() {
@@ -70,10 +87,34 @@ final class SearchViewModel {
         // monitor degrades to the on-device clone automatically. The outcome
         // carries which tier served it so the UI can frame local results.
         let outcome = await search.search(query: q)
+        // A debounce-cancelled search (a keystroke superseded this one before
+        // the request settled) captures nothing (issue #108) — the DJ never
+        // saw these results, so they're not a served search.
         if Task.isCancelled { return }
         results = outcome.results
         source = outcome.source
         state = outcome.results.isEmpty ? .empty : .results
+        analytics.capture(SearchPerformedEvent(
+            source: SearchSource(outcome.source),
+            resultCount: outcome.results.count,
+            queryLength: q.count
+        ))
+        await hydrateDigitalAudioIDs(for: outcome.results)
+    }
+
+    /// One batch `CatalogStore.rows(ids:)` read for the page (issue #136),
+    /// behind the same debounce-cancellation check `performSearch` already
+    /// applies to `results`/`state` — a superseded search must not clobber the
+    /// badge set for the query the DJ actually sees. `nil` store (no clone) or
+    /// an empty page both leave `digitalAudioIDs` empty rather than throwing.
+    private func hydrateDigitalAudioIDs(for results: [AlbumSearchResult]) async {
+        guard let catalogStore, !results.isEmpty else {
+            digitalAudioIDs = []
+            return
+        }
+        let rows = (try? await catalogStore.rows(ids: results.map(\.id))) ?? [:]
+        if Task.isCancelled { return }
+        digitalAudioIDs = Set(rows.values.filter(\.hasDigitalAudio).map(\.id))
     }
 
     func addToBin(_ row: AlbumSearchResult) async -> Bool {
@@ -83,6 +124,13 @@ final class SearchViewModel {
         // Empty matchedVia (normal artist/album hit) passes nil through.
         do {
             try await api.addToBin(albumId: row.id, trackTitle: row.matchedVia.first?.title)
+            // Issue #108: bin adoption. This is the *other* add button --
+            // `AlbumDetailView.addToBin()` is the one on the release screen.
+            // Instrumenting only that one would answer "bin adoption" from a
+            // biased sample and leave `bin_item_removed` events with no
+            // matching add, since a DJ can add straight from the results list
+            // without ever opening the detail view.
+            analytics.capture(BinItemAddedEvent(albumId: row.id))
             return true
         } catch {
             return false

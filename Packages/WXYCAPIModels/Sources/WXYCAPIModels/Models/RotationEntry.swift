@@ -12,10 +12,10 @@ public struct RotationEntry: Sendable, Codable, Hashable {
     public var id: Int
     public var albumId: Int
     public var rotationBin: RotationBin
-    public var addDate: Date
-    public var killDate: Date?
+    public var addDate: CalendarDate
+    public var killDate: CalendarDate?
 
-    public init(id: Int, albumId: Int, rotationBin: RotationBin, addDate: Date, killDate: Date? = nil) {
+    public init(id: Int, albumId: Int, rotationBin: RotationBin, addDate: CalendarDate, killDate: CalendarDate? = nil) {
         self.id = id
         self.albumId = albumId
         self.rotationBin = rotationBin

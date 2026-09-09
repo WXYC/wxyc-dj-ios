@@ -23,7 +23,7 @@ struct AlbumDetailFallbackTests {
     /// rotation with a display cohort.
     private static func dogaRow(
         rotationBin: String? = "H",
-        rotationKillDate: String? = nil
+        rotationKillDate: CalendarDate? = nil
     ) -> CatalogRow {
         CatalogRow(
             id: 100,
@@ -224,5 +224,53 @@ struct AlbumDetailFallbackTests {
         // but the row has settled — the LML label is the only label, so show it.
         #expect(AlbumDetailView.shouldShowMetadataLabel(
             metadataLabel: "Drag City", catalogLabel: nil, infoLoaded: true))
+    }
+}
+
+/// Issue #106: `AlbumDetailView.shouldReportMetadataFailure(_:)` is the pure
+/// report/skip decision `loadMetadata`'s catch arm applies. `AlbumDetailView`
+/// is a `View` struct with no view-hosting test harness in this repo (every
+/// other `AlbumDetail*Tests` suite exercises a pure static helper for exactly
+/// this reason), so this is what stands in for driving `loadMetadata` end to
+/// end over a stubbed `APIClient`.
+@Suite("AlbumDetail metadata-failure reporting")
+struct AlbumDetailMetadataReportingTests {
+    @Test("a 404 -- no LML match -- is an expected enrichment gap, not reported")
+    func notFoundIsNotReported() {
+        #expect(!AlbumDetailView.shouldReportMetadataFailure(.http(status: 404, message: nil)))
+    }
+
+    @Test("a 429 rate limit is an expected enrichment gap, not reported")
+    func rateLimitIsNotReported() {
+        #expect(!AlbumDetailView.shouldReportMetadataFailure(.http(status: 429, message: "Too Many Requests")))
+    }
+
+    @Test("a decode failure is our own parsing breaking, and is reported")
+    func decodingFailureIsReported() {
+        #expect(AlbumDetailView.shouldReportMetadataFailure(.decoding(detail: "type mismatch at releaseYear")))
+    }
+
+    @Test("unauthorized/notSignedIn are not reported")
+    func authFailuresAreNotReported() {
+        #expect(!AlbumDetailView.shouldReportMetadataFailure(.unauthorized))
+        #expect(!AlbumDetailView.shouldReportMetadataFailure(.notSignedIn))
+    }
+
+    /// Issue #106 review Fix 2: being offline is a supported mode on both
+    /// the `loadInfo` and `loadMetadata` legs, and they must agree on it —
+    /// this is the metadata-leg half of that agreement.
+    @Test("offline is a supported mode on both legs, never reported")
+    func offlineIsNotReported() {
+        #expect(!AlbumDetailView.shouldReportMetadataFailure(.offline(message: "offline")))
+    }
+
+    /// A genuine transport defect -- not connectivity, which is `.offline`
+    /// now -- is reported on both legs (issue #106 review Fix 2): before the
+    /// `.offline` split, `.network` was the "probably just offline" catch-all
+    /// this leg withheld; that reasoning stopped applying once `.offline`
+    /// took over that meaning on its own.
+    @Test("a genuine network defect is reported")
+    func networkFailureIsReported() {
+        #expect(AlbumDetailView.shouldReportMetadataFailure(.network("Non-HTTP response")))
     }
 }

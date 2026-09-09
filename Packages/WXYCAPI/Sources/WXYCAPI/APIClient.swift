@@ -21,6 +21,40 @@ public enum APIError: Error, Sendable {
     case http(status: Int, message: String?)
     case decoding(detail: String)
     case network(String)
+    /// A connectivity-class transport failure (no route to the server, DNS,
+    /// timeout, captive portal, or a deliberate cancellation -- see
+    /// ``ConnectivityErrorClassification``), discovered at one of this
+    /// package's flatten sites that used to fold every non-`APIError` throw
+    /// into ``network(_:)`` unconditionally: ``APIClient/fire(_:)``'s
+    /// catch-all, and ``APIClient/currentJWT()``'s -- the lazy JWT-refresh
+    /// leg can itself fail offline one layer below `fire`, since
+    /// `AuthService.currentJWT()` rethrows a raw, unwrapped transport error
+    /// on that specific leg rather than an `AuthError` (see
+    /// `AuthService.send(_:)`), so a second discard site existed here that
+    /// mirrored `fire`'s exactly.
+    ///
+    /// Being offline is a supported mode -- the app has an on-device catalog
+    /// clone and falls back to it (issues #58/#81) -- and is never worth
+    /// reporting to crash telemetry, unlike a genuine transport defect
+    /// (issue #106). **`.cancelled` is deliberately included in the
+    /// connectivity classification, not an oversight left to work around:**
+    /// neither a genuinely offline request nor a cancelled one is a defect,
+    /// so both belong in the non-reported bucket. The debounced search in
+    /// `LibrarySearch` (issue #58) and a DJ backing out of
+    /// `AlbumDetailView` before `/library/info` returns both cancel an
+    /// in-flight request on every routine interaction -- reporting either as
+    /// a defect would be exactly the event spam `enableCaptureFailedRequests
+    /// = false` exists to prevent, just reached through cancellation instead
+    /// of a captive portal. This is this enum's peer to
+    /// ``AuthError/offline(message:)``, added because the API path had the
+    /// identical flatten-and-discard shape without the split.
+    ///
+    /// Carries the same message ``network(_:)`` would have, so
+    /// ``localizedMessage`` renders byte-for-byte what a caller saw before
+    /// this split existed -- the split changes only which *case* a caller
+    /// pattern matches on to decide whether to report, never what's shown on
+    /// screen.
+    case offline(message: String)
 
     public var localizedMessage: String {
         switch self {
@@ -29,6 +63,60 @@ public enum APIError: Error, Sendable {
         case .http(let s, let m): "Server error (\(s))\(m.map { ": \($0)" } ?? "")."
         case .decoding(let detail): "The server returned an unexpected response: \(detail)"
         case .network(let m): "Network error: \(m)"
+        case .offline(let m): "Network error: \(m)"
+        }
+    }
+}
+
+extension APIError {
+    /// A case-identifying value safe to attach to a crash report — mirrors
+    /// ``AuthError/CaseName`` (issue #106) for this package's other error
+    /// enum. `.http(status:message:)`'s server-authored `message` and
+    /// `.network(String)`'s / `.offline(message:)`'s client-side
+    /// description are dropped by construction; the case name, `.http`'s
+    /// status as a plain `Int`, and `.decoding(detail:)`'s narrowed `detail`
+    /// string are what survive.
+    ///
+    /// `.decoding(detail:)`'s `detail` is the **one** deliberate exception to
+    /// "never carry an associated string," and it is safe only because two
+    /// facts are load-bearing on each other. `CaseName` itself carries
+    /// nothing but whatever the case already held — the actual narrowing
+    /// happens one level up, in ``APIClient/describe(_:)``, which is
+    /// deliberately restricted to code-derived facts alone (the
+    /// `DecodingError` case kind, the coding-key path, and the expected
+    /// `Any.Type` on a type mismatch) and never `Context.debugDescription`,
+    /// a live channel for verbatim server response content. That function's
+    /// own regression tests (`APIClientTests`) pin that it can emit nothing
+    /// else. Carrying `detail` here would reopen the "never report
+    /// server-sent text" rule the moment that formatter regressed — it
+    /// stays honest only as long as that guarantee holds.
+    ///
+    /// Implemented as an exhaustive `switch` with **no `default:`**: adding a
+    /// case to `APIError` without extending this switch is a compile error,
+    /// not a silent gap.
+    public struct CaseName: Sendable, Equatable {
+        public let name: String
+        public let statusCode: Int?
+        /// `.decoding(detail:)`'s narrowed detail string, present only for
+        /// that case — see this type's doc comment for why carrying it here
+        /// is safe. `nil` for every other case.
+        public let detail: String?
+    }
+
+    public var caseName: CaseName {
+        switch self {
+        case .unauthorized:
+            CaseName(name: "unauthorized", statusCode: nil, detail: nil)
+        case .notSignedIn:
+            CaseName(name: "notSignedIn", statusCode: nil, detail: nil)
+        case .http(let status, _):
+            CaseName(name: "http", statusCode: status, detail: nil)
+        case .decoding(let detail):
+            CaseName(name: "decoding", statusCode: nil, detail: detail)
+        case .network:
+            CaseName(name: "network", statusCode: nil, detail: nil)
+        case .offline:
+            CaseName(name: "offline", statusCode: nil, detail: nil)
         }
     }
 }
@@ -49,7 +137,10 @@ public enum CatalogFetchResult: Equatable, Sendable {
 
 public final class APIClient: Sendable {
     private let configuration: WXYCAPIConfiguration
-    private let session: any RequestSession
+    /// Deliberately typed as the decorator, not `any RequestSession`: it makes
+    /// `self.session = session` fail to compile, so the no-cookie policy can't be
+    /// dropped by a consumer that copies this shape (issue #99).
+    private let session: CookielessSession
     private let authService: AuthService
     /// Reports each request's transport result to the connectivity layer (#56):
     /// `true` when the server answered (any HTTP status — we reached it), `false`
@@ -65,7 +156,7 @@ public final class APIClient: Sendable {
         onOutcome: (@Sendable (Bool) -> Void)? = nil
     ) {
         self.configuration = configuration
-        self.session = session
+        self.session = CookielessSession(session)
         self.authService = authService
         self.onOutcome = onOutcome
     }
@@ -81,7 +172,26 @@ public final class APIClient: Sendable {
     public func albumInfo(albumId: Int) async throws -> AlbumInfo {
         try await getJSON("/library/info", query: [URLQueryItem(name: "album_id", value: String(albumId))])
     }
+<<<<<<< HEAD
     
+=======
+
+    /// GET /digital-archive/albums/{id}/playback (#417) — the archive player's
+    /// playback manifest for `albumId`. A 404 (no bound digital audio) surfaces
+    /// as `APIError.http(status: 404, ...)`, same `.http` classification
+    /// `loadMetadata` already treats as routine, for the view to render "no
+    /// audio" rather than an error.
+    ///
+    /// Every rendition `url` is a bearer credential until the manifest's
+    /// `expires_at` — the merged operation states the cache/logging posture
+    /// explicitly. This method must never let that URL reach `os_log` or be
+    /// embedded in an `NSError` `userInfo`; it decodes the manifest and hands it
+    /// straight back, nothing more.
+    public func albumPlayback(albumId: Int) async throws -> DigitalArchivePlaybackManifest {
+        try await getJSON("/digital-archive/albums/\(albumId)/playback", query: [])
+    }
+
+>>>>>>> main
     /// GET /proxy/metadata/album — LML-enriched release record: year, label,
     /// genres/styles, streaming URLs, tracklist, Discogs/Wikipedia URLs.
     public func albumMetadata(artistName: String, releaseTitle: String?, trackTitle: String? = nil) async throws -> AlbumMetadata {
@@ -203,19 +313,58 @@ public final class APIClient: Sendable {
             throw APIError.decoding(detail: Self.describe(error))
         }
     }
+<<<<<<< HEAD
     
+=======
+
+    /// Renders a `DecodingError` into the string `APIError.decoding(detail:)`
+    /// carries — the one deliberate exception to this package's "never
+    /// report server-sent text" privacy contract (issue #106), because a
+    /// systematic decode failure in the field is exactly the class of defect
+    /// this whole effort exists to surface. The exception only holds because
+    /// this formatter is narrowed to **code-derived facts alone**: the
+    /// `DecodingError` case kind, the coding-key path, and — on
+    /// `.typeMismatch`/`.valueNotFound` — the expected `Any.Type` Foundation
+    /// itself supplies. Never `Context.debugDescription`.
+    ///
+    /// `debugDescription` is not incidental noise here — it is a live
+    /// channel for verbatim server response content.
+    /// `JSONCoders.decoder`'s custom date strategy builds exactly one as
+    /// `"Unrecognized date format: \(raw)"`, where `raw` is the untouched
+    /// wire string that failed to parse; the pre-#106 version of this
+    /// formatter interpolated that string directly into every `.typeMismatch`
+    /// and `.dataCorrupted` arm. Dropping it is what makes the "keep the
+    /// detail" exception in the privacy contract honest rather than a loophole.
+    ///
+    /// The expected `Any.Type` on `.typeMismatch`/`.valueNotFound`, by
+    /// contrast, is safe to include: Swift derives it from the *model's*
+    /// declared property type (e.g. `Int.self`), never from the payload
+    /// bytes, so it cannot hold anything a server sent. Including it
+    /// restores most of the diagnostic power the `debugDescription` drop
+    /// cost issue #77's original triage ("Expected to decode
+    /// Dictionary<String, Any> but found an array instead") while staying
+    /// provably payload-free.
+    ///
+    /// The `@unknown default:` arm is the one a test cannot construct —
+    /// `DecodingError` has exactly four cases today, all handled above — but
+    /// it must still be a **constant**, not `String(describing: error)`:
+    /// `String(describing:)` on a `DecodingError` embeds the same
+    /// `Context.debugDescription` this whole function exists to drop, so a
+    /// future fifth case reaching this arm would silently reopen the channel
+    /// through the one branch a test can't exercise to catch it.
+>>>>>>> main
     private static func describe(_ error: DecodingError) -> String {
         switch error {
         case .keyNotFound(let key, let ctx):
             return "missing key '\(key.stringValue)' at \(pathString(ctx.codingPath))"
-        case .typeMismatch(_, let ctx):
-            return "type mismatch at \(pathString(ctx.codingPath)): \(ctx.debugDescription)"
-        case .valueNotFound(_, let ctx):
-            return "null at \(pathString(ctx.codingPath)) (expected non-null)"
+        case .typeMismatch(let type, let ctx):
+            return "type mismatch at \(pathString(ctx.codingPath)): expected \(type)"
+        case .valueNotFound(let type, let ctx):
+            return "null at \(pathString(ctx.codingPath)) (expected non-null \(type))"
         case .dataCorrupted(let ctx):
-            return "data corrupted at \(pathString(ctx.codingPath)): \(ctx.debugDescription)"
+            return "data corrupted at \(pathString(ctx.codingPath))"
         @unknown default:
-            return String(describing: error)
+            return "unrecognized decoding error"
         }
     }
     
@@ -332,14 +481,6 @@ public final class APIClient: Sendable {
     }
     
     private func fire(_ request: URLRequest) async throws -> (Data, URLResponse) {
-        var request = request
-        // Bearer-only, same as `AuthService.send`: every request here already
-        // carries `Authorization: Bearer <jwt>`, so a cookie jar adds nothing
-        // and costs something. See the full argument there — in short, a stored
-        // better-auth session cookie arms better-auth's global origin check and
-        // gets the *next sign-in* refused with a 403, and it parks a session
-        // credential on disk where `clearLocalSession()` can't reach it.
-        request.httpShouldHandleCookies = false
         do {
             let result = try await session.data(for: request)
             // The server answered (any status code) — we reached it, so the
@@ -354,26 +495,55 @@ public final class APIClient: Sendable {
             // to the local clone while the device is online, and a local search
             // issues no request, so nothing would restore the flag. Surface the
             // failure without latching the monitor.
-            throw APIError.network(error.localizedDescription)
+            //
+            // `.offline` below (not `.network`) is what keeps this routine
+            // cancellation from ever reaching crash telemetry (issue #106) —
+            // `ConnectivityErrorClassification` includes `.cancelled` in its
+            // connectivity-code set deliberately, not by omission; see
+            // ``APIError/offline(message:)``'s doc comment.
+            throw Self.classifyTransportFailure(error)
         } catch is CancellationError {
             // Same rationale for structured-concurrency cancellation surfaced as
-            // CancellationError (a RequestSession may map it that way).
-            throw APIError.network("Request cancelled")
+            // CancellationError (a RequestSession may map it that way). Not a
+            // URLError, so classifyTransportFailure can't classify it by code —
+            // but cancellation is cancellation regardless of which type carries
+            // it, so this is unconditionally `.offline`, never `.network`.
+            throw APIError.offline(message: "Request cancelled")
         } catch {
             // A thrown error from the transport means we never reached the
             // server (no network, captive portal, DNS, timeout): report offline.
             onOutcome?(false)
-            throw APIError.network(error.localizedDescription)
+            throw Self.classifyTransportFailure(error)
         }
     }
+<<<<<<< HEAD
     
+=======
+
+    /// The classification shared by every site in this file that discards a
+    /// raw, non-`APIError` transport error into this enum: ``fire(_:)``'s
+    /// catch-all above, and ``currentJWT()``'s below (the lazy JWT-refresh
+    /// leg `AuthService.currentJWT()` drives can itself fail offline, one
+    /// layer below `fire` — see that method's doc comment). Mirrors
+    /// `AuthService.classifyTransportFailure` (issue #106): a
+    /// connectivity-class `URLError` becomes ``APIError/offline(message:)``;
+    /// everything else is a genuine transport defect and stays
+    /// ``APIError/network(_:)``. One home so the two sites can't quietly
+    /// diverge on what counts as "offline".
+    private static func classifyTransportFailure(_ error: Error) -> APIError {
+        ConnectivityErrorClassification.isConnectivityFailure(error)
+            ? .offline(message: error.localizedDescription)
+            : .network(error.localizedDescription)
+    }
+
+>>>>>>> main
     private func currentJWT() async throws -> String {
         do {
             return try await authService.currentJWT()
         } catch AuthError.notSignedIn {
             throw APIError.notSignedIn
         } catch {
-            throw APIError.network(error.localizedDescription)
+            throw Self.classifyTransportFailure(error)
         }
     }
     

@@ -19,6 +19,7 @@ public struct FlowsheetV2ShowStartEntry: Sendable, Codable, Hashable {
     public var playOrder: Int
     public var addTime: Date
     public var entryType: EntryType
+    /** The DJ's public on-air handle at show start, never the DJ's legal name: per-show override, else the DJ's chosen handle (`user.djName`). The legacy-tubafrenzy-handle fallback in the full BS#1371 chain doesn't apply here — a new show has no legacy row yet. */
     public var djName: String
     public var timestamp: Date
 

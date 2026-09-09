@@ -20,6 +20,7 @@ struct RootView: View {
     @Environment(AppDependencies.self) private var deps
     @Environment(AuthService.self) private var auth
     @Environment(Router.self) private var router
+    @Environment(ConnectivityMonitor.self) private var connectivity
 
     var body: some View {
         // @Bindable so the cover can two-way bind $router.deepLink — dismissing
@@ -77,13 +78,41 @@ struct RootView: View {
                 )
             }
         }
+        // Issue #108's two connectivity events. Deliberately sourced from
+        // this onChange, not ConnectivityMonitor.reconnects: that stream is a
+        // single-consumer AsyncStream issue #61's queued-bin flush is
+        // documented to claim, and there is no offline-edge stream at all —
+        // this needs both edges and must not race a future #61 consumer for
+        // the online one. ConnectivityTransition.classify is the pure
+        // decision (unit-tested independent of this otherwise-untestable
+        // SwiftUI wiring, the same carve-out AlbumDetailView's four events
+        // have — see CLAUDE.md's Telemetry section).
+        .onChange(of: connectivity.isOnline) { wasOnline, isOnline in
+            guard let transition = ConnectivityTransition.classify(wasOnline: wasOnline, isOnline: isOnline) else { return }
+            deps.analytics.capture(transition.event)
+        }
         // The deep-linked detail lives in its own cover (own NavigationStack),
         // never on the Search/Bin tab stacks — so dismissing returns the DJ to
-        // the exact tab + scroll position they left. Known limitation: a second
-        // Spotlight tap while a cover is already up is a silent no-op until the
-        // open cover is dismissed — fullScreenCover(item:) only watches
-        // nil↔non-nil, not an identity swap. Two consecutive taps without an
-        // intervening dismiss is rare enough to accept.
+        // the exact tab + scroll position they left.
+        //
+        // Known limitation: a second Spotlight tap while a cover is already up
+        // does not swap the cover; it is a no-op until the open cover is
+        // dismissed. `AppDependencies.present(albumID:parked:)` enforces that
+        // explicitly (issue #118) rather than leaving it to SwiftUI.
+        //
+        // **Unverified claim, flagged rather than repeated as fact** (issue
+        // #118 review): this comment used to assert that
+        // `fullScreenCover(item:)` "only watches nil↔non-nil, not an identity
+        // swap". `git blame` puts that on 6afa64b4, the issue-#19 step-7
+        // commit, whose message documents the surface at length but never
+        // records observing the behaviour, and `RouterDeepLinkTests` covers
+        // the router's value semantics rather than SwiftUI presentation. So it
+        // is plausible but unevidenced, and nobody has since checked it on
+        // device. Nothing depends on it being true: `present` refuses the
+        // second tap itself, so the no-op is the app's own decision under
+        // either SwiftUI behaviour. Swapping the cover to the newly-tapped
+        // album is the better UX and is tracked as issue #126, which records
+        // why an in-place `deepLink` swap cannot implement it.
         .fullScreenCover(item: $router.deepLink) { route in
             // fullScreenCover content is hosted in a separate presentation
             // context that does NOT inherit the presenter's

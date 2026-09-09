@@ -16,6 +16,7 @@
 //
 
 import Foundation
+import os
 import Testing
 @testable import WXYCAPI
 @testable import WXYCDJ
@@ -29,14 +30,15 @@ struct SearchViewModelTests {
     private static func makeViewModel(
         _ client: APIClient,
         store: (any CatalogStore)? = nil,
-        online: Bool = true
+        online: Bool = true,
+        analytics: any Analytics = NoOpAnalytics()
     ) -> SearchViewModel {
         let search = LibrarySearch(
             api: client,
             catalogStore: store,
             connectivity: ConnectivityMonitor(initiallyOnline: online)
         )
-        return SearchViewModel(search: search, api: client)
+        return SearchViewModel(search: search, api: client, catalogStore: store, analytics: analytics)
     }
 
     @Test func emptyQueryStaysIdleAndIssuesNoRequest() async throws {
@@ -80,6 +82,123 @@ struct SearchViewModelTests {
         #expect(viewModel.source == .server)
         #expect(viewModel.results.count == 1)
         #expect(viewModel.results.first?.artistName == "Juana Molina")
+    }
+
+    // MARK: - Issue #136: digital-audio badge hydration
+
+    @Test func settledSearchHydratesDigitalAudioIDsFromOneBatchRead() async throws {
+        let (client, session) = try await SignedInClient.make()
+        defer { Self.removeStore() }
+        do {
+            let store = try await Self.makeStore(rows: [
+                Self.juanaCatalogRow.withDigitalAudio(true),
+            ])
+            let viewModel = Self.makeViewModel(client, store: store)
+            session.enqueue(StubRequestSession.Stub(
+                statusCode: 200,
+                body: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
+            ))
+
+            viewModel.query = "ju"
+            try await Self.waitForSettle(viewModel)
+
+            #expect(viewModel.digitalAudioIDs == [100])
+        }
+    }
+
+    @Test func settledSearchLeavesDigitalAudioIDsEmptyWhenCloneSaysNo() async throws {
+        let (client, session) = try await SignedInClient.make()
+        defer { Self.removeStore() }
+        do {
+            let store = try await Self.makeStore(rows: [Self.juanaCatalogRow])
+            let viewModel = Self.makeViewModel(client, store: store)
+            session.enqueue(StubRequestSession.Stub(
+                statusCode: 200,
+                body: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
+            ))
+
+            viewModel.query = "ju"
+            try await Self.waitForSettle(viewModel)
+
+            #expect(viewModel.digitalAudioIDs.isEmpty)
+        }
+    }
+
+    /// A debounce-superseded search must not hydrate `digitalAudioIDs` for
+    /// results the DJ never saw. Both requests resolve to the same fixture
+    /// body, so the final `digitalAudioIDs` value would look identical either
+    /// way -- what this asserts is the **count** of `rows(ids:)` calls, exactly
+    /// one (the surviving search), not two.
+    ///
+    /// Note what that does and does not prove: the count is enforced by
+    /// `performSearch`'s *pre-existing* `Task.isCancelled` check, which returns
+    /// before `hydrateDigitalAudioIDs` is ever reached. The guard *inside*
+    /// `hydrateDigitalAudioIDs` — after the store await — is covered by
+    /// `cancellationDuringTheCloneReadLeavesBadgesUntouched` below instead.
+    @Test func supersededSearchDoesNotHydrateDigitalAudioIDs() async throws {
+        let (client, blocking) = try await SignedInClient.makeBlocking(
+            responseBody: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
+        )
+        let store = CountingCatalogStore(rows: [Self.juanaCatalogRow.withDigitalAudio(true)])
+        let viewModel = Self.makeViewModel(client, store: store)
+
+        viewModel.query = "ju"
+        // Park until the first search is genuinely on the wire.
+        await blocking.waitForFirstRequest()
+        // A follow-up keystroke cancels that in-flight task and starts a new
+        // search. Still >= minQueryLength, so this is a supersession, not an
+        // abandonment.
+        viewModel.query = "jua"
+        // Let the first (now-cancelled) request resume and the second run.
+        blocking.release()
+        try await Self.waitForSettle(viewModel)
+
+        #expect(store.rowsCallCount == 1)
+        #expect(viewModel.digitalAudioIDs == [100])
+    }
+
+    /// Cancellation landing *during* the clone read — the window
+    /// `hydrateDigitalAudioIDs`'s own post-await `Task.isCancelled` covers, and
+    /// the one `supersededSearchDoesNotHydrateDigitalAudioIDs` cannot reach
+    /// (there the outer check in `performSearch` returns first).
+    ///
+    /// The superseding keystroke drops *below* `minQueryLength`, so the search
+    /// is abandoned rather than replaced and no second search runs to write
+    /// `digitalAudioIDs` for us. `onQueryChanged`'s abandonment arm clears
+    /// `results` and `state` but deliberately never touches `digitalAudioIDs`,
+    /// so the emptiness asserted below can only come from the guard: delete
+    /// the `if Task.isCancelled { return }` at the end of
+    /// `hydrateDigitalAudioIDs` and the cancelled task writes `[100]`.
+    @Test func cancellationDuringTheCloneReadLeavesBadgesUntouched() async throws {
+        let (client, session) = try await SignedInClient.make()
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
+        ))
+        let store = CountingCatalogStore(rows: [Self.juanaCatalogRow.withDigitalAudio(true)], blocking: true)
+        let viewModel = Self.makeViewModel(client, store: store)
+
+        viewModel.query = "ju"
+        // Park until the clone read is genuinely in flight — the request has
+        // already settled by this point, so `performSearch`'s own cancellation
+        // check is behind us.
+        await store.waitForFirstRowsCall()
+
+        // Below `minQueryLength`: cancels the in-flight task and starts no
+        // replacement, leaving the assertion to observe only the guard.
+        viewModel.query = "j"
+        store.releaseRows()
+
+        // `waitForSettle` is useless here: the abandonment arm sets `.idle`
+        // synchronously, so it returns before the cancelled task has resumed
+        // and the assertion below would pass vacuously — empty because nothing
+        // had run yet, not because the guard fired. Give the resumed task real
+        // turns to reach (and be stopped by) the guard instead.
+        for _ in 0..<10 { await Task.yield() }
+        try await Task.sleep(for: .milliseconds(200))
+
+        #expect(store.rowsCallCount == 1)
+        #expect(viewModel.digitalAudioIDs.isEmpty)
     }
 
     @Test func emptyResponseTransitionsToEmptyState() async throws {
@@ -166,6 +285,104 @@ struct SearchViewModelTests {
         #expect(decoded.trackTitle == nil)
     }
 
+    // MARK: - Issue #108: search analytics
+
+    @Test func settledSearchRecordsSearchPerformed() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let analytics = SpyAnalytics()
+        let viewModel = Self.makeViewModel(client, analytics: analytics)
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
+        ))
+
+        viewModel.query = "ju"
+        try await Self.waitForSettle(viewModel)
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "search_performed")
+        #expect(capture.properties["source"] == .enumString(SearchSource.server))
+        #expect(capture.properties["result_count"] == .int(1))
+        #expect(capture.properties["query_length"] == .int(2))
+    }
+
+    @Test func offlineSearchRecordsLocalSource() async throws {
+        let (client, _) = try await SignedInClient.make()
+        defer { Self.removeStore() }
+        // Inner scope for the same reason as
+        // `offlineServesLocalCloneAndExposesLocalSource` above: release the
+        // SQLite connection before the `defer` unlinks the file.
+        do {
+            let store = try await Self.makeStore(rows: [Self.juanaCatalogRow])
+            let analytics = SpyAnalytics()
+            let viewModel = Self.makeViewModel(client, store: store, online: false, analytics: analytics)
+
+            viewModel.query = "ju"
+            try await Self.waitForSettle(viewModel)
+
+            let capture = try #require(analytics.captures.first)
+            #expect(capture.properties["source"] == .enumString(SearchSource.local))
+            #expect(capture.properties["result_count"] == .int(1))
+        }
+    }
+
+    /// A search superseded **mid-flight** captures nothing (issue #108): the DJ
+    /// never saw those results, so it isn't a served search.
+    ///
+    /// This drives the case that actually exercises the guard. `performSearch(_:)`
+    /// checks `Task.isCancelled` *after* `LibrarySearch.search(query:)` returns
+    /// and *before* capturing, so the only way to reach that check is to have a
+    /// request genuinely in flight when the next keystroke lands — hence the
+    /// `BlockingRequestSession`. Both queries clear `minQueryLength`, so the
+    /// earlier "drop below 2 characters" version of this test never entered
+    /// `performSearch` at all and would still have passed with the guard
+    /// deleted. Here, deleting it yields two captures instead of one.
+    @Test func searchSupersededMidFlightCapturesOnlyTheServedOne() async throws {
+        let (client, blocking) = try await SignedInClient.makeBlocking(
+            responseBody: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
+        )
+        let analytics = SpyAnalytics()
+        let viewModel = Self.makeViewModel(client, analytics: analytics)
+
+        viewModel.query = "ju"
+        // Park until the first search is genuinely on the wire.
+        await blocking.waitForFirstRequest()
+        // A follow-up keystroke cancels that in-flight task and starts a new
+        // search. Still >= minQueryLength, so this is a supersession, not an
+        // abandonment.
+        viewModel.query = "jua"
+        // Let the first (now-cancelled) request resume and the second run.
+        blocking.release()
+        try await Self.waitForSettle(viewModel)
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "search_performed")
+        // The *served* query is the 3-character one, proving the survivor is
+        // the later search rather than the superseded one.
+        #expect(capture.properties["query_length"] == .int(3))
+    }
+
+    /// The abandonment case: dropping below `minQueryLength` cancels the pending
+    /// debounce before it ever issues a request, so there is nothing to serve
+    /// and nothing to capture.
+    @Test func searchAbandonedBeforeItIssuesCapturesNothing() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let analytics = SpyAnalytics()
+        let viewModel = Self.makeViewModel(client, analytics: analytics)
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
+        ))
+
+        viewModel.query = "ju"
+        viewModel.query = "j"
+        try await Self.waitBriefly()
+
+        #expect(analytics.captures.isEmpty)
+    }
+
     @Test func shorteningQueryBelowMinimumCancelsInFlightSearch() async throws {
         let (client, session) = try await SignedInClient.make()
         let viewModel = Self.makeViewModel(client)
@@ -234,6 +451,107 @@ struct SearchViewModelTests {
             try? fm.removeItem(at: URL(filePath: base + suffix))
         }
         storeURL = nil
+    }
+}
+
+/// A `CatalogStore` that counts `rows(ids:)` calls, so a supersession test can
+/// assert the guard fired by call count rather than by the (identical either
+/// way) final hydrated value. Lock-guarded `Sendable`, matching
+/// `WXYCAPITests/Support/SpyCatalogStore.swift`'s shape.
+private final class CountingCatalogStore: CatalogStore {
+    private struct State {
+        var rows: [Int: CatalogRow]
+        var rowsCalls = 0
+        /// When true, `rows(ids:)` parks until `releaseRows()` — the store
+        /// analogue of `BlockingRequestSession`, so a test can cancel the
+        /// calling task while the clone read is genuinely in flight.
+        var blocking = false
+        var released = false
+        var firstCallArrived = false
+        var blocked: [CheckedContinuation<Void, Never>] = []
+        var firstCallWaiters: [CheckedContinuation<Void, Never>] = []
+    }
+
+    private let state: OSAllocatedUnfairLock<State>
+
+    init(rows: [CatalogRow], blocking: Bool = false) {
+        var initial = State(rows: Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) }))
+        initial.blocking = blocking
+        state = OSAllocatedUnfairLock(initialState: initial)
+    }
+
+    var rowsCallCount: Int { state.withLock { $0.rowsCalls } }
+
+    func row(id: Int) -> CatalogRow? { state.withLock { $0.rows[id] } }
+    func count() -> Int { state.withLock { $0.rows.count } }
+    func lastModified() -> String? { nil }
+    func replace(rows: [CatalogRow], lastModified: String?) {
+        state.withLock { $0.rows = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) }) }
+    }
+    func search(query: String, limit: Int) -> [CatalogRow] { [] }
+
+    func rows(ids: [Int]) async -> [Int: CatalogRow] {
+        let (result, firstWaiters): ([Int: CatalogRow], [CheckedContinuation<Void, Never>]) = state.withLock { st in
+            st.rowsCalls += 1
+            var result: [Int: CatalogRow] = [:]
+            for id in ids { if let row = st.rows[id] { result[id] = row } }
+            guard st.blocking, !st.firstCallArrived else { return (result, []) }
+            st.firstCallArrived = true
+            defer { st.firstCallWaiters = [] }
+            return (result, st.firstCallWaiters)
+        }
+        for continuation in firstWaiters { continuation.resume() }
+
+        guard state.withLock({ $0.blocking }) else { return result }
+        await withCheckedContinuation { continuation in
+            let resumeNow: Bool = state.withLock { st in
+                if st.released { return true }
+                st.blocked.append(continuation)
+                return false
+            }
+            if resumeNow { continuation.resume() }
+        }
+        return result
+    }
+
+    // MARK: - Optional blocking gate
+
+    /// Suspends until at least one `rows(ids:)` call has been entered. Only
+    /// meaningful when the store was built with `blocking: true`.
+    func waitForFirstRowsCall() async {
+        await withCheckedContinuation { continuation in
+            let resumeNow: Bool = state.withLock { st in
+                if st.firstCallArrived { return true }
+                st.firstCallWaiters.append(continuation)
+                return false
+            }
+            if resumeNow { continuation.resume() }
+        }
+    }
+
+    /// Let every parked (and future) `rows(ids:)` call return.
+    func releaseRows() {
+        let toResume: [CheckedContinuation<Void, Never>] = state.withLock { st in
+            st.released = true
+            defer { st.blocked = [] }
+            return st.blocked
+        }
+        for continuation in toResume { continuation.resume() }
+    }
+}
+
+private extension CatalogRow {
+    /// Same row with `hasDigitalAudio` overridden — a test-only convenience
+    /// so `juanaCatalogRow` doesn't need a second, near-duplicate literal.
+    func withDigitalAudio(_ value: Bool) -> CatalogRow {
+        CatalogRow(
+            id: id, artistName: artistName, albumTitle: albumTitle,
+            codeLetters: codeLetters, codeNumber: codeNumber, codeArtistNumber: codeArtistNumber,
+            label: label, genreName: genreName, formatName: formatName,
+            onStreaming: onStreaming, plays: plays, artworkURL: artworkURL,
+            rotationBin: rotationBin, rotationKillDate: rotationKillDate.day,
+            hasDigitalAudio: value
+        )
     }
 }
 

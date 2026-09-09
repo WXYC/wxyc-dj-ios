@@ -21,7 +21,7 @@ struct DeepLinkAlbumCover: View {
 
     var body: some View {
         NavigationStack {
-            AlbumDetailView(albumId: route.id, fallback: route.fallback)
+            AlbumDetailView(albumId: route.id, fallback: route.fallback, origin: .spotlight)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button("Close") { dismiss() }

@@ -83,6 +83,35 @@ struct BinViewModelTests {
         #expect(viewModel.entries.isEmpty)
     }
 
+    /// Issue #106: the load-failure arm reports. `GET /djs/bin` failing is a
+    /// silent field defect otherwise — the DJ just sees "Couldn't load bin".
+    @Test func refreshFailureReportsToErrorReporter() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let spy = SpyErrorReporter()
+        let viewModel = BinViewModel(api: client, errorReporter: spy)
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 500, body: Data(#"{"error":"boom"}"#.utf8)))
+        await viewModel.refresh()
+
+        #expect(spy.reportCount == 1)
+        #expect(spy.reports.first?.context == "BinViewModel.refresh")
+    }
+
+    /// Issue #106 review Fix 1: being offline is a supported mode, never a
+    /// defect — the bin already falls back to its offline snapshot (issue
+    /// #60) exactly as designed, so an offline refresh must not generate a
+    /// Sentry event.
+    @Test func refreshOfflineFailureDoesNotReportToErrorReporter() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let spy = SpyErrorReporter()
+        let viewModel = BinViewModel(api: client, errorReporter: spy)
+
+        session.enqueue(failure: URLError(.notConnectedToInternet))
+        await viewModel.refresh()
+
+        #expect(spy.reportCount == 0)
+    }
+
     @Test func removeSuccessDropsRowAndLeavesNoError() async throws {
         let (viewModel, _, target) = try await Self.removeFirstAfterRefresh()
 
@@ -111,6 +140,67 @@ struct BinViewModelTests {
         #expect(viewModel.removeError == nil)
         #expect(viewModel.entries.count == 1)
         #expect(viewModel.state == .loaded)
+    }
+
+    /// Issue #106: the snapshot-save-failure arm reports, even though it's
+    /// best-effort on screen (no `removeError`, no `.error` state) — a
+    /// silently-stale offline bin is otherwise invisible.
+    @Test func refreshSnapshotSaveFailureReportsToErrorReporter() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let spy = SpyErrorReporter()
+        let store = SpyBinStore(throwOnSave: true)
+        let viewModel = BinViewModel(api: client, binStore: store, errorReporter: spy)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.binResponseJSON.utf8)
+        ))
+        await viewModel.refresh()
+
+        #expect(viewModel.state == .loaded)  // the network refresh itself succeeded
+        #expect(spy.reportCount == 1)
+        #expect(spy.reports.first?.context == "BinViewModel.persistSnapshot")
+    }
+
+    // MARK: - Issue #108: bin analytics
+
+    @Test func removeSuccessRecordsBinItemRemoved() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let analytics = SpyAnalytics()
+        let viewModel = BinViewModel(api: client, analytics: analytics)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.binResponseJSON.utf8)
+        ))
+        await viewModel.refresh()
+        let target = try #require(viewModel.entries.first)
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200))
+        await viewModel.remove(target)
+
+        #expect(analytics.captures.count == 1)
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "bin_item_removed")
+        #expect(capture.properties["album_id"] == .int(target.albumId))
+    }
+
+    @Test func removeFailureRecordsNoAnalyticsEvent() async throws {
+        let (client, session) = try await SignedInClient.make()
+        let analytics = SpyAnalytics()
+        let viewModel = BinViewModel(api: client, analytics: analytics)
+
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(Fixtures.binResponseJSON.utf8)
+        ))
+        await viewModel.refresh()
+        let target = try #require(viewModel.entries.first)
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 500, body: Data(#"{"error":"boom"}"#.utf8)))
+        await viewModel.remove(target)
+
+        #expect(analytics.captures.isEmpty)
     }
 
     @Test func removeFailurePreservesEntriesAndPopulatesRemoveError() async throws {

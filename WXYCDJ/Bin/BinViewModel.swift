@@ -40,6 +40,15 @@ final class BinViewModel {
     /// `nil` when the SQLite store couldn't be opened — the view model then
     /// behaves exactly as before (online-only).
     private let binStore: (any BinStore)?
+    /// The app's error-reporting seam (issue #106). Defaults to
+    /// ``NoOpErrorReporter`` so every existing test construction site keeps
+    /// compiling unchanged and never fires a real Sentry event; `BinView`
+    /// passes `deps.errorReporter` explicitly.
+    private let errorReporter: any ErrorReporter
+    /// The app's product-analytics seam (issue #108). Defaults to
+    /// ``NoOpAnalytics`` for the same reason `errorReporter` defaults to
+    /// ``NoOpErrorReporter``; `BinView` passes `deps.analytics`.
+    private let analytics: any Analytics
     /// True once `entries` reflects an *authoritative* bin — a persisted snapshot
     /// (even an empty one) or a successful server load — as opposed to "not loaded
     /// yet". This is what consumes the store's never-written-`nil` vs written-
@@ -48,9 +57,16 @@ final class BinViewModel {
     /// empty tray rather than regressing to "Couldn't load bin".
     private var hasLoadedBin = false
 
-    init(api: APIClient, binStore: (any BinStore)? = nil) {
+    init(
+        api: APIClient,
+        binStore: (any BinStore)? = nil,
+        errorReporter: any ErrorReporter = NoOpErrorReporter(),
+        analytics: any Analytics = NoOpAnalytics()
+    ) {
         self.api = api
         self.binStore = binStore
+        self.errorReporter = errorReporter
+        self.analytics = analytics
     }
 
     /// Cold-launch step: populate `entries` from the persisted snapshot **before**
@@ -87,8 +103,19 @@ final class BinViewModel {
             // Persist the fresh server truth for the next offline launch.
             await persistSnapshot(after: "refresh")
         } catch let error as APIError {
+            // Being offline is a supported mode (issue #106 review Fix 1) —
+            // the bin already falls back to its offline snapshot (issue #60)
+            // exactly as designed, so a failed refresh here is not new
+            // information the DJ or crash telemetry needs. Every other
+            // APIError is a genuine defect and is reported.
+            if case .offline = error {
+                // no-op
+            } else {
+                errorReporter.report(error, context: "BinViewModel.refresh")
+            }
             handleRefreshFailure(error.localizedMessage)
         } catch {
+            errorReporter.report(error, context: "BinViewModel.refresh")
             handleRefreshFailure(error.localizedDescription)
         }
     }
@@ -112,6 +139,7 @@ final class BinViewModel {
             try await binStore?.saveSnapshot(entries)
         } catch {
             binLog.error("Bin snapshot save after \(operation, privacy: .public) failed: \(error.localizedDescription, privacy: .public). Offline bin may be stale.")
+            errorReporter.report(error, context: "BinViewModel.persistSnapshot")
         }
     }
 
@@ -136,6 +164,7 @@ final class BinViewModel {
         do {
             try await api.removeFromBin(albumId: entry.albumId, trackTitle: nil)
             entries.removeAll { $0.albumId == entry.albumId }
+            analytics.capture(BinItemRemovedEvent(albumId: entry.albumId))
             // Mirror the removal into the snapshot, or "remove → relaunch"
             // resurrects the release via loadSnapshot() until a network refresh
             // lands — indefinitely while offline, the case issue #60 exists for.

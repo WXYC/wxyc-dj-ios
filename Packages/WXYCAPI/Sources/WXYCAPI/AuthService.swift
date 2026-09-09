@@ -20,6 +20,25 @@ import Observation
 public enum AuthError: Error, Sendable, Equatable {
     case invalidCredentials
     case network(message: String)
+    /// A connectivity-class transport failure (no route to the server, DNS,
+    /// timeout, captive portal, a deliberate cancellation — see
+    /// ``ConnectivityErrorClassification``) at one of the two flatten sites
+    /// that used to fold every non-`AuthError` throw into ``network(message:)``
+    /// unconditionally: `completeSignIn(establishing:)`'s leg-1 catch-all, and
+    /// `recordingFailure(_:)`'s catch-all (`sendLoginCode`/`resendLoginCode`).
+    ///
+    /// Being offline is a supported mode — the app has an on-device catalog
+    /// clone and falls back to it (issues #58/#81) — and is never worth
+    /// reporting to crash telemetry, unlike a genuine transport defect. The
+    /// two "Non-HTTP response" throws (`postJSON`, `refreshJWT`) deliberately
+    /// stay ``network(message:)``: a response that reaches the HTTP layer
+    /// without a status code is a bug, not evidence of being offline.
+    ///
+    /// Carries the same message ``network(message:)`` would have, so
+    /// ``localizedMessage`` renders byte-for-byte what the DJ saw before this
+    /// split existed — the split changes only which *case* a caller pattern
+    /// matches on to decide whether to report, never what's shown on screen.
+    case offline(message: String)
     case missingSessionToken
     case serverFailure(status: Int, message: String?)
     /// The server understood the request and refused it for a stated reason the
@@ -32,19 +51,83 @@ public enum AuthError: Error, Sendable, Equatable {
     /// behind a "Server error (4xx)" prefix, reading as a backend fault for
     /// something the DJ mistyped.
     case rejected(message: String?)
+    /// The server refused because too many requests arrived too quickly, not
+    /// because anything about the credential was wrong.
+    ///
+    /// Distinct from ``serverFailure``, which it used to fall through to and
+    /// render as "Server error (429)": a rate limit is neither a fault nor
+    /// permanent, and the recovery is to wait — something the DJ can only do if
+    /// told. Reachable in ordinary use rather than as an abuse signal, because
+    /// Backend-Service keys its limiter on `X-Real-IP` (10 per 15 min) and the
+    /// control room shares one egress address, while an OTP sign-in spends three
+    /// requests of that bucket to a password's one.
+    ///
+    /// Payload-free deliberately: neither limiter returns a `Retry-After` this
+    /// app reads, so there is nothing to carry, and `AuthError` is compared with
+    /// `==` throughout the tests.
+    case rateLimited
     case notSignedIn
 
     public var localizedMessage: String {
         switch self {
         case .invalidCredentials: "Incorrect username or email, or password."
         case .network(let m): "Network error: \(m)"
+        case .offline(let m): "Network error: \(m)"
         case .missingSessionToken: "Sign-in did not return a session token."
         case .serverFailure(let s, let m): "Server error (\(s))\(m.map { ": \($0)" } ?? "")."
         // Empty-guarded rather than a bare `map`, so a `{"message": ""}` body
         // renders the fallback instead of a lone ".". No period-doubling guard:
         // better-auth's messages arrive unpunctuated, so it would be dead code.
         case .rejected(let m): m.flatMap { $0.isEmpty ? nil : "\($0)." } ?? "Sign-in was rejected."
+        case .rateLimited: "Too many attempts. Wait a few minutes and try again."
         case .notSignedIn: "You are signed out."
+        }
+    }
+}
+
+extension AuthError {
+    /// A case-identifying value safe to attach to a crash report — the
+    /// package-level privacy contract issue #106 exists to hold by
+    /// construction rather than by convention.
+    ///
+    /// Sentry builds `exception.value` (and `mechanism.desc`) from
+    /// `String(describing: error)` on a bridged Swift error, so handing a
+    /// reporter the raw enum would ship every associated value verbatim:
+    /// ``rejected(message:)``'s and ``serverFailure(status:message:)``'s
+    /// server-authored `message`, ``network(message:)``'s and
+    /// ``offline(message:)``'s client-side `localizedDescription` (which can
+    /// embed a hostname). `caseName` never carries a string this switch
+    /// didn't put there itself — only the case name, plus
+    /// ``serverFailure(status:message:)``'s status as a plain `Int`, never
+    /// the message beside it.
+    ///
+    /// Implemented as an exhaustive `switch` with **no `default:`** on
+    /// purpose: adding a case to `AuthError` without extending this switch is
+    /// a compile error, not a silent gap a future message-bearing case could
+    /// slip through unmapped.
+    public struct CaseName: Sendable, Equatable {
+        public let name: String
+        public let statusCode: Int?
+    }
+
+    public var caseName: CaseName {
+        switch self {
+        case .invalidCredentials:
+            CaseName(name: "invalidCredentials", statusCode: nil)
+        case .network:
+            CaseName(name: "network", statusCode: nil)
+        case .offline:
+            CaseName(name: "offline", statusCode: nil)
+        case .missingSessionToken:
+            CaseName(name: "missingSessionToken", statusCode: nil)
+        case .serverFailure(let status, _):
+            CaseName(name: "serverFailure", statusCode: status)
+        case .rejected:
+            CaseName(name: "rejected", statusCode: nil)
+        case .rateLimited:
+            CaseName(name: "rateLimited", statusCode: nil)
+        case .notSignedIn:
+            CaseName(name: "notSignedIn", statusCode: nil)
         }
     }
 }
@@ -87,7 +170,10 @@ public final class AuthService {
 
     private let configuration: WXYCAPIConfiguration
     private let storage: any TokenStorage
-    private let session: any RequestSession
+    /// Deliberately typed as the decorator, not `any RequestSession`: it makes
+    /// `self.session = session` fail to compile, so the no-cookie policy can't be
+    /// dropped by a consumer that copies this shape (issue #99).
+    private let session: CookielessSession
 
     /// Reports each auth-transport result to the connectivity layer (issue #71),
     /// mirroring ``APIClient``'s `onOutcome`: `true` when the server answered (any
@@ -130,7 +216,7 @@ public final class AuthService {
     ) {
         self.configuration = configuration
         self.storage = storage
-        self.session = session
+        self.session = CookielessSession(session)
         self.onOutcome = onOutcome
     }
 
@@ -197,6 +283,28 @@ public final class AuthService {
     ///     endpoint that can accept it (issue #97). Expected pre-trimmed.
     ///   - password: Passed through verbatim; whitespace is significant.
     public func signIn(identifier: String, password: String) async {
+        await completeSignIn {
+            try await self.performSignIn(identifier: identifier, password: password)
+        }
+    }
+
+    /// The credential-agnostic half of signing in: everything from `.signingIn`
+    /// through to a settled `.signedIn` / `.signedOut`, parameterized only by how
+    /// leg 1 obtains a session token.
+    ///
+    /// Every credential route shares this, and that sharing is the point rather
+    /// than a convenience. The invariants below are subtle, individually
+    /// load-bearing, and each was added to close a specific defect — the issue-#57
+    /// grace-anchor reset, the issue-#66 generation bump, the issue-#53
+    /// transient/terminal split, issue-#52's leave-no-trace rollback. A second
+    /// route that restated them would be free to restate one of them *wrongly*,
+    /// and the resulting drift would be invisible until the exact interleaving
+    /// that defect covers came back. So a new credential supplies a closure that
+    /// yields a session token, and inherits all of it.
+    ///
+    /// - Parameter establishing: Leg 1. Returns the session token on success;
+    ///   any throw is terminal for the sign-in.
+    private func completeSignIn(establishing: () async throws -> String) async {
         state = .signingIn
         lastError = nil
 
@@ -212,7 +320,7 @@ public final class AuthService {
         // no session to keep, so roll back and stop before the JWT exchange.
         let token: String
         do {
-            token = try await performSignIn(identifier: identifier, password: password)
+            token = try await establishing()
             try storage.save(token, for: .sessionToken)
             sessionToken = token
             sessionEpoch &+= 1  // a new generation, so a stale refresh of any prior session can't clobber it (issue #66)
@@ -223,7 +331,7 @@ public final class AuthService {
             return
         } catch {
             clearLocalSession()
-            lastError = .network(message: error.localizedDescription)
+            lastError = Self.classifyTransportFailure(error)
             state = .signedOut
             return
         }
@@ -246,6 +354,236 @@ public final class AuthService {
             // error — same as `restoreSession`'s transient arm.
             state = .signedIn(payload: nil)
         }
+    }
+
+    /// Mail a one-time sign-in code to the DJ behind `identifier` (issue #100).
+    ///
+    /// Two legs, the first often skipped. `POST /auth/wxyc/lookup-email` resolves
+    /// a username to the address the code goes to; an identifier containing `@`
+    /// skips it entirely, because the resolver's own first line echoes such an
+    /// identifier back unchanged (`if (identifier.includes('@')) return identifier;`).
+    /// Then `POST /auth/email-otp/send-verification-otp` mails a 6-digit code
+    /// valid for five minutes.
+    ///
+    /// Deliberately does **not** touch ``state``. No session exists yet, so
+    /// entering `.signingIn` would claim one is being established and strand the
+    /// UI in a spinner state on failure; the view model owns the in-flight and
+    /// error surface for this step instead. `lastError` is cleared on entry, the
+    /// way ``signIn(identifier:password:)`` clears it, so a stale message from an
+    /// earlier attempt can't sit under a fresh one.
+    ///
+    /// It also **records the failure in ``lastError``** before rethrowing, so
+    /// every credential route reports errors the same way. `signIn` reports by
+    /// mutating `lastError`; having this one report only by throwing forced the
+    /// UI to keep a second error store and coalesce the two, which is a hazard
+    /// that already produced one defect (a resend failure that both went
+    /// unrendered *and* erased the message on screen, since this method clears
+    /// `lastError` on entry). One convention, one surface, one thing for the next
+    /// credential route to copy.
+    ///
+    /// - Returns: The address the code went to, plus how much of it may be shown
+    ///   — see ``LoginCodeDestination``.
+    /// - Throws: ``AuthError/rejected(message:)`` when no account matches;
+    ///   ``AuthError/rateLimited`` on a 429 from either leg.
+    public func sendLoginCode(identifier: String) async throws -> LoginCodeDestination {
+        lastError = nil
+        return try await recordingFailure {
+            let classified = SignInIdentifier(identifier)
+
+            let email: String
+            switch classified {
+            case .email(let typed):
+                email = typed
+            case .username:
+                email = try await self.lookUpEmail(identifier: identifier)
+            }
+
+            try await self.sendVerificationCode(to: email)
+            return LoginCodeDestination(email: email, typedEmail: classified.typedEmail)
+        }
+    }
+
+    /// Mail another code to an address ``sendLoginCode(identifier:)`` already
+    /// resolved.
+    ///
+    /// Skips the lookup by construction, which is the point. Routing a resend
+    /// back through `sendLoginCode` would re-POST `/auth/wxyc/lookup-email` for a
+    /// username — an answer that cannot have changed, since the identifier field
+    /// isn't even on screen by then — and spend **two** slots of Backend-Service's
+    /// per-IP bucket where one would do, in precisely the situation (slow mail, an
+    /// expired code) where the DJ is most likely to tap again. It also keeps the
+    /// resolved address off the return path entirely, so a resend has nothing to
+    /// re-derive a display string from and cannot leak one.
+    public func resendLoginCode(to email: String) async throws {
+        lastError = nil
+        try await recordingFailure {
+            try await self.sendVerificationCode(to: email)
+        }
+    }
+
+    /// Run `work`, recording any failure in ``lastError`` before rethrowing.
+    ///
+    /// The non-session legs still `throw` — their caller is right there and can
+    /// react — but they report through the same field `signIn` does, so the UI
+    /// reads exactly one error surface. The `AuthError`-else-classify mapping
+    /// mirrors `completeSignIn`'s leg 1.
+    private func recordingFailure<T>(_ work: () async throws -> T) async throws -> T {
+        do {
+            return try await work()
+        } catch {
+            lastError = (error as? AuthError) ?? Self.classifyTransportFailure(error)
+            throw error
+        }
+    }
+
+    /// The classification shared by both transport catch-all flatten sites
+    /// (`completeSignIn`'s leg 1, `recordingFailure`): a connectivity-class
+    /// `URLError` — being offline, a supported mode never worth reporting —
+    /// becomes ``AuthError/offline(message:)``; everything else is a genuine
+    /// transport defect and stays ``AuthError/network(message:)``. One home
+    /// for this so the two sites can't quietly diverge on what counts as
+    /// "offline" (see ``AuthError/offline(message:)``'s doc comment for why
+    /// the "Non-HTTP response" throws are deliberately NOT routed through
+    /// this — they never reach this function at all, since they already
+    /// construct `.network` directly).
+    private static func classifyTransportFailure(_ error: Error) -> AuthError {
+        ConnectivityErrorClassification.isConnectivityFailure(error)
+            ? .offline(message: error.localizedDescription)
+            : .network(message: error.localizedDescription)
+    }
+
+    /// Resolve a username to its verification address.
+    ///
+    /// Backend-Service's own route, so it answers `{error: …}` rather than
+    /// better-auth's `{message, code}` — and `APIErrorResponse` requires
+    /// `message`, so that body decodes to nothing at all. Failures are therefore
+    /// mapped by **status**; reaching for a body message here would always yield
+    /// `nil` and render `.rejected`'s bare "Sign-in was rejected." fallback.
+    private func lookUpEmail(identifier: String) async throws -> String {
+        let (data, http) = try await postJSON(
+            path: "wxyc/lookup-email",
+            body: try JSONCoders.encoder.encode(LookupEmailRequest(identifier: identifier))
+        )
+        switch http.statusCode {
+        case 200..<300:
+            guard let email = (try? JSONCoders.decoder.decode(LookupEmailResponse.self, from: data))?.email,
+                  !email.isEmpty
+            else {
+                // `{"email": null}` — the one failure this flow can name exactly.
+                // Says "username" and not "username or email" because an
+                // identifier holding an `@` never reaches this leg.
+                throw AuthError.rejected(message: "No account matches that username")
+            }
+            return email
+        case 429:
+            throw AuthError.rateLimited
+        default:
+            // Includes the route's only 400 (`identifier required`), which this
+            // client cannot provoke — `LoginViewModel.canSubmit` gates the empty
+            // identifier — so if it ever fires it signals a client bug, and
+            // "Server error (400)" is the honest way to say that.
+            throw AuthError.serverFailure(status: http.statusCode, message: nil)
+        }
+    }
+
+    /// Ask better-auth to mail a code to `email`.
+    ///
+    /// A better-auth route, so unlike the lookup it *does* carry a readable
+    /// `{message, code}`, and its 400 must render that message: `dj@wxyc`
+    /// classifies as an email on the `@`, skips the lookup, and reaches
+    /// `z.email()` here, which names the actual mistake. Hiding that behind
+    /// "Server error (400)" would discard the exact payoff ``SignInIdentifier``
+    /// routes on `@` to obtain.
+    ///
+    /// A 200 says nothing about whether the account exists: `disableSignUp: true`
+    /// makes the server answer `{success: true}` for an unknown address after
+    /// quietly discarding the code. That is deliberate anti-enumeration, and it
+    /// is why a mistyped *email* cannot be reported here.
+    private func sendVerificationCode(to email: String) async throws {
+        let (data, http) = try await postJSON(
+            path: "email-otp/send-verification-otp",
+            body: try JSONCoders.encoder.encode(SendLoginCodeRequest(email: email))
+        )
+        switch http.statusCode {
+        case 200..<300:
+            return
+        case 429:
+            throw AuthError.rateLimited
+        case 400, 403:
+            throw AuthError.rejected(message: Self.serverMessage(in: data))
+        default:
+            throw AuthError.serverFailure(status: http.statusCode, message: Self.serverMessage(in: data))
+        }
+    }
+
+    /// Sign a DJ in with a code mailed by ``sendLoginCode(identifier:)``.
+    ///
+    /// `POST /auth/sign-in/email-otp` is a peer of the two password routes —
+    /// same `setSessionCookie`, same global `bearer()` plugin, so the same
+    /// `set-auth-token` header — which is why this is a one-line call rather
+    /// than a second state machine. Everything after the token is obtained is
+    /// shared with the password path by construction.
+    ///
+    /// One server-side asymmetry worth knowing, since it is invisible from here:
+    /// Backend-Service sets `requireEmailVerification: true`, so an unverified
+    /// account is refused at password sign-in — but this route instead *marks it
+    /// verified* and proceeds, on the reasoning that possession of the mailbox is
+    /// the very proof the verification email would have demanded. See ADR 0006.
+    ///
+    /// - Parameters:
+    ///   - email: ``LoginCodeDestination/email``, not the typed identifier.
+    ///   - otp: The DJ's typed code; normalized to digits before it is sent.
+    public func signIn(email: String, otp: String) async {
+        await completeSignIn {
+            // The server's alphabet is provably `0-9` — better-auth's
+            // `defaultOTPGenerator` is `generateRandomString(otpLength ?? 6, "0-9")`
+            // and Backend-Service overrides `otpLength` but not `generateOTP` — so
+            // discarding non-digits can only ever drop characters a real code
+            // cannot contain, and it makes a code pasted as "123 456" work. The UI
+            // strips at input too; this is the guard for every other caller of
+            // what is, after all, public API.
+            let digits = otp.filter(\.isNumber)
+            return try await self.establishSession(
+                path: "sign-in/email-otp",
+                body: try JSONCoders.encoder.encode(OTPSignInRequest(email: email, otp: digits)),
+                rejectionCopy: OTPRejection.copy(for:fallback:)
+            )
+        }
+    }
+
+    /// Drop the last sign-in error without touching the session.
+    ///
+    /// `lastError` is otherwise cleared only when a sign-in begins or a sign-out
+    /// completes, which leaves a login screen with more than one credential form
+    /// able to show a message the visible form never produced — a failed code
+    /// verify still set when the DJ switches to the password field. The UI clears
+    /// it on every such transition.
+    public func clearLastError() {
+        lastError = nil
+    }
+
+    /// POST a JSON body to an auth-service path and hand back the raw response.
+    ///
+    /// Shares ``send(_:)`` — and therefore the issue-#71 connectivity hook, and
+    /// the ``CookielessSession`` that `send` issues over (issue #99) — with every
+    /// other request this service makes. That sharing is the point: both OTP legs
+    /// are non-GET better-auth
+    /// routes, so both sit under the global `originCheckMiddleware` that a
+    /// lingering cookie arms, and a hand-rolled `URLRequest` here would silently
+    /// opt out of the fix `b5ea02d` landed.
+    private func postJSON(path: String, body: Data) async throws -> (Data, HTTPURLResponse) {
+        let url = configuration.authBaseURL.appending(path: path)
+        var request = URLRequest(url: url, timeoutInterval: configuration.timeout)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = body
+
+        let (data, response) = try await send(request)
+        guard let http = response as? HTTPURLResponse else {
+            throw AuthError.network(message: "Non-HTTP response")
+        }
+        return (data, http)
     }
 
     /// Forget every local trace of the session: the in-memory bearer, the cached
@@ -342,24 +680,6 @@ public final class AuthService {
     /// machine — is byte-for-byte unchanged. Pure observation: the only added
     /// effect is the `onOutcome` call.
     private func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
-        var request = request
-        // This client authenticates with a bearer token and never wants a cookie
-        // jar, and an unwanted one is actively fatal here. better-auth's
-        // `bearer()` after-hook ADDS `set-auth-token` without stripping the
-        // `Set-Cookie` it rides alongside, so a default `URLSession` stores the
-        // session cookie and replays it on every later request to the host —
-        // including the next sign-in. better-auth registers
-        // `originCheckMiddleware` globally on every non-GET, and it enforces the
-        // `Origin` header *only when a cookie is present*; a native client sends
-        // no Origin, so a cookie-bearing sign-in is refused with
-        // `403 MISSING_OR_NULL_ORIGIN` before any credential check. (Verified
-        // against production on both sign-in routes — this is not specific to
-        // the issue-#97 email route.) Suppressing cookie handling stops the jar
-        // filling in the first place *and* stops any pre-existing cookie from an
-        // older build being sent, so the middleware never arms. It also keeps the
-        // session off disk outside the Keychain, which `clearLocalSession()`
-        // can't reach — issue #52's leave-no-trace contract.
-        request.httpShouldHandleCookies = false
         do {
             let result = try await session.data(for: request)
             onOutcome?(true)
@@ -387,17 +707,33 @@ public final class AuthService {
         // body key. Everything after this — the `set-auth-token` capture, the
         // JWT exchange, the issue-#53/#66 state machine — is route-agnostic.
         let identifier = SignInIdentifier(rawIdentifier)
-        let url = configuration.authBaseURL.appending(path: identifier.path)
-        var request = URLRequest(url: url, timeoutInterval: configuration.timeout)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.httpBody = try identifier.encodedBody(password: password)
+        return try await establishSession(
+            path: identifier.path,
+            body: try identifier.encodedBody(password: password)
+        )
+    }
 
-        let (data, response) = try await send(request)
-        guard let http = response as? HTTPURLResponse else {
-            throw AuthError.network(message: "Non-HTTP response")
-        }
+    /// POST a credential body to a better-auth sign-in route and return the
+    /// session token it issues.
+    ///
+    /// The counterpart to ``completeSignIn(establishing:)``: that owns the state
+    /// machine, this owns the wire. Every sign-in route reaches the same
+    /// response shape — `bearer()` is a global plugin, so `set-auth-token`
+    /// arrives identically — and the same refusal vocabulary, so both live here
+    /// once instead of once per credential.
+    ///
+    /// - Parameter rejectionCopy: How to word a 400/403 refusal, given the
+    ///   server's `code` and `message`. Defaults to rendering the server's own
+    ///   message, which is what the password routes want; a route whose codes
+    ///   have friendlier equivalents (the OTP codes, issue #100) supplies its
+    ///   own. **Status classification stays here** — only the string varies, so
+    ///   a route cannot accidentally reclassify a 401 as recoverable.
+    private func establishSession(
+        path: String,
+        body: Data,
+        rejectionCopy: (_ code: String?, _ message: String?) -> String? = { _, message in message }
+    ) async throws -> String {
+        let (data, http) = try await postJSON(path: path, body: body)
         switch http.statusCode {
         case 200..<300:
             if let token = http.value(forHTTPHeaderField: "set-auth-token"), !token.isEmpty {
@@ -409,12 +745,16 @@ public final class AuthService {
             throw AuthError.missingSessionToken
         case 401:
             throw AuthError.invalidCredentials
+        case 429:
+            throw AuthError.rateLimited
         case 400, 403:
             // The server refused for a reason it named, and the reason is not
             // "wrong password": a malformed email, an unverified address, a
-            // rejected origin. Surface its message rather than asserting a
-            // credential failure the DJ would try to fix by retyping.
-            throw AuthError.rejected(message: Self.serverMessage(in: data))
+            // rejected origin, a stale one-time code. Surface its reason rather
+            // than asserting a credential failure the DJ would try to fix by
+            // retyping.
+            let body = Self.serverError(in: data)
+            throw AuthError.rejected(message: rejectionCopy(body?.code, body?.message))
         default:
             throw AuthError.serverFailure(status: http.statusCode, message: Self.serverMessage(in: data))
         }
@@ -425,7 +765,22 @@ public final class AuthService {
     /// the "what does an error body look like" decision in one place, so a second
     /// message key or a decode fallback is a single edit rather than one per arm.
     private static func serverMessage(in data: Data) -> String? {
-        (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data))?.message
+        serverError(in: data)?.message
+    }
+
+    /// The decoded better-auth error body, or `nil` if this isn't one.
+    ///
+    /// The single place that decides what an error body looks like — which is
+    /// what ``serverMessage(in:)``'s doc comment has always claimed, and what two
+    /// independent decoders quietly stopped delivering. Decoding once also means
+    /// `code` and `message` provably come from the same parse.
+    ///
+    /// Note this reads better-auth's `{message, code}` vocabulary. Backend-Service's
+    /// own routes and the Express rate limiter answer `{error: …}`, which
+    /// ``APIErrorResponse`` (required `message`) cannot decode at all — callers on
+    /// those paths map by status instead of reaching for this.
+    private static func serverError(in data: Data) -> APIErrorResponse? {
+        try? JSONCoders.decoder.decode(APIErrorResponse.self, from: data)
     }
 
     private func refreshJWT() async throws -> JWTPayload {

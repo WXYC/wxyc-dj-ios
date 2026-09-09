@@ -12,7 +12,9 @@
 //  Copyright © 2026 WXYC. All rights reserved.
 //
 
+import AVFoundation
 import Foundation
+import MediaPlayer
 import Observation
 import OSLog
 import WXYCAPI
@@ -61,6 +63,35 @@ final class AppDependencies {
     /// chain, which is what keeps `RealSearchableIndex`'s `@unchecked Sendable` sound
     /// (no two Spotlight batches open at once). `nil` when ``catalogStore`` is.
     let catalogRefreshService: CatalogRefreshService?
+    /// The app's error-reporting seam (issue #106). Defaults to
+    /// ``NoOpErrorReporter`` on both test-facing initializers below
+    /// (``init(catalogStoreURL:binStoreURL:reporter:)`` and
+    /// ``init(catalogStore:reporter:)``) so unit tests -- including the
+    /// store-open degrade tests just below, which exercise exactly the paths
+    /// a capture site lives on -- never fire a real Sentry event. Only
+    /// ``init()``, whose sole caller is `AppDelegate`, passes a real
+    /// ``SentryErrorReporter`` explicitly.
+    let errorReporter: any ErrorReporter
+    /// The app's product-analytics seam (issue #108). Same default-to-no-op
+    /// discipline as ``errorReporter`` -- both test-facing initializers below
+    /// default to ``NoOpAnalytics`` so unit tests never fire a real PostHog
+    /// event; only ``init()``, whose sole caller is `AppDelegate`, passes a
+    /// real ``PostHogAnalytics`` explicitly.
+    let analytics: any Analytics
+    /// Digital-archive playback state (issue #144): the queue, the transport,
+    /// rendition selection, and the manifest-expiry / media-403 policies.
+    /// Owned here and injected through ``View/wxycAppEnvironment(_:)`` beside
+    /// the other app-wide observables.
+    ///
+    /// Wired over the real ``AVQueuePlayerEngine`` (issue #145) at the one
+    /// production call site, ``init()``. Both test-facing initializers below
+    /// take `engine: any PlaybackEngine` defaulted to ``InertPlaybackEngine``
+    /// instead -- the same defaulted-to-inert convention `audioSession`,
+    /// `nowPlaying`, `reporter`, and `analytics` already follow here, so a
+    /// test constructing `AppDependencies` for unrelated (catalog/bin)
+    /// coverage never stands up a real `AVQueuePlayer`, and never writes to
+    /// the process-wide `MPNowPlayingInfoCenter`.
+    let playbackController: PlaybackController
     /// Cold-launch Spotlight deep-link state (issue #19 step 7), injected via
     /// `.environment` and bound to RootView's `fullScreenCover`. The resolution
     /// that turns a tapped `album.<id>` into a route lives here — on
@@ -74,9 +105,23 @@ final class AppDependencies {
     private var presentationToken = 0
 
     convenience init() {
+        // Built once and shared: the coordinator wants the same reporter the
+        // rest of the graph gets, and this is the **only** place in the app
+        // that names either process-wide media singleton --
+        // `AVAudioSession.sharedInstance()` (issue #144 review) and
+        // `MPNowPlayingInfoCenter.default()` (issue #145 review). Neither
+        // `AudioSessionCoordinator.init(session:)` nor
+        // `NowPlayingInfoCenterManager.init(infoCenter:)` defaults its
+        // parameter, so no test path can reach the real one by omission.
+        let reporter = SentryErrorReporter()
         self.init(
             catalogStoreURL: Self.defaultCatalogStoreURL(),
-            binStoreURL: Self.defaultBinStoreURL()
+            binStoreURL: Self.defaultBinStoreURL(),
+            reporter: reporter,
+            analytics: PostHogAnalytics(),
+            audioSession: AudioSessionCoordinator(session: AVAudioSession.sharedInstance(), reporter: reporter),
+            nowPlaying: NowPlayingInfoCenterManager(infoCenter: MPNowPlayingInfoCenter.default()),
+            engine: AVQueuePlayerEngine()
         )
     }
 
@@ -85,7 +130,26 @@ final class AppDependencies {
     /// defaults point under Application Support). A `nil` URL, or a store that
     /// fails to open, leaves that feature inert. `binStoreURL` defaults to `nil`
     /// so existing catalog-only test call sites don't open a real bin store.
-    init(catalogStoreURL: URL?, binStoreURL: URL? = nil) {
+    /// `reporter` defaults to ``NoOpErrorReporter`` -- see ``errorReporter``'s
+    /// doc comment for why only ``init()`` overrides it. `analytics` defaults
+    /// to ``NoOpAnalytics`` for the identical reason (see ``analytics``'s doc
+    /// comment). `audioSession` and `nowPlaying` default to `nil` on the same
+    /// principle: the inert value is the default, and `PlaybackController`
+    /// treats a `nil` coordinator as "no session to manage" and a `nil` Now
+    /// Playing manager as "nothing to mirror", so no test path stands the
+    /// process-wide `AVAudioSession` or `MPNowPlayingInfoCenter` up by
+    /// omission.
+    init(
+        catalogStoreURL: URL?,
+        binStoreURL: URL? = nil,
+        reporter: any ErrorReporter = NoOpErrorReporter(),
+        analytics: any Analytics = NoOpAnalytics(),
+        audioSession: AudioSessionCoordinator? = nil,
+        nowPlaying: NowPlayingInfoCenterManager? = nil,
+        engine: any PlaybackEngine = InertPlaybackEngine()
+    ) {
+        self.errorReporter = reporter
+        self.analytics = analytics
         let connectivity = ConnectivityMonitor()
         self.connectivity = connectivity
         let (configuration, authService, api) = Self.makeCore(onOutcome: Self.outcomeHandler(for: connectivity))
@@ -118,6 +182,18 @@ final class AppDependencies {
                 )
             } catch {
                 catalogLog.error("Catalog store unavailable at \(catalogStoreURL.path, privacy: .public): \(error.localizedDescription, privacy: .public). Falling back to in-app-only search.")
+                // A silent-degrade path (issue #106): the DJ never sees this —
+                // catalog features just go inert — so crash reporting is the
+                // only way it's ever visible. `NSError`'s domain/code is the
+                // same identity `catalogErrorDetail` builds for the os_log
+                // line above; reused here as `.errorIdentity` rather than
+                // re-derived a second way.
+                let ns = error as NSError
+                reporter.report(
+                    error,
+                    context: "AppDependencies.init.catalogStore",
+                    extra: ["storeError": .errorIdentity(domain: ns.domain, code: ns.code)]
+                )
                 self.catalogStore = nil
                 self.catalogRefreshService = nil
             }
@@ -129,29 +205,68 @@ final class AppDependencies {
         // The bin snapshot store (issue #60). Opened independently of the catalog
         // store — its own DB + actor — so an offline bin read never waits behind a
         // catalog replace. Degrades to online-only (nil) if the file can't open.
-        self.binStore = Self.openBinStore(at: binStoreURL)
+        self.binStore = Self.openBinStore(at: binStoreURL, reporter: reporter)
         self.librarySearch = LibrarySearch(api: api, catalogStore: catalogStore, connectivity: connectivity)
+        self.playbackController = PlaybackController(
+            engine: engine,
+            api: api,
+            audioSession: audioSession,
+            nowPlaying: nowPlaying,
+            reporter: reporter
+        )
     }
 
     /// Open the bin snapshot store at `url`, logging and degrading to `nil` on
     /// failure (disk unwritable) so the composition root never crashes.
-    private static func openBinStore(at url: URL?) -> (any BinStore)? {
+    ///
+    /// Reports the failure (issue #106): a bin-store-open failure is a silent
+    /// field defect exactly like the catalog-store one above — the DJ just
+    /// sees an online-only bin, with nothing on screen to say why.
+    private static func openBinStore(at url: URL?, reporter: any ErrorReporter) -> (any BinStore)? {
         guard let url else { return nil }
         do {
             return try SQLiteBinStore(url: url)
         } catch {
             catalogLog.error("Bin store unavailable at \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public). Falling back to online-only bin.")
+            let ns = error as NSError
+            reporter.report(
+                error,
+                context: "AppDependencies.openBinStore",
+                extra: ["storeError": .errorIdentity(domain: ns.domain, code: ns.code)]
+            )
             return nil
         }
     }
 
-    /// Test seam: build the composition root around an injected catalog store and
-    /// no refresh service. The deep-link resolution path (``handleSpotlightTap``,
-    /// ``handleAuthChange``, ``present(albumID:)``) reads only ``catalogStore``,
-    /// so a unit test can supply a store whose `row(id:)` suspends on demand to
-    /// drive `present`'s most-recent-wins token latch across the `await` —
-    /// the one branch the sequential-await tests can't reach.
-    init(catalogStore: any CatalogStore) {
+    /// Test seam: build the composition root around an injected catalog store,
+    /// defaulting to no refresh service. The deep-link resolution path
+    /// (``handleSpotlightTap``, ``handleAuthChange``, ``present(albumID:)``) reads
+    /// only ``catalogStore``, so a unit test can supply a store whose `row(id:)`
+    /// suspends on demand to drive `present`'s most-recent-wins token latch across
+    /// the `await` — the one branch the sequential-await tests can't reach.
+    /// `reporter` defaults to ``NoOpErrorReporter``, same rationale as the
+    /// designated initializer.
+    ///
+    /// `catalogRefreshService` is `nil` by default (unchanged from before), but
+    /// **can** be supplied — issue #106's ``refreshCatalog()``/
+    /// ``handleBackgroundPoll()`` capture-site tests need to drive a real
+    /// `CatalogRefreshService.refresh()`/`.poll()` failure (or `.notSignedIn`
+    /// skip) without touching the network via `self.api`, which this initializer
+    /// still builds from `Bundle.main` and would otherwise hit production. A test
+    /// builds its own service over a `StubRequestSession`-backed `APIClient` —
+    /// `refreshCatalog()`/`handleBackgroundPoll()` only ever call the injected
+    /// service, never `self.api` — and hands it in here.
+    init(
+        catalogStore: any CatalogStore,
+        catalogRefreshService: CatalogRefreshService? = nil,
+        reporter: any ErrorReporter = NoOpErrorReporter(),
+        analytics: any Analytics = NoOpAnalytics(),
+        audioSession: AudioSessionCoordinator? = nil,
+        nowPlaying: NowPlayingInfoCenterManager? = nil,
+        engine: any PlaybackEngine = InertPlaybackEngine()
+    ) {
+        self.errorReporter = reporter
+        self.analytics = analytics
         let connectivity = ConnectivityMonitor()
         self.connectivity = connectivity
         let (configuration, authService, api) = Self.makeCore(onOutcome: Self.outcomeHandler(for: connectivity))
@@ -159,9 +274,16 @@ final class AppDependencies {
         self.authService = authService
         self.api = api
         self.catalogStore = catalogStore
-        self.catalogRefreshService = nil
+        self.catalogRefreshService = catalogRefreshService
         self.binStore = nil
         self.librarySearch = LibrarySearch(api: api, catalogStore: catalogStore, connectivity: connectivity)
+        self.playbackController = PlaybackController(
+            engine: engine,
+            api: api,
+            audioSession: audioSession,
+            nowPlaying: nowPlaying,
+            reporter: reporter
+        )
     }
 
     /// Build the configuration + auth + API client shared by every initializer.
@@ -218,9 +340,32 @@ final class AppDependencies {
     /// `true` on a real refresh/304 **and** on a clean no-session skip (the task
     /// did its job; we'll retry next cycle), `false` only on a genuine error
     /// (network/decode) so iOS may reschedule sooner.
+    ///
+    /// `trigger` (issue #108) names which of this method's three call sites
+    /// (`WXYCDJApp`'s launch `.task`, its scene-`.active` `.onChange`, and
+    /// `CatalogBackgroundTasks`'s reindex handler) is calling, so
+    /// `catalog_refresh_completed` can answer "do the background tasks
+    /// actually run on real devices?" A fourth trigger, `.backgroundPoll`, is
+    /// **not** one of this method's call sites — `handleBackgroundPoll()`
+    /// below records its own `catalog_refresh_completed` for the cheap
+    /// `BGAppRefreshTask` poll leg, which this method never sees (issue
+    /// #118 item 3).
+    ///
+    /// **Required, not defaulted** -- deliberately, and for the same reason
+    /// `AlbumDetailView.origin` is: every candidate default is a *real* case,
+    /// so a fourth call site that forgot the argument wouldn't fail, it would
+    /// silently file under whichever case the default happened to be and
+    /// corrupt the exact dimension this event exists to measure. A compile
+    /// error is the cheaper outcome.
     @discardableResult
-    func refreshCatalog() async -> Bool {
+    func refreshCatalog(trigger: CatalogRefreshTrigger) async -> Bool {
         guard let catalogRefreshService else {
+            // Issue #118: previously silent -- a device whose SQLite store
+            // never opened (`AppDependencies.init`'s degrade path) looked
+            // identical, in this metric, to one that simply never refreshed.
+            // `.noStore` names the structural difference: nothing was
+            // attempted because there was nothing to attempt it with.
+            analytics.capture(CatalogRefreshCompletedEvent.noStore(trigger: trigger))
             await updateLastCatalogSyncText()
             return true
         }
@@ -228,12 +373,37 @@ final class AppDependencies {
         do {
             let outcome = try await catalogRefreshService.refresh()
             catalogLog.info("Catalog refresh: \(String(describing: outcome), privacy: .public)")
+            analytics.capture(CatalogRefreshCompletedEvent.from(outcome: outcome, trigger: trigger))
             success = true
         } catch APIError.notSignedIn {
+            // Expected state, not a defect: a missing/expired session is a
+            // silent skip everywhere else in this method too, so it is never
+            // reported (issue #106) or counted as a refresh attempt (issue
+            // #108) — nothing was attempted, so there's nothing to log.
             catalogLog.debug("Catalog refresh skipped: not signed in")
             success = true
+        } catch APIError.offline {
+            // Being offline is a supported mode (issues #58/#81), never a
+            // defect (issue #106 review Fix 1) — the app has an on-device
+            // catalog clone behind it. Unlike the `.notSignedIn` skip above,
+            // a refresh really was attempted and genuinely failed to reach
+            // the server, so `success` stays `false` exactly as the generic
+            // catch below would set it, and the attempt is still counted as
+            // `.failed` for analytics (issue #108) — station network health
+            // is exactly the signal `offline_latch_engaged` also answers, and
+            // a genuinely offline background task is real product data even
+            // though it's never worth a Sentry event.
+            catalogLog.debug("Catalog refresh failed: offline")
+            analytics.capture(CatalogRefreshCompletedEvent.failed(trigger: trigger))
+            success = false
         } catch {
             catalogLog.error("Catalog refresh failed: \(Self.catalogErrorDetail(error), privacy: .public)")
+            // A Core Spotlight batch rejection (CSIndexErrorDomain -1001) or a
+            // systematic decode failure surfaces here for the first time in
+            // the field (issue #106) — the error object itself carries the
+            // domain/code `catalogErrorDetail` renders for the log line above.
+            errorReporter.report(error, context: "AppDependencies.refreshCatalog")
+            analytics.capture(CatalogRefreshCompletedEvent.failed(trigger: trigger))
             success = false
         }
         // Re-derive the "last synced" line from the clone's watermark regardless
@@ -297,17 +467,56 @@ final class AppDependencies {
     /// cheap conditional GET; on a `200` submit the charging-gated reindex
     /// `BGProcessingTask` rather than reindexing on the ~30 s app-refresh budget.
     /// A missing/expired session is a silent skip + reschedule.
+    ///
+    /// **Issue #118 item 3.** Before this, the poll leg had no analytics
+    /// signal of its own — only the reindex `BGProcessingTask` (a
+    /// `refreshCatalog(trigger: .background)` call) ever recorded
+    /// `catalog_refresh_completed`, and that task is `requiresExternalPower`
+    /// *and* only submitted when a poll's conditional GET reports a `200`. A
+    /// device whose app-refresh task runs faithfully but whose catalog never
+    /// changes, or which is never on a charger, reported **zero**
+    /// `.background` events — indistinguishable from "background tasks never
+    /// fire." Every reachable outcome here now records under the
+    /// `.backgroundPoll` trigger via ``CatalogRefreshCompletedEvent/poll(outcome:trigger:)``
+    /// (success) or ``CatalogRefreshCompletedEvent/failed(trigger:)``
+    /// (offline / a genuine error) — mirroring `refreshCatalog()`'s identical
+    /// `.notSignedIn`-is-not-an-attempt / `.offline`-still-counts split.
     func handleBackgroundPoll() async {
-        guard let catalogRefreshService else { return }
+        guard let catalogRefreshService else {
+            // Issue #118 review: the no-store degrade is recorded here too, not
+            // just in `refreshCatalog()`. Reachable despite
+            // `scheduleBackgroundRefreshIfAvailable()`'s store check — a task
+            // submitted on a launch that *had* a store fires on a later launch
+            // whose store failed to open. Leaving it silent would close the
+            // "broken store looks like a device that never refreshed" gap on
+            // one leg and leave it open on the other. Still no reschedule:
+            // re-arming would queue wake-ups that can never progress.
+            analytics.capture(CatalogRefreshCompletedEvent.noStore(trigger: .backgroundPoll))
+            return
+        }
         CatalogBackgroundTasks.scheduleNextPoll()
         do {
-            if try await catalogRefreshService.poll() {
+            let outcome = try await catalogRefreshService.poll()
+            analytics.capture(CatalogRefreshCompletedEvent.poll(outcome: outcome, trigger: .backgroundPoll))
+            if outcome == .changed {
                 CatalogBackgroundTasks.scheduleReindex()
             }
         } catch APIError.notSignedIn {
+            // Same expected-state carve-out as refreshCatalog() (issue #106):
+            // not a refresh attempt at all, so no analytics event either.
             catalogLog.debug("Background catalog poll skipped: not signed in")
+        } catch APIError.offline {
+            // Same offline carve-out as refreshCatalog() (issue #106 review
+            // Fix 1) — a background poll running into a dead network on a
+            // system schedule is exactly the spam `enableCaptureFailedRequests
+            // = false` exists to prevent. Still a genuine attempt for product
+            // analytics, exactly as refreshCatalog()'s offline arm is.
+            catalogLog.debug("Background catalog poll skipped: offline")
+            analytics.capture(CatalogRefreshCompletedEvent.failed(trigger: .backgroundPoll))
         } catch {
             catalogLog.error("Background catalog poll failed: \(Self.catalogErrorDetail(error), privacy: .public)")
+            errorReporter.report(error, context: "AppDependencies.handleBackgroundPoll")
+            analytics.capture(CatalogRefreshCompletedEvent.failed(trigger: .backgroundPoll))
         }
     }
 
@@ -359,7 +568,7 @@ final class AppDependencies {
         // (before the resolve hop) so a concurrent drain can't replay the stale
         // parked id behind us.
         router.pending = nil
-        await present(albumID: albumID)
+        await present(albumID: albumID, parked: false)
     }
 
     /// Reconcile the deep-link surface with an auth-state transition — RootView
@@ -370,7 +579,15 @@ final class AppDependencies {
     ///   parked id into ``Router/deepLink``.
     /// - **Genuine sign-out** (was signed in, now isn't): tear down — dismiss any
     ///   presented cover and drop any park via ``invalidateDeepLink()`` — so a
-    ///   deep-link detail can't strand over `LoginView` issuing 401s.
+    ///   deep-link detail can't strand over `LoginView` issuing 401s, **and
+    ///   stop playback**. The archive is role-gated (`digital_archive` denies
+    ///   `member`), but a presigned manifest URL stays valid for up to four
+    ///   hours after it is minted, so `AVQueuePlayer` would happily keep
+    ///   streaming a signed-out DJ's album — with `RootView` having swapped
+    ///   `MainView` for `LoginView`, taking the mini-player and the detail
+    ///   screen's Play section with it, so there is no transport left in the
+    ///   app to reach `stop()` with. Lock-screen transport would still be
+    ///   live, which makes it worse rather than better.
     /// - **Still signed out** (cold-launch `.unknown` → `.signedOut`, no
     ///   session): do nothing, so a tap parked before sign-in survives for a
     ///   later manual sign-in to replay.
@@ -380,9 +597,10 @@ final class AppDependencies {
             // Capture-and-clear synchronously: the resolve below suspends, and
             // clearing now stops a second replay from re-reading the same park.
             router.pending = nil
-            await present(albumID: albumID)
+            await present(albumID: albumID, parked: true)
         } else if wasSignedIn {
             invalidateDeepLink()
+            playbackController.stop()
         }
     }
 
@@ -405,10 +623,35 @@ final class AppDependencies {
     /// outcome win deterministically — rather than whichever store read resumes
     /// last — so a stale parked id (or a route resolved before sign-out) can't
     /// clobber a just-tapped one (or strand over `LoginView`).
-    private func present(albumID: Int) async {
-        // Already showing this exact album (e.g. a re-tap of the open cover):
-        // nothing to present, and skip the redundant clone read.
-        if router.deepLink?.id == albumID { return }
+    ///
+    /// `parked` (issue #108) is passed through from the caller rather than
+    /// inferred here — `handleSpotlightTap` (an immediate signed-in tap) and
+    /// the `handleAuthChange` replay (a tap that had to wait on `Router.pending`)
+    /// are the only two callers, and they already know which one they are.
+    /// Recorded only when a route is actually presented (the early-out for an
+    /// already-open cover, and a token bow-out from a superseded resolve,
+    /// both fire no event — neither is a genuine new deep-link open).
+    private func present(albumID: Int, parked: Bool) async {
+        // Issue #118 item 2: refuse whenever a cover is already showing — any
+        // album, not just this one. The old check (`router.deepLink?.id ==
+        // albumID`) caught only the same-album re-tap, so a tap for a
+        // *different* album resolved, overwrote the stored route, and fired
+        // `spotlight_deeplink_opened`.
+        //
+        // **This is the app's own decision, not an inference from SwiftUI.**
+        // `RootView`'s comment claims `fullScreenCover(item:)` ignores an
+        // identity swap while presented; that claim is unverified (see it for
+        // the provenance), so the fix deliberately does not depend on it —
+        // under either SwiftUI behaviour the second tap now changes nothing
+        // and records nothing, which is what makes the event honest.
+        //
+        // Swapping the cover to the newly-tapped album would be better UX, and
+        // is issue #126 rather than a line here, because it cannot be
+        // done by writing `deepLink` in place: `nil` and the new route in one
+        // main-actor turn coalesce under Observation, so SwiftUI's body only
+        // ever sees the final value and no dismissal is observed. It needs the
+        // cover's `onDismiss` to drive the second presentation.
+        guard router.deepLink == nil else { return }
         presentationToken += 1
         let token = presentationToken
         let route = await resolveRoute(albumID: albumID)
@@ -416,6 +659,7 @@ final class AppDependencies {
         // so its fresher outcome is the one that lands.
         guard token == presentationToken else { return }
         router.deepLink = route
+        analytics.capture(SpotlightDeeplinkOpenedEvent(cloneHit: route.fallback != nil, parked: parked))
     }
 
     /// Build the route for `albumID`, looking up the cloned row for an instant
