@@ -277,10 +277,17 @@ Test fixtures use WXYC-representative artists — Juana Molina / DOGA, Jessica P
 Two workflows run on PRs: `.github/workflows/ci.yml` (every PR and push to `main`) and `.github/workflows/verify-api-types.yml` (only when the vendored tree, the contract pin, or either codegen script changes — see "Code Generation"). The local pre-flight mirrors them — run these before opening a PR so CI minutes aren't wasted on red builds. The third command is needed **only if you touched `Packages/WXYCAPIModels/**` or `scripts/*-api-types.sh`**:
 
 ```bash
-swift test --package-path Packages/WXYCAPI
+# Xcode's Swift explicitly -- NOT a bare `swift`. CI runs this step with the
+# toolchain `xcode-select` points at, but a swiftly/other install on PATH can
+# shadow it locally, and the mismatch does not fail: it builds against a
+# different SDK and can hang for tens of minutes with no error output.
+xcrun --toolchain com.apple.dt.toolchain.XcodeDefault swift test --package-path Packages/WXYCAPI
 
 # Pick any booted iPhone simulator; the workflow pre-boots the first available modern iPhone (preferring iPhone 16 Pro).
 SIM_ID=$(xcrun simctl list devices available | grep -m1 'iPhone 1[67].*Booted' | grep -oE '\([A-F0-9-]{36}\)' | tr -d '()')
+# Assert the ID resolved. An empty -destination id makes xcodebuild print its
+# usage text and **exit 0** -- a green run that tested nothing.
+: "${SIM_ID:?no booted iPhone 16/17 simulator found -- boot one with 'xcrun simctl boot <udid>'}"
 xcodebuild test \
   -project WXYCDJ.xcodeproj \
   -scheme WXYCDJ \
@@ -294,6 +301,8 @@ xcodebuild test \
 # Needs git, npm/node, java, rsync; regenerates into a scratch dir and diffs.
 scripts/verify-api-types.sh
 ```
+
+Assert on `xcodebuild`'s `Test run with ... passed` / `TEST SUCCEEDED` line rather than on its exit code — see the `SIM_ID` guard above for one way an `xcodebuild` invocation exits 0 without running anything.
 
 `CODE_SIGNING_ALLOWED=NO` keeps the test step from requiring a provisioning profile. The test step needs a real simulator (not `generic/platform=iOS Simulator`) because `WXYCDJTests` is a host-app unit-test bundle.
 
