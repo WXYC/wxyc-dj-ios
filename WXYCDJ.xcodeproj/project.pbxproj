@@ -84,6 +84,12 @@
 		DB144AF8F4E124E35678C08D /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = CAE4859575FEA3C453FB3BBD /* Sentry */; };
 		DBBB7B8444D4D857A271F592 /* AlbumDetailPlaybackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08C05C6452EFFF4A6D8FCF6E /* AlbumDetailPlaybackTests.swift */; };
 		DD5133F0A74A1B9B1FC5CD4F /* AlbumRouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E5BB2C6A6D78D45FBE8B7E8 /* AlbumRouteTests.swift */; };
+		DF36545930267582008E6945 /* CameraManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF3654583026757E008E6945 /* CameraManager.swift */; };
+		DF36545B302675A8008E6945 /* CameraPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF36545A302675A6008E6945 /* CameraPreview.swift */; };
+		DF36545D302675BA008E6945 /* CameraView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF36545C302675B7008E6945 /* CameraView.swift */; };
+		DFB69993302CF8E40031EAB1 /* DeviceAuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFB69992302CF8DE0031EAB1 /* DeviceAuthViewModel.swift */; };
+		DFB69995302CF9FF0031EAB1 /* DeviceAuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFB69994302CF9FA0031EAB1 /* DeviceAuthView.swift */; };
+		DFD8E14C303601CE0076624D /* DeviceAuthViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFD8E14B303601C90076624D /* DeviceAuthViewModelTests.swift */; };
 		DD5DDFB1BA751BBAF0D3F016 /* BlockingRequestSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2910CFA60AD178B436EFCF3E /* BlockingRequestSession.swift */; };
 		DE23DEAE7EBBA64D451CF154 /* PostHogAnalytics.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1E85D82632406DEF7C64DF7 /* PostHogAnalytics.swift */; };
 		E337E4EFED7AC9F99A90D53A /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBD19B4C0935B9225645CC75 /* SceneDelegate.swift */; };
@@ -187,6 +193,12 @@
 		D317ED7B8718828E57375589 /* View+AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "View+AppEnvironment.swift"; sourceTree = "<group>"; };
 		D890BC53FC78B18923CE1021 /* TelemetryBootstrap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryBootstrap.swift; sourceTree = "<group>"; };
 		DE45EAFB43A539EC66615E15 /* AlbumDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumDetailView.swift; sourceTree = "<group>"; };
+		DF3654583026757E008E6945 /* CameraManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraManager.swift; sourceTree = "<group>"; };
+		DF36545A302675A6008E6945 /* CameraPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPreview.swift; sourceTree = "<group>"; };
+		DF36545C302675B7008E6945 /* CameraView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraView.swift; sourceTree = "<group>"; };
+		DFB69992302CF8DE0031EAB1 /* DeviceAuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAuthViewModel.swift; sourceTree = "<group>"; };
+		DFB69994302CF9FA0031EAB1 /* DeviceAuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAuthView.swift; sourceTree = "<group>"; };
+		DFD8E14B303601C90076624D /* DeviceAuthViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAuthViewModelTests.swift; sourceTree = "<group>"; };
 		E3D261F44563666A5161E0B9 /* NowPlayingInfoCenterManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingInfoCenterManager.swift; sourceTree = "<group>"; };
 		E5F7756BA1F6E80EAE710764 /* AnalyticsPrivacyFilterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyticsPrivacyFilterTests.swift; sourceTree = "<group>"; };
 		E7A31ADB62274BAB7A644659 /* AudioSessionProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioSessionProtocol.swift; sourceTree = "<group>"; };
@@ -335,6 +347,7 @@
 		9C7E2C27E29874779C74FFEA /* WXYCDJTests */ = {
 			isa = PBXGroup;
 			children = (
+				DFD8E14A303601C20076624D /* DeviceAuth */,
 				B6B324303A15FD85AB7D1AA2 /* AlbumDetailArtworkTests.swift */,
 				FBF8B854E5058AB00D7FC28B /* AlbumDetailFallbackTests.swift */,
 				08C05C6452EFFF4A6D8FCF6E /* AlbumDetailPlaybackTests.swift */,
@@ -358,6 +371,8 @@
 		A5E464B44FD0B1CFBAF6A6A6 /* WXYCDJ */ = {
 			isa = PBXGroup;
 			children = (
+				DFB69991302CF8D70031EAB1 /* DeviceAuth */,
+				DF36545730267576008E6945 /* QR */,
 				21E636FEAF9C268D4455F6BF /* AlbumRoute.swift */,
 				7745B51EB2BF815A8B960F3F /* AppDelegate.swift */,
 				6225BA88FCDBB74E198F0388 /* AppDependencies.swift */,
@@ -426,6 +441,33 @@
 				30DE4EC11A66379C3F9D35AE /* TrackMatchBadge.swift */,
 			);
 			path = Search;
+			sourceTree = "<group>";
+		};
+		DF36545730267576008E6945 /* QR */ = {
+			isa = PBXGroup;
+			children = (
+				DF3654583026757E008E6945 /* CameraManager.swift */,
+				DF36545A302675A6008E6945 /* CameraPreview.swift */,
+				DF36545C302675B7008E6945 /* CameraView.swift */,
+			);
+			path = QR;
+			sourceTree = "<group>";
+		};
+		DFB69991302CF8D70031EAB1 /* DeviceAuth */ = {
+			isa = PBXGroup;
+			children = (
+				DFB69992302CF8DE0031EAB1 /* DeviceAuthViewModel.swift */,
+				DFB69994302CF9FA0031EAB1 /* DeviceAuthView.swift */,
+			);
+			path = DeviceAuth;
+			sourceTree = "<group>";
+		};
+		DFD8E14A303601C20076624D /* DeviceAuth */ = {
+			isa = PBXGroup;
+			children = (
+				DFD8E14B303601C90076624D /* DeviceAuthViewModelTests.swift */,
+			);
+			path = DeviceAuth;
 			sourceTree = "<group>";
 		};
 		E1EC06BF517B76C203321D4F /* Catalog */ = {
@@ -516,13 +558,9 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 1430;
+				LastUpgradeCheck = 2650;
 				TargetAttributes = {
 					3417D1544E151E8B8BC78478 = {
-						DevelopmentTeam = 92V374HC38;
-						ProvisioningStyle = Automatic;
-					};
-					DF7BCFBB0EE59A8D9B25E099 = {
 						DevelopmentTeam = 92V374HC38;
 						ProvisioningStyle = Automatic;
 					};
@@ -597,6 +635,7 @@
 			files = (
 				7279D81E44273E9773826AE5 /* AVQueuePlayerEngineTests.swift in Sources */,
 				D2381394B0DA8CEF7A189AB7 /* AlbumDetailArtworkTests.swift in Sources */,
+				DFD8E14C303601CE0076624D /* DeviceAuthViewModelTests.swift in Sources */,
 				8BAB76DFE51CBFC74EEF967B /* AlbumDetailFallbackTests.swift in Sources */,
 				DBBB7B8444D4D857A271F592 /* AlbumDetailPlaybackTests.swift in Sources */,
 				DD5133F0A74A1B9B1FC5CD4F /* AlbumRouteTests.swift in Sources */,
@@ -656,9 +695,11 @@
 				B94E9B3D6BB30F1879565A75 /* BuildEnvironment.swift in Sources */,
 				F4BB3A668B1D9AFFF6997A14 /* CatalogBackgroundTasks.swift in Sources */,
 				ABA5F662B7377F106722B223 /* DeepLinkAlbumCover.swift in Sources */,
+				DFB69995302CF9FF0031EAB1 /* DeviceAuthView.swift in Sources */,
 				72DDD3B5A5B2A91A4EF71A16 /* ErrorReporting.swift in Sources */,
 				1D47643DA06B8BB7123F9AF0 /* LoginView.swift in Sources */,
 				EE55F522C6025321F2064FEF /* LoginViewModel.swift in Sources */,
+				DF36545930267582008E6945 /* CameraManager.swift in Sources */,
 				33D06D6A22AA7D12BE080CA8 /* MainView.swift in Sources */,
 				9F02AA1828BB188157878BF2 /* NowPlayingInfoCenterManager.swift in Sources */,
 				A9039E349C7D9F641D53A252 /* OTPCodeView.swift in Sources */,
@@ -673,10 +714,13 @@
 				D136D15E5A7B56953B555A49 /* RemoteCommandCenterRegistrar.swift in Sources */,
 				75C46202B5A836CB31D649FE /* RootView.swift in Sources */,
 				F68D603AF4F27C7C2129BC96 /* Router.swift in Sources */,
+				DF36545D302675BA008E6945 /* CameraView.swift in Sources */,
 				E337E4EFED7AC9F99A90D53A /* SceneDelegate.swift in Sources */,
+				DFB69993302CF8E40031EAB1 /* DeviceAuthViewModel.swift in Sources */,
 				753572DD46DEE31D8A3F2CDB /* SearchResultRow.swift in Sources */,
 				0DD716BEB42AB99DC6908CE7 /* SearchView.swift in Sources */,
 				C03AB4DC4B72F41F6135A84C /* SearchViewModel.swift in Sources */,
+				DF36545B302675A8008E6945 /* CameraPreview.swift in Sources */,
 				7C11010D9FB09DAA10462645 /* SentryErrorReporter.swift in Sources */,
 				093ED6295B6CD7D54A4EB979 /* SignInControls.swift in Sources */,
 				574EDEABD3333936B2530863 /* TelemetryBootstrap.swift in Sources */,
@@ -707,11 +751,13 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WXYCDJ/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = org.wxyc.dj;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
@@ -797,6 +843,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -814,14 +861,18 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = WXYCDJ/WXYCDJ.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 92V374HC38;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WXYCDJ/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = org.wxyc.dj;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
@@ -900,6 +951,7 @@
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
