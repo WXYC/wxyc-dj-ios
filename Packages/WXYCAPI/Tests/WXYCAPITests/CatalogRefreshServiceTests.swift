@@ -608,14 +608,30 @@ struct CatalogRefreshServiceTests {
         _ = try await refreshTask.value
     }
 
-    @Test func refreshReleasesTheRefreshSlotBeforeReturningToItsCaller() async throws {
+    // The time limit is a wedge detector, not a performance budget: this drives more
+    // serial-chain cycles than anything else in the bundle, so a future regression that
+    // DEADLOCKS the chain (rather than merely racing it) would hang CI here instead of
+    // failing. Swift Testing accepts minutes only — every sub-minute factory on
+    // `TimeLimitTrait.Duration` is marked unavailable — so one minute is the floor, and
+    // against a body that finishes in well under a second that is pure headroom.
+    @Test(.timeLimit(.minutes(1)))
+    func refreshReleasesTheRefreshSlotBeforeReturningToItsCaller() async throws {
         // The complement of the test above, and the invariant issue #162 broke: once
-        // refresh() has RETURNED to its caller the slot is already released, so a poll()
-        // issued in the very next statement must do its conditional GET rather than take
-        // the .skippedRefreshInFlight early-out. `AppDependencies` owns both callers
-        // (`refreshCatalog()` and `handleBackgroundPoll()`), and a false skip there is a
-        // silent no-op in an unattended path — a genuine catalog change waits for the
-        // next scheduled poll, with nothing logged and nothing to reproduce.
+        // refresh() has RETURNED to its caller, its slot is already released, so a
+        // poll() that starts any time after that must do its conditional GET rather
+        // than take the .skippedRefreshInFlight early-out.
+        //
+        // **Nothing in the app calls the two back to back.** `refresh()` is reached only
+        // through `AppDependencies.refreshCatalog(trigger:)` (launch, foreground
+        // re-entry, the reindex `BGProcessingTask`) and `poll()` only through
+        // `AppDependencies.handleBackgroundPoll()` (the `BGAppRefreshTask`) — separate
+        // methods, separate triggers. What the defect actually exposed is a
+        // system-scheduled background poll landing in the window where a refresh has
+        // returned but its slot is still held: `handleBackgroundPoll()` records
+        // `.skippedRefreshInFlight` as a legitimate outcome and returns without
+        // scheduling the reindex, so a real catalog change waits for the next poll,
+        // unattended and unlogged. This test puts the two adjacent deliberately, to
+        // interrogate the window directly instead of waiting on iOS to land in it.
         //
         // **Honest about determinism: this test is probabilistic on the UNFIXED tree,
         // and the lanes are what make it reliable.** The defect was a race — the slot
@@ -623,19 +639,31 @@ struct CatalogRefreshServiceTests {
         // caller did, with nothing ordering the two resumptions — so one
         // refresh-then-poll pass won by luck nearly every time. **Executor pressure is
         // the ingredient, not repetition**: a single lane on the unfixed tree produced
-        // 0 skips in 2000 passes, while these eight concurrent lanes produced 147, 169,
-        // 188, 174 and 154 skips per 1600 passes over five runs (~10%). That is why
-        // this reached us as an occasional CI flake in an unrelated test
-        // (`refreshAndPollWithNoSessionThrowNotSignedInAndTouchNothing`, whose second
-        // `poll()` returned instead of throwing, under a full parallel suite) and not
-        // as anything reproducible by running that test on its own.
+        // 0 skips in 2000 passes, where these eight concurrent lanes produced 10-24
+        // skips per 200 passes across ten full-bundle runs (~7%, never fewer than 10).
+        // That asymmetry is why #162 reached us as an occasional CI flake in an
+        // unrelated test (`refreshAndPollWithNoSessionThrowNotSignedInAndTouchNothing`,
+        // whose second `poll()` returned instead of throwing, under a full parallel
+        // suite) and was not reproducible by running that test on its own.
+        //
+        // **The size is measured, not guessed, and the two axes are not interchangeable.**
+        // Lanes buy detection; passes mostly buy runtime. Measured pre-fix in the real
+        // bundle at a fixed 200 passes, 8 lanes x 25 never dropped below 10 skips in ten
+        // runs, while 4 lanes x 50 ranged 1-25 and bottomed out at a single skip — one
+        // unlucky scheduling run away from a green pre-fix suite. So the pass count is
+        // bounded down hard and the lane count is not: 8 x 25 is an eighth of the 8 x 200
+        // first written here, with the same floor as the 8 x 50 that costs twice as much.
+        // Size matters here because `.serialized` on the suite orders tests only WITHIN
+        // it — the bundle's other suites run alongside, and a test that pins every core
+        // manufactures, on every CI run, the very pressure this PR identifies as what
+        // turns latent races into failures.
         //
         // Each lane drives its OWN service, so a `.skippedRefreshInFlight` can only ever
         // mean that lane's own refresh outlived its return — never a neighbour's. Post-fix
         // the ordering holds by construction (the caller awaits the cleanup wrapper), so
         // the expected count is exactly zero and a single skip is a regression.
         let lanes = 8
-        let perLane = 200
+        let perLane = 25
         var clients: [(APIClient, StubRequestSession)] = []
         for _ in 0..<lanes { clients.append(try await Self.makeSignedInClient()) }
         let lanesUnderTest = clients
