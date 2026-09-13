@@ -166,13 +166,23 @@ public actor CatalogRefreshService {
     /// That is only half of what callers need, and the missing half was issue #162.
     /// ``poll()``'s `refreshInFlight > 0` early-out doesn't just need cleanup to run
     /// *eventually* — it needs it to have run **before the caller can observe this
-    /// op's result**, since `AppDependencies` polls in the statement after it
-    /// refreshes. So the caller awaits the **wrapper**, not `task`: the wrapper's
+    /// op's result**. So the caller awaits the **wrapper**, not `task`: the wrapper's
     /// `endSerialOp()` is therefore ordered before `runSerial` returns, by
     /// construction. Awaiting `task` from both here and the wrapper left their
     /// resumption order undefined, and a caller that won returned with the slot still
-    /// held — which a following `poll()` read as `.skippedRefreshInFlight`, silently
-    /// doing nothing in an unattended path.
+    /// held.
+    ///
+    /// **Nothing in the app calls the two back to back** — `refresh()` is reached only
+    /// through `AppDependencies.refreshCatalog(trigger:)` (launch, foreground re-entry,
+    /// and the reindex `BGProcessingTask`) and `poll()` only through
+    /// `AppDependencies.handleBackgroundPoll()` (the `BGAppRefreshTask`). The exposure
+    /// is a system-scheduled poll landing in the window where a refresh has returned to
+    /// its caller but its slot is still held: the poll answers
+    /// `.skippedRefreshInFlight`, which `handleBackgroundPoll()` records as a
+    /// legitimate outcome and returns from without scheduling the reindex — so a real
+    /// catalog change waits for the next scheduled poll, unattended and unlogged. The
+    /// window is narrow and the arrival time is iOS's to choose, which is precisely
+    /// what makes the miss invisible from inside the app.
     ///
     /// The wrapper is `Task<Void, Never>`, so `await wrapper.value` neither throws nor
     /// is a cancellation-throwing point: a cancelled caller still can't jump the
@@ -338,8 +348,8 @@ public actor CatalogRefreshService {
     }
 
     private func performRefresh() async throws -> Outcome {
-        // (Slot cleanup is handled by runSerial/endSerialOp, in the work task's
-        // frame — so a cancelled caller can't free it mid-batch.)
+        // (Slot cleanup is handled by runSerial/endSerialOp, in the cleanup wrapper's
+        // frame — never the caller's — so a cancelled caller can't free it mid-batch.)
 
         // A fresh indexer for this run (see the type's "fresh indexer per run"
         // note): an in-process retry after a mid-batch failure must not reuse a
