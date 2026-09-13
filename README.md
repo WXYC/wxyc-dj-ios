@@ -11,7 +11,7 @@ This is a focused tool. It deliberately does **not** ship: flowsheet integration
 - Xcode 26.5+
 - iOS 18.4+ simulator or device
 - Swift 6.0+
-- [`xcodegen`](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) — the Xcode project is generated from `project.yml`
+- [`xcodegen`](https://github.com/yonaskolb/XcodeGen) — the Xcode project is generated from `project.yml`. **Use the version pinned in `.xcodegen-version`, not `brew install xcodegen`** — see [Build & Run](#build--run)
 
 ## Layout
 
@@ -46,9 +46,21 @@ project.yml                      # xcodegen spec
 
 ## Build & Run
 
+**Use the xcodegen version pinned in `.xcodegen-version`.** The pbxproj is committed generated output, so the generator version is part of its definition. **2.44.x and earlier do not recognise Xcode 26 `.icon` bundles**: they silently dissolve `WXYCDJ/AppIcon.icon` into loose `icon.json` / `logo.svg` / `*.png` resources, and the build then fails with `Assets.xcassets: error: None of the input catalogs contained a matching … app icon set … named "AppIcon"`. Whatever `brew` last installed is usually not the pin, and nothing warns you. CI's `Verify generated project` job regenerates with the pin and fails on any diff.
+
+```bash
+xcodegen --version   # must match .xcodegen-version
+
+# Get the pinned build without disturbing a system-wide install:
+VERSION=$(tr -d '[:space:]' < .xcodegen-version)
+curl -fsSL -o /tmp/xcodegen.zip "https://github.com/yonaskolb/XcodeGen/releases/download/${VERSION}/xcodegen.zip"
+unzip -oq /tmp/xcodegen.zip -d /tmp/xcodegen-dist
+/tmp/xcodegen-dist/xcodegen/bin/xcodegen generate
+```
+
 ```bash
 # Regenerate the Xcode project after editing project.yml
-xcodegen generate
+xcodegen generate   # only if `xcodegen --version` matches the pin
 
 # Build (replace simulator name as needed)
 xcodebuild -project WXYCDJ.xcodeproj -scheme WXYCDJ \
@@ -185,9 +197,9 @@ The deep link is an in-app `NSUserActivity` continuation (`CSSearchableItemActio
 
 ### App icon
 
-`WXYCDJ/AppIcon.icon` is an [Icon Composer](https://developer.apple.com/documentation/xcode/creating-your-app-icon-using-icon-composer) document (a Liquid Glass layer stack, not a flat `.appiconset`), compiled by `actool` because `ASSETCATALOG_COMPILER_APPICON_NAME` is `AppIcon`. Design source of truth lives outside the repo at `~/Pictures/Graphic Design/WXYC Assets/dj app/app icon/iOS/AppIcon.icon`.
+`WXYCDJ/AppIcon.icon` is an [Icon Composer](https://developer.apple.com/documentation/xcode/creating-your-app-icon-using-icon-composer) document (a Liquid Glass layer stack, not a flat `.appiconset`), compiled by `actool` because `ASSETCATALOG_COMPILER_APPICON_NAME` is `AppIcon`. **The checked-in bundle is the only copy** — an earlier version of this section pointed at a design source at `~/Pictures/Graphic Design/WXYC Assets/dj app/app icon/iOS/AppIcon.icon`, and no such path exists (nor does any other DJ-app Icon Composer document on the design machine; `WXYC Assets/app/app icon/iOS/` holds the *listener* app's icons, a different product). So there is nothing to resync from and nothing holding a backup: treat `WXYCDJ/AppIcon.icon` as source of truth, and re-export into it rather than over it.
 
-**The checked-in `icon.json` is deliberately not a byte-for-byte copy of that source.** Icon Composer 27 writes two constructs that make Xcode 26.x's `actool` *crash* rather than degrade — `error: Exception while running actool: … attempt to insert nil object from objects[0]`:
+**Two Icon Composer 27 constructs must be downgraded on every export.** Icon Composer 27 writes two constructs that make Xcode 26.x's `actool` *crash* rather than degrade — `error: Exception while running actool: … attempt to insert nil object from objects[0]`:
 
 | Construct | Xcode 26.x | Checked-in form |
 |---|---|---|
@@ -196,7 +208,26 @@ The deep link is an in-app `NSUserActivity` continuation (`CSSearchableItemActio
 
 Both are opt-in rendering nuances; the compiled raster is visually indistinguishable, and every other Icon Composer 27 key (`refractivity-specializations`, `lighting-specializations`, `blur-material-specializations`, …) compiles fine on 26.x. Since CI pins Xcode 26.2, keep the downgrade until the toolchain floor moves to 27.
 
-**If you re-export from Icon Composer, re-apply the downgrade** — the app will re-add both constructs on save and the build will break with the crash above. Sanity-check a change without a full build:
+**If you re-export from Icon Composer, re-apply the downgrade** — the app will re-add both constructs on save and the build will break with the crash above.
+
+**Also check that every `image-name` still resolves to a file in `Assets/`.** Dragging a replacement image onto a layer makes Icon Composer copy the new image's *bytes* into the existing asset file while rewriting `icon.json`'s `image-name` to the new file's *name* — so the reference dangles even though the artwork updated correctly, and `git status` shows only a plausible-looking binary diff. Rename the asset to match `image-name` (with `git mv`) rather than repointing the JSON: the next export writes the new name again.
+
+**Two unrelated faults end in the same last line**, so read the actool output upward from the bottom rather than acting on it, and check which path it is prefixed with:
+
+```
+error: None of the input catalogs contained a matching stickers icon set, app icon set, or icon stack named  "AppIcon"
+```
+
+| Real cause | How to tell | Fix |
+|---|---|---|
+| a dangling `image-name` | prefixed `WXYCDJ/AppIcon.icon:`, and preceded by `The layer "…" references an image named "…" that does not exist` + `Icon export exited with status 255` | rename the asset, above |
+| the `.icon` dissolved by xcodegen 2.44.x | prefixed `WXYCDJ/Assets.xcassets:`, with no icon diagnostics above it at all | regenerate with the pinned xcodegen ([Build & Run](#build--run)) |
+
+A dissolved `.icon` *masks* a dangling `image-name`, because actool never reaches the bundle — fix the pbxproj first, then re-check the icon. (Both observed together on Xcode 27.0, 2026-09-12.) The IC-27 crash in the table above is a third, separate failure with its own `Exception while running actool` signature.
+
+**A local build on Xcode 27 cannot clear the two downgrades above.** Xcode 27's `actool` compiles a `"features"` array without complaint, so if your Xcode is 27 while CI pins 26.2, only CI will catch a re-export that re-added them. Verify by reading `icon.json` — no top-level `"features"`, no `"outside"` specular value — not by building locally.
+
+Sanity-check a change without a full build:
 
 ```bash
 xcrun actool WXYCDJ/AppIcon.icon --compile /tmp/iconout --app-icon AppIcon \
