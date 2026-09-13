@@ -608,6 +608,73 @@ struct CatalogRefreshServiceTests {
         _ = try await refreshTask.value
     }
 
+    @Test func refreshReleasesTheRefreshSlotBeforeReturningToItsCaller() async throws {
+        // The complement of the test above, and the invariant issue #162 broke: once
+        // refresh() has RETURNED to its caller the slot is already released, so a poll()
+        // issued in the very next statement must do its conditional GET rather than take
+        // the .skippedRefreshInFlight early-out. `AppDependencies` owns both callers
+        // (`refreshCatalog()` and `handleBackgroundPoll()`), and a false skip there is a
+        // silent no-op in an unattended path — a genuine catalog change waits for the
+        // next scheduled poll, with nothing logged and nothing to reproduce.
+        //
+        // **Honest about determinism: this test is probabilistic on the UNFIXED tree,
+        // and the lanes are what make it reliable.** The defect was a race — the slot
+        // was released by a sibling cleanup task that awaited the same work task the
+        // caller did, with nothing ordering the two resumptions — so one
+        // refresh-then-poll pass won by luck nearly every time. **Executor pressure is
+        // the ingredient, not repetition**: a single lane on the unfixed tree produced
+        // 0 skips in 2000 passes, while these eight concurrent lanes produced 147, 169,
+        // 188, 174 and 154 skips per 1600 passes over five runs (~10%). That is why
+        // this reached us as an occasional CI flake in an unrelated test
+        // (`refreshAndPollWithNoSessionThrowNotSignedInAndTouchNothing`, whose second
+        // `poll()` returned instead of throwing, under a full parallel suite) and not
+        // as anything reproducible by running that test on its own.
+        //
+        // Each lane drives its OWN service, so a `.skippedRefreshInFlight` can only ever
+        // mean that lane's own refresh outlived its return — never a neighbour's. Post-fix
+        // the ordering holds by construction (the caller awaits the cleanup wrapper), so
+        // the expected count is exactly zero and a single skip is a regression.
+        let lanes = 8
+        let perLane = 200
+        var clients: [(APIClient, StubRequestSession)] = []
+        for _ in 0..<lanes { clients.append(try await Self.makeSignedInClient()) }
+        let lanesUnderTest = clients
+        let rows = [Self.row(100)]
+
+        let skipped = await withTaskGroup(of: Int.self, returning: Int.self) { group in
+            for (client, session) in lanesUnderTest {
+                group.addTask {
+                    let store = SpyCatalogStore(rows: rows, watermark: "W")
+                    let indexer = SpyCatalogIndexer(watermark: "W")
+                    var skips = 0
+                    for _ in 0..<perLane {
+                        let service = CatalogRefreshService(client: client, store: store, makeIndexer: { indexer })
+                        session.enqueue(StubRequestSession.Stub(statusCode: 304))   // the refresh
+                        session.enqueue(StubRequestSession.Stub(statusCode: 304))   // the poll behind it
+                        // Nothing is asserted between the refresh and the poll below, on
+                        // purpose: work in that gap is exactly what lets the cleanup task
+                        // win the race the unfixed code leaves open, and it measurably
+                        // blunts the test (a per-pass #expect there cut the observed skip
+                        // rate ~4x). The refresh's own outcome is covered by the request
+                        // tally after the group.
+                        _ = try? await service.refresh()
+                        if (try? await service.poll()) == .skippedRefreshInFlight { skips += 1 }
+                    }
+                    return skips
+                }
+            }
+            var total = 0
+            for await skips in group { total += skips }
+            return total
+        }
+
+        #expect(skipped == 0)
+        // Independent witness of the same fact: every poll issued a GET of its own, so
+        // each lane recorded exactly two conditional requests per pass.
+        let requests = lanesUnderTest.map { Self.catalogRequests($0.1).count }
+        #expect(requests == Array(repeating: perLane * 2, count: lanes))
+    }
+
     // MARK: Thumbnail dedup keyed on the cover file (issue #44)
 
     @Test func cacheThumbnailSkipsARedundantReattachOfTheSameCover() async throws {

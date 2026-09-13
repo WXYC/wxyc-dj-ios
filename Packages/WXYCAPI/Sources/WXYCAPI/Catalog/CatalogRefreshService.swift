@@ -154,13 +154,29 @@ public actor CatalogRefreshService {
     /// in-actor call. The only suspension points are `await predecessor?.value` and
     /// `await work()`, which hop off and back onto the actor.
     ///
-    /// **Counter balance is cancellation-robust.** The `activeCount += 1` is paired
-    /// with the wrapper task's `endSerialOp()`, which runs when `task` *settles*
-    /// (success, throw, **or** cancellation — `try?` swallows). Putting the decrement
-    /// in the wrapper rather than a `defer` inside `task` means it can't be skipped
-    /// by a cancellation delivered while `task` is suspended at `await
-    /// predecessor?.value` (before a `defer` would even register) — so the counter
-    /// can never wedge `> 0` and strand `poll()`/the tail.
+    /// **Counter balance is cancellation-robust, and cleanup is ordered before the
+    /// caller returns.** The `activeCount += 1` is paired with the wrapper task's
+    /// `endSerialOp()`, which runs when `task` *settles* (success, throw, **or**
+    /// cancellation — `try?` swallows). Putting the decrement in the wrapper rather
+    /// than a `defer` inside `task` means it can't be skipped by a cancellation
+    /// delivered while `task` is suspended at `await predecessor?.value` (before a
+    /// `defer` would even register) — so the counter can never wedge `> 0` and strand
+    /// `poll()`/the tail.
+    ///
+    /// That is only half of what callers need, and the missing half was issue #162.
+    /// ``poll()``'s `refreshInFlight > 0` early-out doesn't just need cleanup to run
+    /// *eventually* — it needs it to have run **before the caller can observe this
+    /// op's result**, since `AppDependencies` polls in the statement after it
+    /// refreshes. So the caller awaits the **wrapper**, not `task`: the wrapper's
+    /// `endSerialOp()` is therefore ordered before `runSerial` returns, by
+    /// construction. Awaiting `task` from both here and the wrapper left their
+    /// resumption order undefined, and a caller that won returned with the slot still
+    /// held — which a following `poll()` read as `.skippedRefreshInFlight`, silently
+    /// doing nothing in an unattended path.
+    ///
+    /// The wrapper is `Task<Void, Never>`, so `await wrapper.value` neither throws nor
+    /// is a cancellation-throwing point: a cancelled caller still can't jump the
+    /// cleanup, and the result/error still comes from `task` on the line below.
     ///
     /// Coalescing of overlapping `refresh()` calls (the issue-#19 behavior) was
     /// **dropped** for one serial mechanism (issue #44): two overlapping refreshes
@@ -175,12 +191,16 @@ public actor CatalogRefreshService {
         }
         // Type-erased tail so heterogeneous ops (refresh → Outcome, upsert → Void)
         // chain through one `Task<Void, Never>`; successors only need "predecessor
-        // settled". The wrapper also owns cleanup, so it always runs once `task`
-        // settles regardless of how the caller's await unwinds.
-        inFlight = Task {
+        // settled". The wrapper also owns cleanup, and the caller goes through it
+        // rather than around it, so the slot is released before this op's result is
+        // observable anywhere (issue #162).
+        let wrapper = Task {
             _ = try? await task.value
             self.endSerialOp(isRefresh: isRefresh)
         }
+        inFlight = wrapper
+        await wrapper.value
+        // Settled by now; this re-reads the typed result (or rethrows `work`'s error).
         return try await task.value
     }
 
