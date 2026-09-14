@@ -18,14 +18,42 @@ struct SearchView: View {
     @Environment(AuthService.self) private var auth
     @State private var viewModel: SearchViewModel?
     @State private var searchText: String = ""
+    @State var showSheet: Bool = false
+    @State var showScanner: Bool = false
+    @State var scannedCode: String?
+    @State var showDeviceAuth: Bool = false
+
+    @State private var toastMessage: String? = nil
+    @State private var toastKind: String = "ok"
 
     var body: some View {
         Group {
             if let viewModel {
-                content(for: viewModel)
-                    .onChange(of: searchText, initial: false) { _, newValue in
-                        viewModel.query = newValue
+                ZStack(alignment: .bottom) {
+                    content(for: viewModel)
+                        .onChange(of: searchText, initial: false) { _, newValue in
+                            viewModel.query = newValue
+                        }
+                    
+                    if let toastMessage {
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(toastKind == "red" ? Color.red : toastKind == "amber" ? Color.orange : Color.green)
+                                .frame(width: 8, height: 8)
+                            
+                            Text(toastMessage)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.white)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Color(red: 0.11, green: 0.11, blue: 0.12))
+                        .clipShape(Capsule())
+                        .shadow(radius: 8)
+                        .padding(.bottom, 16)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
+                }
             } else {
                 ProgressView()
             }
@@ -52,12 +80,67 @@ struct SearchView: View {
                 )
             }
         }
+        .sheet(isPresented: $showScanner, content: {
+            CameraView(showScanner: $showScanner, scannedCode: $scannedCode, onDismiss: {
+                showScanner = false
+                if scannedCode != nil {
+                    showDeviceAuth = true
+                }
+            })
+        })
+        .sheet(isPresented: $showDeviceAuth, content: {
+            DeviceAuthView(
+                scannedCode: $scannedCode,
+                onDismissWithToast: { text, kind in
+                    showToast(text, kind: kind)
+                }
+            )
+            .presentationDetents([.fraction(0.68)])
+            .presentationDragIndicator(.visible)
+        })
+        .onChange(of: showDeviceAuth) { _, isPresented in
+            if !isPresented {
+                scannedCode = nil
+            }
+        }
     }
-
+    
+    private func showToast(_ text: String, kind: String = "ok") {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+            toastMessage = text
+            toastKind = kind
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(2.5))
+            withAnimation(.easeOut(duration: 0.25)) {
+                toastMessage = nil
+            }
+        }
+    }
+    
     @ToolbarContentBuilder
     private var signOutMenu: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
+                if case .signedIn(let payload) = auth.state {
+                    let handle = payload?.email?.components(separatedBy: "@").first ?? payload?.sub ?? "biscuit"
+                    Section {
+                        Text("Signed in as \(handle) [\(payload?.role?.uppercased() ?? "DJ")]")
+                            .font(.caption)
+                    }
+                }
+                
+                Button {
+                } label: {
+                    Label("Profile", systemImage: "person")
+                }
+                
+                Button {
+                    showScanner = true
+                } label: {
+                    Label("Scan QR to sign in browser", systemImage: "qrcode.viewfinder")
+                }
+                
                 Button("Sign Out", role: .destructive) {
                     Task { await auth.signOut() }
                 }
