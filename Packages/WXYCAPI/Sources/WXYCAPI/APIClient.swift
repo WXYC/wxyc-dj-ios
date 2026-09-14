@@ -536,14 +536,26 @@ public final class APIClient: Sendable {
         }
     }
     
-    //qr-signin tests
+    //QR-Signin call functions
+    //Wires DeviceAuthViewModel to Backend Service
+    //What's going on at the backedn:
+    //dj-site requests code and renders QR, waits for device's response
+    //Device Response:
+    //DJ must be signed into app to have access to this feature
+    //DJ scans QR Code, extracts a user_code, and the following functions call the backend to approve or deny the browser login on the DJ's behalf
+    //Three endpoints from wxyc-shared/api.yaml: /auth/device/approve, /auth/device/deny, and (verification) GET /auth/device
     public func approveDevice(userCode: String) async throws -> DeviceAuthActionResponse {
+        // 1. Encode the approve request payload into JSON data using the expected camelCase wire key ("userCode").
         let body = try JSONCoders.encoder.encode(DeviceAuthApproveRequest(userCode: userCode))
+        // 2. Dispatch a POST request to the device approval endpoint, which automatically injects the current DJ's bearer token.
         let (data, http) = try await perform(path: "/auth/device/approve", method: "POST", query: [], body: body)
+        // 3. Evaluate the HTTP status code to handle successful approvals or parse specific error payloads.
         switch http.statusCode {
-        case 200:
+        case 200: //success case
+            // 4. Decode and return the success confirmation response when the backend accepts the approval.
             return try decode(DeviceAuthActionResponse.self, from: data)
         default:
+            // 5. Fall back to decoding the error envelope if the request fails, mapping unknown codes to nil while preserving the HTTP status.
             let envelope = try? JSONCoders.decoder.decode(DeviceAuthActionErrorEnvelope.self, from: data)
             throw DeviceAuthActionError(
                 status: http.statusCode,
@@ -553,7 +565,6 @@ public final class APIClient: Sendable {
     }
     
     //same as approveDevice, but for /auth/device/deny
-    //I think we can combine approve and deny once we know both work
     public func denyDevice(userCode: String) async throws -> DeviceAuthActionResponse {
         let body = try JSONCoders.encoder.encode(DeviceAuthDenyRequest(userCode: userCode))
         let (data, http) = try await perform(path: "/auth/device/deny", method: "POST", query: [], body: body)
@@ -561,6 +572,7 @@ public final class APIClient: Sendable {
         case 200:
             return try decode(DeviceAuthActionResponse.self, from: data)
         default:
+            // 5. Decode the error body safely to preserve error categories like expired tokens or unauthorized states.
             let envelope = try? JSONCoders.decoder.decode(DeviceAuthActionErrorEnvelope.self, from: data)
             throw DeviceAuthActionError(
                 status: http.statusCode,
@@ -572,12 +584,15 @@ public final class APIClient: Sendable {
     //3rd device auth endpoint -- verify
     //difference between verify & approve/deny: verify is a GET, w/ query [URLQueryItem(name: "user_code", value: userCode)] and no body, decoding DeviceAuthVerifyResponse on 200
     public func verifyDevice(userCode: String) async throws -> DeviceAuthVerifyResponse {
-        // is nil for body ok here?
+        // 1. Build the query parameters using snake_case ("user_code") as required by the verify endpoint contract.
+        // 2. Perform a GET request to query the current status of the device sign-in code.
         let (data, http) = try await perform(path: "/auth/device", method: "GET", query: [URLQueryItem(name: "user_code", value: userCode)], body: nil)
         switch http.statusCode {
         case 200:
+            // 4. Decode and return the response containing the code's current lifecycle state (pending, approved, or denied).
             return try decode(DeviceAuthVerifyResponse.self, from: data)
         default:
+            // 5. Parse and throw an error if the verification request encounters invalid parameters or expiration.
             let envelope = try? JSONCoders.decoder.decode(DeviceAuthVerifyErrorEnvelope.self, from: data)
             throw DeviceAuthVerifyError(
                 status: http.statusCode,
