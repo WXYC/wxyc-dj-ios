@@ -205,10 +205,17 @@ enum Fixtures {
     /// Signature is a placeholder ("sig"); the client does not verify it.
     static func jwt(expiresIn seconds: TimeInterval = 600) -> String {
         let exp = Int(Date().addingTimeInterval(seconds).timeIntervalSince1970)
+        return jwt(payloadJSON: #"{"sub":"42","email":"juana@wxyc.org","role":"dj","exp":\#(exp)}"#)
+    }
+
+    /// A JWT carrying `payloadJSON` verbatim as its payload segment, for the
+    /// claim shapes the canonical payload above can't express (a missing or
+    /// null `email`). Shares the base64url encoding with `jwt(expiresIn:)` so
+    /// a well-formed token and a deliberately malformed one can't be encoded
+    /// two different ways.
+    static func jwt(payloadJSON: String) -> String {
         let header = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" // {"alg":"HS256","typ":"JWT"}
-        let payloadJSON = #"{"sub":"42","email":"juana@wxyc.org","role":"dj","exp":\#(exp)}"#
-        let payloadData = Data(payloadJSON.utf8)
-        let payload = payloadData.base64EncodedString()
+        let payload = Data(payloadJSON.utf8).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
