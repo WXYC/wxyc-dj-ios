@@ -1,5 +1,5 @@
 {
-  "originHash" : "47bb71f373f8cce34adb110be9c1bb48285bbd33b66c62d745589d25c65c5001",
+  "originHash" : "2ef526f7ea6c490d0680dab010941b9d70d2f1c7c71e2019513505774aee1e26",
   "pins" : [
     {
       "identity" : "posthog-ios",
@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/WXYC/wxyc-swift-auth.git",
       "state" : {
-        "revision" : "ef2716afe9341bf7c4bdcf2043999199b12fd006",
-        "version" : "0.1.0"
+        "revision" : "b0d0edbb9c352a346f1d9d968efadaf866b5bdd1",
+        "version" : "0.2.0"
       }
     }
   ],

@@ -960,7 +960,7 @@
 			repositoryURL = "https://github.com/WXYC/wxyc-swift-auth.git";
 			requirement = {
 				kind = upToNextMinorVersion;
-				minimumVersion = 0.1.0;
+				minimumVersion = 0.2.0;
 			};
 		};
 		D11270CAC83A53F779B30107 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
