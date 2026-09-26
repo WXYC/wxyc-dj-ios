@@ -77,7 +77,7 @@ packages:
   # code goes through WXYCAPI, exactly as with WXYCAPIModels.
   WXYCAuth:
     url: https://github.com/WXYC/wxyc-swift-auth.git
-    minorVersion: 0.1.0
+    minorVersion: 0.2.0
   # Crash/error reporting (issue #106). `upToNextMajorVersion` -- the same
   # range style wxyc-ios-64/WXYC.xcodeproj declares for the same package --
   # rather than an exact pin, so a patch release (bug fixes on a

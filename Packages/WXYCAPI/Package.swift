@@ -27,16 +27,20 @@ let package = Package(
         // compatibility promise covers. wxyc-swift-auth is deliberately 0.x --
         // its own CLAUDE.md keeps it there until BOTH apps have adopted and
         // Phase E cuts 1.0, precisely because the API is expected to churn
-        // during this window -- and `from: "0.1.0"` resolves to
-        // `0.1.0 ..< 1.0.0`, i.e. it would treat every one of those churning
-        // 0.x releases as compatible.
+        // during this window -- and `from: "0.2.0"` resolves to
+        // `0.2.0 ..< 1.0.0`, i.e. it would treat every one of those churning
+        // 0.x releases as compatible. That is not hypothetical any more:
+        // 0.2.0 made `JWTClaims.email` non-optional, which `from:` would have
+        // pulled in silently. Reaching it took a deliberate bump in four
+        // places (this line, project.yml, and both Package.resolved files),
+        // which is the range doing its job rather than friction to remove.
         //
         // Immutable release tags do NOT make that safe, and an earlier version
         // of this comment claimed they did. The Tag Stability Policy guarantees
         // a tag keeps pointing at the same commit; it says nothing about the
         // NEXT tag being source-compatible with this one. Those are different
         // properties, and only the second is what a version range rests on.
-        .package(url: "https://github.com/WXYC/wxyc-swift-auth.git", .upToNextMinor(from: "0.1.0")),
+        .package(url: "https://github.com/WXYC/wxyc-swift-auth.git", .upToNextMinor(from: "0.2.0")),
     ],
     targets: [
         .target(
