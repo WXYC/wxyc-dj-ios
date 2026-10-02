@@ -31,8 +31,7 @@ struct DeviceAuthView: View {
             if let viewModel {
                 if case .approved(let toastMessage) = viewModel.workflowState {
                     DeviceAuthSuccessView(
-                        domain: viewModel.hostDomain,
-                        username: viewModel.username,
+                       // username: viewModel.username,
                         toastMessage: toastMessage
                     )
                 } else if case .unrecognized(let errorText) = viewModel.workflowState {
@@ -50,11 +49,15 @@ struct DeviceAuthView: View {
         .presentationDragIndicator(.visible)
         .onAppear {
             if viewModel == nil {
-                let newViewModel = DeviceAuthViewModel(api: deps.api)
+                let newViewModel = DeviceAuthViewModel(auth: auth)
+                //Inserts user data (username & role into approve / deny screen)
+                //TO-DO: remove any role variables (don't want to display to users)
+                /*
                 if case .signedIn(let payload) = auth.state {
                     let handle = payload?.email?.components(separatedBy: "@").first ?? payload?.sub
                     newViewModel.updateUserProfile(role: payload?.role, username: handle)
                 }
+                */
                 viewModel = newViewModel
                 userCode = newViewModel.processCode(scannedCode: scannedCode)
             }
@@ -82,9 +85,12 @@ struct DeviceAuthView: View {
                 }
                 
                 VStack(alignment: .leading, spacing: 2) {
+                    //ADD hostDomain later if there's a way to access that information
+                   /*
                     Text(viewModel.hostDomain)
                         .font(.system(size: 19, weight: .bold))
                         .foregroundStyle(.primary)
+                    */
                     //TO-DO: Add browser info, such as Macbook pro · Firefox"
                     Text("Requested \(elapsedSeconds)s ago")
                         .font(.system(size: 12))
@@ -96,6 +102,8 @@ struct DeviceAuthView: View {
             .padding(.top, 16)
             
             Divider()
+            
+            /*
             
             if viewModel.isMember {
                 // Member Denial Card (Flow 3)
@@ -125,16 +133,22 @@ struct DeviceAuthView: View {
                 .clipShape(.rect(cornerRadius: 14))
             }
             
+            */
+            //TO-DO:
             // User Profile Section
+            /*
             HStack(spacing: 14) {
                 ZStack {
                     Circle()
                         .fill(viewModel.isMember ? Color.gray : Color.blue)
                         .frame(width: 42, height: 42)
                     
+                    //user data - TO-DO
+                    /*
                     Text(viewModel.isMember ? "G" : String(viewModel.username.prefix(1)).uppercased())
                         .font(.system(size: 17, weight: .bold))
                         .foregroundStyle(.white)
+                     */
                 }
                 
                 VStack(alignment: .leading, spacing: 2) {
@@ -162,8 +176,9 @@ struct DeviceAuthView: View {
             .padding(12)
             .background(Color(uiColor: .secondarySystemBackground))
             .clipShape(.rect(cornerRadius: 12))
+            */
             
-            if !viewModel.isMember {
+        //    if !viewModel.isMember {
                 // Permissions Checklist Section
                 VStack(spacing: 0) {
                     permissionRow(title: "Read library & flowsheet")
@@ -173,14 +188,18 @@ struct DeviceAuthView: View {
                     permissionRow(title: "Edit your personal bin")
                 }
                 .padding(.horizontal, 4)
-            }
+           // }
             
             Spacer()
             
             // Action Buttons Section
             VStack(spacing: 8) {
-                if viewModel.isMember {
-                    Button {} label: {
+                    Button {
+                        Task {
+                            let result = await viewModel.approve(userCode: userCode)
+                            message = result
+                        }
+                    } label: {
                         Text("Approve")
                             .font(.system(size: 17, weight: .bold))
                             .foregroundStyle(Color(uiColor: .tertiaryLabel))
@@ -198,42 +217,12 @@ struct DeviceAuthView: View {
                             dismiss()
                         }
                     } label: {
-                        Text("Close")
+                        Text("Reject")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(.primary)
                             .frame(maxWidth: .infinity)
                             .frame(height: 44)
                     }
-                } else {
-                    Button {
-                        Task {
-                            let result = await viewModel.approve(userCode: userCode)
-                            message = result
-                        }
-                    } label: {
-                        Text("Approve")
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 50)
-                            .background(Color.blue)
-                            .clipShape(.rect(cornerRadius: 14))
-                    }
-                    
-                    Button {
-                        Task {
-                            let result = await viewModel.deny(userCode: userCode)
-                            onDismissWithToast?(result, "red")
-                            dismiss()
-                        }
-                    } label: {
-                        Text("Reject")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.red)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 44)
-                    }
-                }
             }
             .padding(.bottom, 16)
         }
@@ -308,8 +297,8 @@ struct DeviceAuthErrorView: View {
 
 // Visual feedback view presented when browser authorization is approved successfully
 struct DeviceAuthSuccessView: View {
-    let domain: String
-    var username: String = "biscuit"
+    //let domain: String
+    //var username: String
     let toastMessage: String
     @Environment(\.dismiss) private var dismiss
 
@@ -345,12 +334,14 @@ struct DeviceAuthSuccessView: View {
                     Text("Browser signed in")
                         .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(.primary)
-
+                    //Insert username here
+                    /*
                     Text("\(domain) is now signed in as **\(username)** on your browser.")
                         .font(.system(size: 15))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 24)
+                     */
                 }
 
                 // Expiration Pill Badge

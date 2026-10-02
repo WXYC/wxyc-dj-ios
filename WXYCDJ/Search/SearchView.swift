@@ -123,22 +123,26 @@ struct SearchView: View {
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 if case .signedIn(let payload) = auth.state {
-                    let handle = payload?.email?.components(separatedBy: "@").first ?? payload?.sub ?? "biscuit"
+                    let email = payload?.email?.components(separatedBy: "@").first ?? payload?.sub ?? "Unknown User"
                     Section {
-                        Text("Signed in as \(handle) [\(payload?.role?.uppercased() ?? "DJ")]")
+                        //TO-DO: add user tag
+                        //Text("Signed in as \(email) [\(payload?.role?.uppercased() ?? "Unknown Role")]")
+                        Text("Signed in")
                             .font(.caption)
                     }
                 }
-                
+                //TO-DO: add button back when profile page is implemented
+                /*
                 Button {
                 } label: {
                     Label("Profile", systemImage: "person")
                 }
-                
+                */
                 Button {
                     showScanner = true
                 } label: {
-                    Label("Scan QR to sign in browser", systemImage: "qrcode.viewfinder")
+                    //Label("Scan QR to sign in browser", systemImage: "qrcode.viewfinder")
+                    Label("QR Browser Sign-in", systemImage: "qrcode.viewfinder")
                 }
                 
                 Button("Sign Out", role: .destructive) {

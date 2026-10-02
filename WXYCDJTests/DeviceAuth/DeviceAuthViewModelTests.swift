@@ -16,13 +16,26 @@ import Testing
 @Suite("DeviceAuthViewModel", .serialized)
 @MainActor
 struct DeviceAuthViewModelTests {
-    private static func makeViewModel(_ client: APIClient) -> DeviceAuthViewModel {
-        return DeviceAuthViewModel(api: client, biometricEvaluator: { true })
+    private static func makeViewModel(_ auth: AuthService) -> DeviceAuthViewModel {
+        return DeviceAuthViewModel(auth: auth)
+    }
+    
+    private static func makeAuth(session: StubRequestSession, role: String = "dj") async throws -> AuthService {
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let auth = AuthService(configuration: WXYCAPIConfiguration.localDevelopment, storage: storage, session: session)
+        session.enqueue(StubRequestSession.Stub(
+            statusCode: 200,
+            body: Data(#"{"token":"\#(Fixtures.jwt(role: role))"}"#.utf8)
+        ))
+        await auth.restoreSession()
+        return auth
     }
 
     @Test func approveSuccess() async throws {
-        let (client, session) = try await SignedInClient.make()
-        let viewModel = Self.makeViewModel(client)
+        let session = StubRequestSession()
+        let auth = try await DeviceAuthViewModelTests.makeAuth(session: session)
+        let viewModel = Self.makeViewModel(auth)
         let baseline = session.recordedRequests.count
         
         let userCode = "ABCD-1234"
@@ -34,10 +47,12 @@ struct DeviceAuthViewModelTests {
         #expect(session.recordedRequests.count == baseline + 1)
     }
     
+    /*
+    //TO-DO: add back in when we pay attention to dj roles
     @Test func approveMemberRoleGateBlockedLocally() async throws {
-        let (client, session) = try await SignedInClient.make()
-        let viewModel = Self.makeViewModel(client)
-        viewModel.updateUserProfile(role: "MEMBER")
+        let session = StubRequestSession()
+        let auth = try await DeviceAuthViewModelTests.makeAuth(session: session, role: "member")
+        let viewModel = Self.makeViewModel(auth)
         let baseline = session.recordedRequests.count
         
         #expect(viewModel.isMember == true)
@@ -48,10 +63,12 @@ struct DeviceAuthViewModelTests {
         #expect(message == "Your account can’t approve this. Approving requires a DJ role.")
         #expect(session.recordedRequests.count == baseline)
     }
+    */
     
     @Test func approveAccessDeniedError403() async throws {
-        let (client, session) = try await SignedInClient.make()
-        let viewModel = Self.makeViewModel(client)
+        let session = StubRequestSession()
+        let auth = try await DeviceAuthViewModelTests.makeAuth(session: session)
+        let viewModel = Self.makeViewModel(auth)
         let baseline = session.recordedRequests.count
         
         session.enqueue(StubRequestSession.Stub(statusCode: 403, body: Data(#"{"error": "access_denied", "error_description": "Caller lacks the dj role."}"#.utf8)))
@@ -64,8 +81,9 @@ struct DeviceAuthViewModelTests {
     }
     
     @Test func approveUnauthorizedError401() async throws {
-        let (client, session) = try await SignedInClient.make()
-        let viewModel = Self.makeViewModel(client)
+        let session = StubRequestSession()
+        let auth = try await DeviceAuthViewModelTests.makeAuth(session: session)
+        let viewModel = Self.makeViewModel(auth)
         
         let errorBody = Data(#"{"error": "unauthorized", "error_description": "Caller not signed in."}"#.utf8)
         session.enqueue(StubRequestSession.Stub(statusCode: 401, body: errorBody))
@@ -79,8 +97,9 @@ struct DeviceAuthViewModelTests {
     }
     
     @Test func denySuccessForDJ() async throws {
-        let (client, session) = try await SignedInClient.make()
-        let viewModel = Self.makeViewModel(client)
+        let session = StubRequestSession()
+        let auth = try await DeviceAuthViewModelTests.makeAuth(session: session)
+        let viewModel = Self.makeViewModel(auth)
         let baseline = session.recordedRequests.count
         
         let userCode = "ABCD-1234"
@@ -93,9 +112,9 @@ struct DeviceAuthViewModelTests {
     }
     
     @Test func denySuccessForMember() async throws {
-        let (client, session) = try await SignedInClient.make()
-        let viewModel = Self.makeViewModel(client)
-        viewModel.updateUserProfile(role: "MEMBER")
+        let session = StubRequestSession()
+        let auth = try await DeviceAuthViewModelTests.makeAuth(session: session, role: "member")
+        let viewModel = Self.makeViewModel(auth)
         let baseline = session.recordedRequests.count
         
         let userCode = "ABCD-1234"
