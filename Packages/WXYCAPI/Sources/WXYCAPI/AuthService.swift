@@ -889,4 +889,98 @@ public final class AuthService {
         request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
         _ = try await send(request)
     }
+
+    // MARK: - Device Auth (QR Sign-In)
+
+    // Wires DeviceAuthViewModel to Backend Service
+    // What's going on at the backend:
+    // dj-site requests code and renders QR, waits for device's response.
+    // DJ must be signed into app to have access to this feature.
+    // DJ scans QR Code, extracts a user_code, and the following functions call the backend to approve or deny the browser login on the DJ's behalf.
+    // Three endpoints from wxyc-shared/api.yaml: /device/approve, /device/deny, and (verification) GET /device.
+    // These methods interact with better-auth routes so they authenticate using the session token, not the JWT, and they do not retry on 401.
+
+    public func approveDevice(userCode: String) async throws -> DeviceAuthActionResponse {
+        guard let token = sessionToken else { throw AuthError.notSignedIn }
+        // Encode the approve request payload into JSON data using the expected camelCase wire key ("userCode").
+        let body = try JSONCoders.encoder.encode(DeviceAuthApproveRequest(userCode: userCode))
+        // Dispatch a POST request to the device approval endpoint, which automatically injects the current DJ's session token.
+        let (data, http) = try await sendDeviceAuthRequest(path: "device/approve", method: "POST", query: [], body: body, token: token)
+        
+        switch http.statusCode {
+        case 200:
+            // Decode and return the success confirmation response when the backend accepts the approval.
+            return try JSONCoders.decoder.decode(DeviceAuthActionResponse.self, from: data)
+        default:
+            // Fall back to decoding the error envelope if the request fails, mapping unknown codes to nil while preserving the HTTP status.
+            let envelope = try? JSONCoders.decoder.decode(DeviceAuthActionErrorEnvelope.self, from: data)
+            throw DeviceAuthActionError(
+                status: http.statusCode,
+                code: envelope.flatMap { DeviceAuthActionErrorCode(rawValue: $0.error) }
+            )
+        }
+    }
+    
+    // Same as approveDevice, but for /auth/device/deny
+    public func denyDevice(userCode: String) async throws -> DeviceAuthActionResponse {
+        guard let token = sessionToken else { throw AuthError.notSignedIn }
+        let body = try JSONCoders.encoder.encode(DeviceAuthDenyRequest(userCode: userCode))
+        let (data, http) = try await sendDeviceAuthRequest(path: "device/deny", method: "POST", query: [], body: body, token: token)
+        
+        switch http.statusCode {
+        case 200:
+            return try JSONCoders.decoder.decode(DeviceAuthActionResponse.self, from: data)
+        default:
+            // Decode the error body safely to preserve error categories like expired tokens or unauthorized states.
+            let envelope = try? JSONCoders.decoder.decode(DeviceAuthActionErrorEnvelope.self, from: data)
+            throw DeviceAuthActionError(
+                status: http.statusCode,
+                code: envelope.flatMap { DeviceAuthActionErrorCode(rawValue: $0.error) }
+            )
+        }
+    }
+    
+    // 3rd device auth endpoint -- verify
+    // difference between verify & approve/deny: verify is a GET, w/ query [URLQueryItem(name: "user_code", value: userCode)] and no body
+    public func verifyDevice(userCode: String) async throws -> DeviceAuthVerifyResponse {
+        guard let token = sessionToken else { throw AuthError.notSignedIn }
+        // Build the query parameters using snake_case ("user_code") as required by the verify endpoint contract.
+        // Perform a GET request to query the current status of the device sign-in code.
+        let (data, http) = try await sendDeviceAuthRequest(path: "device", method: "GET", query: [URLQueryItem(name: "user_code", value: userCode)], body: nil, token: token)
+        
+        switch http.statusCode {
+        case 200:
+            // Decode and return the response containing the code's current lifecycle state (pending, approved, or denied).
+            return try JSONCoders.decoder.decode(DeviceAuthVerifyResponse.self, from: data)
+        default:
+            // Parse and throw an error if the verification request encounters invalid parameters or expiration.
+            let envelope = try? JSONCoders.decoder.decode(DeviceAuthVerifyErrorEnvelope.self, from: data)
+            throw DeviceAuthVerifyError(
+                status: http.statusCode,
+                code: envelope.flatMap { DeviceAuthVerifyErrorCode(rawValue: $0.error) }
+            )
+        }
+    }
+
+    private func sendDeviceAuthRequest(path: String, method: String, query: [URLQueryItem], body: Data?, token: String) async throws -> (Data, HTTPURLResponse) {
+        var components = URLComponents(url: configuration.authBaseURL.appending(path: path), resolvingAgainstBaseURL: false)
+        if !query.isEmpty { components?.queryItems = query }
+        guard let url = components?.url else {
+            throw AuthError.network(message: "Failed to build URL for \(path)")
+        }
+        var request = URLRequest(url: url, timeoutInterval: configuration.timeout)
+        request.httpMethod = method
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let body {
+            request.httpBody = body
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        let (data, response) = try await send(request)
+        guard let http = response as? HTTPURLResponse else {
+            throw AuthError.network(message: "Non-HTTP response")
+        }
+        // No 401-retry loop here since a session token is not refreshable. If the token is rejected, we just return the response and the caller throws the mapped error.
+        return (data, http)
+    }
 }
