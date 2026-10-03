@@ -135,34 +135,39 @@ iOS gates the UI based on the JWT `role` claim (already read by [`JWTPayload`](.
 
 **Status:** Accepted, 2026-10-02. Supersedes the one-per-album, author-owned, MD-curated-queue model this ADR described until that date — superseded before any of it was built. The earlier text is not amended in place; it survives only in this file's git history.
 
-A review is about an *intake item* (a physical copy the station holds, logged by a music director) or an existing library release, never a record the station does not hold. A release can have many reviews — the old one-review-per-album ceiling and the MD-curated review queue are both dropped, along with the queue's claim/soft-lock mechanism. Fields mirror the station's printed slip and nothing more: buzzwords, a paragraph about the artist, the review itself, recommended tracks, and FCC notes, all free text. There is no rating, no headline, no per-track polarity, and no curated tag vocabulary — the old `headline`, `rotation_hint`, `tags`, `review_callouts`, and `rating` columns are gone.
+A review is about an *intake item* (a physical copy the station holds, logged by a music director) or an existing library release, never a record the station does not hold. A release can have many reviews. Its fields are the station's printed slip and nothing more: buzzwords, a paragraph about the artist, the review itself, recommended tracks, and FCC notes, all free text. There is no rating, no headline, no per-track polarity, and no curated tag vocabulary.
 
-Account holders write their own review. A music director can record a review on behalf of anyone, including a handwritten one transcribed from the physical slip, where the review text itself is optional — buzzwords, recommended tracks, and FCC notes may be all that survives. `author` is text with an optional account link rather than a required FK, because most historical reviewers never had a Backend-Service account.
+Intake items wait in a pile. A music director logs each one into the pool, or requests a named DJ for it, which holds the record in the office for that DJ. A DJ claims an item by checking it out, which means physically taking the record; a requested DJ accepts (a checkout) or passes, and a pass notifies the music directors. A request lapses back to the pool after 7 days. A checkout never lapses: after 14 days it is flagged overdue to the music directors, and the holder or a music director can release it back to the pool. A music director can delete an item at any point before filing it, and its reviews are deleted with it.
 
-Drafts are private to the author and to whoever recorded them (the music director, for a handwritten entry). Submitting an intake review notifies the music directors, in the app and by email; nothing gates who may write a review for a given intake item or release.
+Account holders write their own reviews. A DJ can review an intake item only while holding it, because reviewing needs the physical record, and can review any release already in the library; trainees may review library releases but are steered to the pile. A music director records reviews on behalf of anyone else. The handwritten route is open to everyone: the review is written on paper and stays on the sleeve, and a music director records it in the app with all of its text optional and nothing printed. `author` is text with an optional account link, because most historical reviewers never had a Backend-Service account.
 
-The review locks at print, not at submission: the author (or the recording music director) edits until a music director prints the slip that gets taped to the album cover, and only a music director edits — or reprints — after that. A review of a release already in the library is never printed and stays editable by its author indefinitely.
+Drafts are private to their author and to whoever recorded them; music directors do not see other people's drafts. Submitting an intake review notifies the music directors, in the app and by email; submitting a review of a library release notifies nobody.
 
-A review carries no routing signal of its own. The music director alone decides whether a release goes to rotation or straight to the shelf, and assigns its call number when filing it; the librarian finalizes the filing when shelving. This replaces the old design's `rotation_hint`-driven triage entirely.
+A review locks at print, not at submission. Only intake items are printed, one slip per record, which a music director prints and tapes to the album cover. The lock lives on the intake item, not on each review: until the item's slip is printed, an author edits their submitted review, and after it only music directors edit, and reprint. A review of a release already in the library is never printed and stays editable by its author indefinitely.
 
-After a cutover date, a hard gate applies: every release entering the library or rotation needs a submitted review, a handwritten one recorded by a music director, or a citation of an already-reviewed release. Releases catalogued before the cutover are deemed reviewed — their physical reviews are already taped to their covers.
+A review carries no routing: no outcome and no recommendation. The music director alone decides whether a release goes to rotation or straight to the shelf, and assigns its call number when filing it, before it is shelved; filing creates the library row, and the rotation entry if there is one, in one transaction. The librarian finalizes the release when shelving it, confirming or changing the call number.
 
-Consent is collected per surface: one checkbox each for the website, the WXYC apps, and Instagram, plus one credit choice — DJ name (only if the account has one), real name, or no name. FCC notes are never published, on any surface. v1 collects this consent and publishes nothing new with it.
+After a cutover date, a hard gate applies: every release entering the library or rotation needs a submitted review, a handwritten one recorded by a music director, or a citation. Releases catalogued before the cutover are deemed reviewed, since their physical reviews are already taped to their covers. A citation, for a second format or a replacement copy, names either a release that has a submitted review or is deemed reviewed, or a form-archive submission dated before the form closed. A typed-text rotation record from before the cutover may still change bins after it, and keeps its right to be imported into the library by the librarian. The form and the app overlap through the rest of fall 2026; the cutover, and the form's close, is one day at the start of the spring 2027 semester.
 
-Author names may be shown anywhere inside the station — dj-site, the DJ apps — regardless of consent, and never outside it. The form archive (Backend-Service ADR 0011) stays a separate system; an intake item may cite an archive row, but the archive itself is untouched by this ADR.
+Consent is collected per surface: one checkbox each for the website, the WXYC apps, and Instagram, plus one credit choice: DJ name (only if the account has one), real name, or no name. A review recorded on someone's behalf starts with nothing ticked. FCC notes are never published, on any surface. v1 collects this consent and publishes nothing new with it.
+
+Author names may be shown anywhere inside the station: dj-site and the DJ apps. The form's anonymity promise covers only outside the station.
+
+The form archive (Backend-Service ADR 0011) stays a separate table; it is cited, never merged into reviews. Three of these decisions reach it: reviewer names may be shown inside the station; an intake item may cite an archive submission dated before the form closed; and a form-era "yes" to sharing counts for all three surfaces, always uncredited.
 
 ### Mirrors needed
 
-- [ ] `Backend-Service/docs/adr/` — rewrite as ADR 0006: `intake_items`/`intake_item_passes` schema, the extended `reviews` table, the `/intake` and `/reviews` endpoints, the new `reviews` permission key
+- [ ] `Backend-Service/docs/adr/` — rewrite as ADR 0006: the `intake_items`/`intake_item_passes` schema, the extended `reviews` table, the `/intake` and `/reviews` endpoints, the new `reviews` permission key, and the cutover gate
+- [ ] `Backend-Service/docs/adr/` — amend ADR 0011 with the three archive points above, dated
 - [ ] `dj-site/docs/adr/` — rewrite as ADR 0004: the DJ and MD review screens on the web surface
 
 ### Touchpoints
 
-- BS schema: new `intake_items` and `intake_item_passes` tables; extended [`reviews`](https://github.com/WXYC/Backend-Service/blob/main/shared/database/src/schema.ts) table (free-text buzzwords/artist paragraph/review/recommended tracks/FCC notes, text `author` with an optional account FK, print-lock state) — none of the old `review_queue`/`review_callouts`/`tag_vocabulary` tables survive
-- BS endpoints: `/intake` and `/reviews`; a new `reviews` permission key
-- dj-site: new screens for DJs (write/edit their own) and music directors (record on behalf of anyone, print, lock, assign call number)
+- BS schema: new `intake_items` table (state, the MD's request and the DJ's checkout, a citation of a release or of an archive submission, and the filing, print and finalize stamps; its `printed_at` drives the lock) and `intake_item_passes`; the [`reviews`](https://github.com/WXYC/Backend-Service/blob/main/shared/database/src/schema.ts) stub extended to many per release, about an `intake_item_id` or an `album_id`, with the slip's free-text fields, text `author` plus an optional `author_user_id` and a `recorded_by_user_id`, `medium` (typed, handwritten, or printed for a later OCR backfill), `status` and `submitted_at`, and the per-surface consent booleans and `credit`
+- BS endpoints: `/intake` (log, request, check out, accept, pass, release, file, print, finalize) and `/reviews`; a new `reviews` permission key; the cutover gate where library and rotation rows are inserted
+- dj-site: new screens for DJs (the pile; writing and editing their own reviews) and music directors (log and request items, record reviews on behalf of others and handwritten ones, file with a call number, print the slip), and the librarian's finalize step
 - DJ mobile apps (this repo, `wxyc-dj-android`): **not** in v1 — the `wxyc-shared/api.yaml` contract is written so they can follow
-- Form archive: Backend-Service ADR 0011 (unchanged; cited by `intake_items`, not merged into it)
+- Form archive: Backend-Service ADR 0011 (amended with the three points above; cited by `intake_items`, never merged into `reviews`)
 
 ---
 
@@ -341,7 +346,7 @@ The catalog-track-search plan ([wiki/plans/catalog-track-search.md §5.3 / Track
 
 ### C4 — Public-facing review and DJ-profile publication (deferred)
 
-Reviews and DJ profiles are internal-only in v1. Public-facing publication (listener-visible on wxyc.org) is the paired future migration — one `published_publicly` flag on both surfaces, MD approval gate on reviews, public-handle on DJ profiles separate from `real_name` / `email`. Track the [`dj-site/694-public-dj-handle`](https://github.com/WXYC/dj-site) branch as the catalyst — when that lands, the equivalent iOS surface follows.
+Reviews and DJ profiles are internal-only in v1. Public-facing publication (listener-visible on wxyc.org) is the paired future migration — for reviews, publishing only where the per-surface consent and credit choice that ADR 0005 collects in v1 allow (website, WXYC apps, Instagram; never the FCC notes), with an MD approval gate; for DJ profiles, a public handle separate from `real_name` / `email`. Track the [`dj-site/694-public-dj-handle`](https://github.com/WXYC/dj-site) branch as the catalyst — when that lands, the equivalent iOS surface follows.
 
 - **Affects:** Backend-Service (schema + endpoints), wxyc.org (listener-facing surfaces), dj-site (handle management), iOS (no work until public goes live)
 - **Per ADR:** 0005 (review internal-only for v1), [Q15b grilling resolution](../CONTEXT.md) (DJ profile internal-only for v1)
