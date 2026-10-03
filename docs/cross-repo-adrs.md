@@ -131,31 +131,38 @@ iOS gates the UI based on the JWT `role` claim (already read by [`JWTPayload`](.
 
 ---
 
-## ADR 0005 — Reviews are one-per-album, author-owned, internal-only, with an MD-curated queue
+## ADR 0005 — Reviews are many-per-release, scoped to an intake item or a library release, locked at print, consent-gated per surface
 
-**Status:** Proposed.
+**Status:** Accepted, 2026-10-02. Supersedes the one-per-album, author-owned, MD-curated-queue model this ADR described until that date — superseded before any of it was built. The earlier text is not amended in place; it survives only in this file's git history.
 
-The existing [`reviews` table](https://github.com/WXYC/Backend-Service/blob/main/shared/database/src/schema.ts) gets extended (not replaced) into the canonical Review model. Each Album has at most one Review; the Review is owned by `author_dj_id` (FK to `auth_user.id`); the existing `author varchar(32)` column becomes the at-write display-name snapshot (per ADR — see [Q12b resolution](../CONTEXT.md)). New columns: `headline` (≤140 chars), `rotation_hint` enum (`yes_promote` / `maybe` / `no_skip`), `fcc_explicit` boolean, `tags` (FK to a new tag vocabulary table), `callouts` (separate `review_callouts` table: `track_title`, `comment`, `polarity`), `rating` (numeric, half-star increments 0.5–5.0).
+A review is about an *intake item* (a physical copy the station holds, logged by a music director) or an existing library release, never a record the station does not hold. A release can have many reviews — the old one-review-per-album ceiling and the MD-curated review queue are both dropped, along with the queue's claim/soft-lock mechanism. Fields mirror the station's printed slip and nothing more: buzzwords, a paragraph about the artist, the review itself, recommended tracks, and FCC notes, all free text. There is no rating, no headline, no per-track polarity, and no curated tag vocabulary — the old `headline`, `rotation_hint`, `tags`, `review_callouts`, and `rating` columns are gone.
 
-Editing rules:
-- Author can edit anytime.
-- MD can transfer authorship to a new DJ (handles departed authors / fresh take requests).
-- Other DJs writing on an already-reviewed album request takeover via MD.
+Account holders write their own review. A music director can record a review on behalf of anyone, including a handwritten one transcribed from the physical slip, where the review text itself is optional — buzzwords, recommended tracks, and FCC notes may be all that survives. `author` is text with an optional account link rather than a required FK, because most historical reviewers never had a Backend-Service account.
 
-The MD Review queue (`review_queue` table — new) is a separate construct: rows reference `album_id`, carry `added_by_md_id`, `added_at`, claim state (`claimant_dj_id?`, `claimed_at?`, soft-lock 14d). The queue is *guidance*, not a gate — any DJ can author a review for any album, but the queue surfaces "albums that need a take." When a DJ claims a queued album, the rotation_hint becomes required on the resulting review (otherwise optional).
+Drafts are private to the author and to whoever recorded them (the music director, for a handwritten entry). Submitting an intake review notifies the music directors, in the app and by email; nothing gates who may write a review for a given intake item or release.
 
-Internal-only for v1 — reviews visible to signed-in users on iOS and dj-site, not on listener-facing wxyc.org. A `published_publicly` boolean is the future migration to listener-facing publication (paired with the equivalent DJ profile public-handle work).
+The review locks at print, not at submission: the author (or the recording music director) edits until a music director prints the slip that gets taped to the album cover, and only a music director edits — or reprints — after that. A review of a release already in the library is never printed and stays editable by its author indefinitely.
+
+A review carries no routing signal of its own. The music director alone decides whether a release goes to rotation or straight to the shelf, and assigns its call number when filing it; the librarian finalizes the filing when shelving. This replaces the old design's `rotation_hint`-driven triage entirely.
+
+After a cutover date, a hard gate applies: every release entering the library or rotation needs a submitted review, a handwritten one recorded by a music director, or a citation of an already-reviewed release. Releases catalogued before the cutover are deemed reviewed — their physical reviews are already taped to their covers.
+
+Consent is collected per surface: one checkbox each for the website, the WXYC apps, and Instagram, plus one credit choice — DJ name (only if the account has one), real name, or no name. FCC notes are never published, on any surface. v1 collects this consent and publishes nothing new with it.
+
+Author names may be shown anywhere inside the station — dj-site, the DJ apps — regardless of consent, and never outside it. The form archive (Backend-Service ADR 0011) stays a separate system; an intake item may cite an archive row, but the archive itself is untouched by this ADR.
 
 ### Mirrors needed
 
-- [ ] `Backend-Service/docs/adr/` — schema extensions, new endpoints, queue model
-- [ ] `dj-site/docs/adr/` — review surface mirrored on web (or noted as iOS-only initially)
+- [ ] `Backend-Service/docs/adr/` — rewrite as ADR 0006: `intake_items`/`intake_item_passes` schema, the extended `reviews` table, the `/intake` and `/reviews` endpoints, the new `reviews` permission key
+- [ ] `dj-site/docs/adr/` — rewrite as ADR 0004: the DJ and MD review screens on the web surface
 
 ### Touchpoints
 
-- BS schema extensions: [`reviews`](https://github.com/WXYC/Backend-Service/blob/main/shared/database/src/schema.ts) + new `review_queue`, `review_callouts`, `tag_vocabulary` tables
-- BS new endpoints (none of these exist today): `GET/POST/PATCH/DELETE /reviews`, `GET/POST/DELETE /review-queue`, `POST /review-queue/{id}/claim`, `POST /review-queue/{id}/release`, MD-gated tag-vocabulary CRUD
-- iOS: new `ReviewService` in `WXYCAPI`, review detail/editor views, MD queue dashboard view
+- BS schema: new `intake_items` and `intake_item_passes` tables; extended [`reviews`](https://github.com/WXYC/Backend-Service/blob/main/shared/database/src/schema.ts) table (free-text buzzwords/artist paragraph/review/recommended tracks/FCC notes, text `author` with an optional account FK, print-lock state) — none of the old `review_queue`/`review_callouts`/`tag_vocabulary` tables survive
+- BS endpoints: `/intake` and `/reviews`; a new `reviews` permission key
+- dj-site: new screens for DJs (write/edit their own) and music directors (record on behalf of anyone, print, lock, assign call number)
+- DJ mobile apps (this repo, `wxyc-dj-android`): **not** in v1 — the `wxyc-shared/api.yaml` contract is written so they can follow
+- Form archive: Backend-Service ADR 0011 (unchanged; cited by `intake_items`, not merged into it)
 
 ---
 
