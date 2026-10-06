@@ -50,7 +50,7 @@ This is the phase that flips when [ADR 0006 (per-DJ plays)](./cross-repo-adrs.md
 
 The largest single feature: reviews as [ADR 0005](./cross-repo-adrs.md#adr-0005--reviews-are-many-per-release-one-accepted-by-a-music-director-as-the-records-review-consent-gated-per-surface) defines them, which is where their rules live; this section does not restate them. ADR 0005 ships in Backend-Service and dj-site first, and the DJ apps follow its `wxyc-shared/api.yaml` contract. Pulled into its own phase because it owns the most schema, the most new endpoints, and the most net-new UI surface area in the whole v1.
 
-- **Pick #13: Reviews** — review detail view and review editor for the reviews [ADR 0005](./cross-repo-adrs.md#adr-0005--reviews-are-many-per-release-one-accepted-by-a-music-director-as-the-records-review-consent-gated-per-surface) defines. **Depends on:** ADR 0005's endpoints as declared in `wxyc-shared/api.yaml` (see the ADR's touchpoints). Visible to signed-in users only — public publication is C4, deferred. **Size: XL.**
+- **Pick #13: Reviews** — the pile (check out, accept or pass a request, return), the review detail view with its edit history and FCC notes, and the review editor, for the reviews [ADR 0005](./cross-repo-adrs.md#adr-0005--reviews-are-many-per-release-one-accepted-by-a-music-director-as-the-records-review-consent-gated-per-surface) defines. **Depends on:** ADR 0005's endpoints as declared in `wxyc-shared/api.yaml` (see the ADR's touchpoints). Visible to signed-in users only — public publication is C4, deferred. **Size: XL.**
 
 ## Phase 5 — Flowsheet-archive search + structured filter builder
 
