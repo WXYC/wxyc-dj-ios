@@ -95,25 +95,17 @@ struct RootView: View {
         // never on the Search/Bin tab stacks — so dismissing returns the DJ to
         // the exact tab + scroll position they left.
         //
-        // Known limitation: a second Spotlight tap while a cover is already up
-        // does not swap the cover; it is a no-op until the open cover is
-        // dismissed. `AppDependencies.present(albumID:parked:)` enforces that
-        // explicitly (issue #118) rather than leaving it to SwiftUI.
-        //
-        // **Unverified claim, flagged rather than repeated as fact** (issue
-        // #118 review): this comment used to assert that
-        // `fullScreenCover(item:)` "only watches nil↔non-nil, not an identity
-        // swap". `git blame` puts that on 6afa64b4, the issue-#19 step-7
-        // commit, whose message documents the surface at length but never
-        // records observing the behaviour, and `RouterDeepLinkTests` covers
-        // the router's value semantics rather than SwiftUI presentation. So it
-        // is plausible but unevidenced, and nobody has since checked it on
-        // device. Nothing depends on it being true: `present` refuses the
-        // second tap itself, so the no-op is the app's own decision under
-        // either SwiftUI behaviour. Swapping the cover to the newly-tapped
-        // album is the better UX and is tracked as issue #126, which records
-        // why an in-place `deepLink` swap cannot implement it.
-        .fullScreenCover(item: $router.deepLink) { route in
+        // A tap for a different album while the cover is up swaps it (issue
+        // #126): `AppDependencies.present` queues the album and nils
+        // `deepLink`, and `onDismiss` — which SwiftUI calls for a programmatic
+        // dismissal as well as the Close button — presents the queued one.
+        // Nothing ever writes a different route over a presented one, so the
+        // swap does not depend on how `fullScreenCover(item:)` treats an
+        // identity change while presented (an old, never-verified claim here
+        // said it ignores one; it is no longer load-bearing either way).
+        .fullScreenCover(item: $router.deepLink, onDismiss: {
+            Task { await deps.deepLinkCoverDidDismiss() }
+        }) { route in
             // fullScreenCover content is hosted in a separate presentation
             // context that does NOT inherit the presenter's
             // .environment(_:)-injected @Observable objects. Re-inject the SAME

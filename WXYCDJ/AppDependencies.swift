@@ -605,13 +605,31 @@ final class AppDependencies {
     }
 
     /// Tear down the deep-link surface on sign-out: dismiss the cover, drop any
-    /// park, and bump ``presentationToken`` so an in-flight ``present(albumID:)``
-    /// — one whose `resolveRoute` was still suspended when sign-out landed —
-    /// bows out instead of re-presenting an album over `LoginView`.
+    /// park **and any queued swap**, and bump ``presentationToken`` so an
+    /// in-flight ``present(albumID:)`` — one whose `resolveRoute` was still
+    /// suspended when sign-out landed — bows out instead of re-presenting an
+    /// album over `LoginView`. The queue is cleared synchronously, before the
+    /// `deepLink = nil` here triggers the cover's `onDismiss`, so that drain
+    /// finds nothing to replay (issue #126).
     private func invalidateDeepLink() {
         presentationToken += 1
+        router.queued = nil
         router.deepLink = nil
         router.pending = nil
+    }
+
+    /// Drain an album queued behind a cover's dismissal (issue #126). RootView
+    /// calls this from the deep-link cover's `onDismiss`, which SwiftUI invokes
+    /// for a programmatic dismissal as well as the DJ's Close tap — so this is
+    /// what turns ``present(albumID:parked:)``'s `deepLink = nil` into the
+    /// queued album's presentation. A Close with nothing queued is a no-op.
+    ///
+    /// The queued presentation records `parked: false`: it waited on a
+    /// dismissal, not on sign-in, which is all `parked` means.
+    func deepLinkCoverDidDismiss() async {
+        guard let albumID = router.queued else { return }
+        router.queued = nil
+        await present(albumID: albumID, parked: false)
     }
 
     /// Resolve `albumID` to a route and present it — the single resolve→present
@@ -628,30 +646,35 @@ final class AppDependencies {
     /// inferred here — `handleSpotlightTap` (an immediate signed-in tap) and
     /// the `handleAuthChange` replay (a tap that had to wait on `Router.pending`)
     /// are the only two callers, and they already know which one they are.
-    /// Recorded only when a route is actually presented (the early-out for an
-    /// already-open cover, and a token bow-out from a superseded resolve,
-    /// both fire no event — neither is a genuine new deep-link open).
+    /// Recorded only when a route is actually presented (a re-tap of the
+    /// album already showing, a tap queued behind a dismissal, and a token
+    /// bow-out from a superseded resolve all fire no event — none is a genuine
+    /// new deep-link open; the queued tap records when its drain presents it).
     private func present(albumID: Int, parked: Bool) async {
-        // Issue #118 item 2: refuse whenever a cover is already showing — any
-        // album, not just this one. The old check (`router.deepLink?.id ==
-        // albumID`) caught only the same-album re-tap, so a tap for a
-        // *different* album resolved, overwrote the stored route, and fired
-        // `spotlight_deeplink_opened`.
-        //
-        // **This is the app's own decision, not an inference from SwiftUI.**
-        // `RootView`'s comment claims `fullScreenCover(item:)` ignores an
-        // identity swap while presented; that claim is unverified (see it for
-        // the provenance), so the fix deliberately does not depend on it —
-        // under either SwiftUI behaviour the second tap now changes nothing
-        // and records nothing, which is what makes the event honest.
-        //
-        // Swapping the cover to the newly-tapped album would be better UX, and
-        // is issue #126 rather than a line here, because it cannot be
-        // done by writing `deepLink` in place: `nil` and the new route in one
-        // main-actor turn coalesce under Observation, so SwiftUI's body only
-        // ever sees the final value and no dismissal is observed. It needs the
-        // cover's `onDismiss` to drive the second presentation.
-        guard router.deepLink == nil else { return }
+        // Issue #126: a tap for a different album while a cover is showing
+        // swaps the cover rather than being refused (#118 item 2's interim
+        // fix). It cannot be done by writing `deepLink` in place: `nil` and the
+        // new route in one main-actor turn coalesce under Observation, so
+        // SwiftUI's body only ever sees the final value and no dismissal is
+        // observed. Instead the album is queued, the dismissal starts here, and
+        // the cover's `onDismiss` drains the queue through
+        // `deepLinkCoverDidDismiss()`. Nothing ever writes a non-nil route over
+        // a non-nil one, so no SwiftUI identity-swap behaviour is relied on.
+        if let current = router.deepLink {
+            // A re-tap of the album already showing changes nothing.
+            guard current.id != albumID else { return }
+            router.queued = albumID
+            // Any resolve still in flight is now stale.
+            presentationToken += 1
+            router.deepLink = nil
+            return
+        }
+        // A dismissal is already under way: replace what waits behind it
+        // rather than presenting mid-dismissal and stranding the earlier id.
+        if router.queued != nil {
+            router.queued = albumID
+            return
+        }
         presentationToken += 1
         let token = presentationToken
         let route = await resolveRoute(albumID: albumID)
