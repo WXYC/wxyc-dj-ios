@@ -323,15 +323,13 @@ struct RouterDeepLinkTests {
         #expect(analytics.captures.count == 1)
     }
 
-    /// **Issue #118 item 2.** A tap for a *different* album while a cover is
-    /// already showing is a silent no-op — `RootView`'s `fullScreenCover(item:)`
-    /// only reacts to `deepLink` going nil -> non-nil, not a value swap while
-    /// already presented, so the DJ keeps seeing album A regardless. Before
-    /// this fix, `present(albumID:)`'s early-out only caught a re-tap of the
-    /// *same* album: a tap for B here would still resolve, silently overwrite
-    /// `router.deepLink` with B's route, and fire `spotlight_deeplink_opened`
-    /// for a presentation nobody ever saw.
-    @Test func tapForADifferentAlbumWhileACoverIsAlreadyOpenIsASilentNoOp() async throws {
+    // MARK: - Issue #126: swap the cover instead of refusing a second tap
+
+    /// A tap for a *different* album while a cover is showing queues that album,
+    /// starts the dismissal, and records nothing yet; the cover's `onDismiss`
+    /// (`deepLinkCoverDidDismiss()`) then presents it. Replaces issue #118 item
+    /// 2's silent refusal, which kept the metric honest by doing nothing at all.
+    @Test func tapForADifferentAlbumWhileACoverIsOpenSwapsAfterTheDismissal() async throws {
         let analytics = SpyAnalytics()
         let (deps, url) = Self.makeDeps(analytics: analytics)
         defer { Self.cleanup(url) }
@@ -342,9 +340,108 @@ struct RouterDeepLinkTests {
         await deps.handleSpotlightTap(albumID: 100, isSignedIn: true)
         await deps.handleSpotlightTap(albumID: 200, isSignedIn: true)
 
-        // Still showing A — B's tap changed nothing, visible state or event.
-        #expect(deps.router.deepLink?.id == 100)
+        // Mid-swap: A's cover is dismissing, B waits, and nothing has been
+        // recorded for B because nothing has been shown.
+        #expect(deps.router.deepLink == nil)
+        #expect(deps.router.queued == 200)
         #expect(analytics.captures.count == 1)
+
+        await deps.deepLinkCoverDidDismiss()
+
+        #expect(deps.router.deepLink?.id == 200)
+        #expect(deps.router.queued == nil)
+        #expect(analytics.captures.count == 2)
+        let second = try #require(analytics.captures.last)
+        #expect(second.name == "spotlight_deeplink_opened")
+        // A supersede-queued tap never waited on auth.
+        #expect(second.properties["parked"] == .bool(false))
+    }
+
+    /// A newer tap while one is already queued replaces the queue rather than
+    /// presenting mid-dismissal, so the earlier id can't strand.
+    @Test func aNewerTapWhileOneIsQueuedReplacesTheQueue() async throws {
+        let analytics = SpyAnalytics()
+        let (deps, url) = Self.makeDeps(analytics: analytics)
+        defer { Self.cleanup(url) }
+        try await #require(deps.catalogStore).replace(
+            rows: [Self.dogaRow(id: 100), Self.dogaRow(id: 200), Self.dogaRow(id: 300)], lastModified: nil
+        )
+
+        await deps.handleSpotlightTap(albumID: 100, isSignedIn: true)
+        await deps.handleSpotlightTap(albumID: 200, isSignedIn: true)
+        await deps.handleSpotlightTap(albumID: 300, isSignedIn: true)
+
+        #expect(deps.router.deepLink == nil)
+        #expect(deps.router.queued == 300)
+
+        await deps.deepLinkCoverDidDismiss()
+
+        #expect(deps.router.deepLink?.id == 300)
+        #expect(analytics.captures.count == 2)  // A, then C; B was never shown
+    }
+
+    /// A sign-out landing while an album is queued dismisses everything and
+    /// replays nothing — the dismissal it triggers must find an empty queue.
+    @Test func signOutWhileAnAlbumIsQueuedReplaysNothing() async throws {
+        let analytics = SpyAnalytics()
+        let (deps, url) = Self.makeDeps(analytics: analytics)
+        defer { Self.cleanup(url) }
+        try await #require(deps.catalogStore).replace(
+            rows: [Self.dogaRow(id: 100), Self.dogaRow(id: 200)], lastModified: nil
+        )
+
+        await deps.handleSpotlightTap(albumID: 100, isSignedIn: true)
+        await deps.handleSpotlightTap(albumID: 200, isSignedIn: true)
+        await deps.handleAuthChange(wasSignedIn: true, isSignedIn: false)
+
+        #expect(deps.router.queued == nil)
+
+        await deps.deepLinkCoverDidDismiss()
+
+        #expect(deps.router.deepLink == nil)
+        #expect(analytics.captures.count == 1)
+    }
+
+    /// The DJ closing a cover with nothing queued is the ordinary dismissal:
+    /// the drain does nothing and records nothing.
+    @Test func dismissingWithNothingQueuedIsANoOp() async throws {
+        let analytics = SpyAnalytics()
+        let (deps, url) = Self.makeDeps(analytics: analytics)
+        defer { Self.cleanup(url) }
+        try await #require(deps.catalogStore).replace(rows: [Self.dogaRow()], lastModified: nil)
+
+        await deps.handleSpotlightTap(albumID: 100, isSignedIn: true)
+        deps.router.deepLink = nil  // the cover's Close button
+        await deps.deepLinkCoverDidDismiss()
+
+        #expect(deps.router.deepLink == nil)
+        #expect(analytics.captures.count == 1)
+    }
+
+    /// A tap landing while the drained resolve is still suspended wins, and the
+    /// superseded resolve bows out without leaving the cover empty or an album
+    /// stranded in the queue.
+    @Test func aTapDuringTheDrainedResolveWinsWithoutStranding() async throws {
+        let store = GatedCatalogStore(
+            rows: [Self.dogaRow(id: 100), Self.dogaRow(id: 200), Self.dogaRow(id: 300)]
+        )
+        await store.release()
+        let deps = AppDependencies(catalogStore: store)
+
+        await deps.handleSpotlightTap(albumID: 100, isSignedIn: true)   // cover A up
+        await deps.handleSpotlightTap(albumID: 200, isSignedIn: true)   // B queued
+        await store.hold()
+
+        let drain = Task { await deps.deepLinkCoverDidDismiss() }       // present(B) suspends
+        await store.waitUntilEntered(count: 1)
+        let tap = Task { await deps.handleSpotlightTap(albumID: 300, isSignedIn: true) }
+        await store.waitUntilEntered(count: 2)                          // present(C) suspends
+        await store.release()
+        _ = await drain.value
+        _ = await tap.value
+
+        #expect(deps.router.deepLink?.id == 300)
+        #expect(deps.router.queued == nil)
     }
 }
 
@@ -379,6 +476,13 @@ private actor GatedCatalogStore: CatalogStore {
     func waitUntilEntered(count: Int) async {
         if enteredCount >= count { return }
         await withCheckedContinuation { enteredWaiters.append((count, $0)) }
+    }
+
+    /// Block future `row(id:)` reads again, restarting the entered count, so a
+    /// test can let a first presentation through and gate a later one.
+    func hold() {
+        released = false
+        enteredCount = 0
     }
 
     /// Unblock every suspended (and future) `row(id:)` read.
