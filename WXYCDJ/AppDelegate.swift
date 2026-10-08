@@ -26,6 +26,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     /// the same `CatalogRefreshService` instance.
     let dependencies: AppDependencies
 
+    /// The live instance, for code that has no SwiftUI environment to read it
+    /// from (``SceneDelegate``). `UIApplication.shared.delegate` is not a way
+    /// to reach it: under `@UIApplicationDelegateAdaptor` that is SwiftUI's own
+    /// delegate, which forwards to this one, so `as? AppDelegate` on it is nil.
+    /// Weak because SwiftUI owns the instance.
+    private(set) static weak var shared: AppDelegate?
+
     /// Issue #138's lock-screen transport registration. Held as a stored
     /// property rather than called statically because it retains the
     /// `addTarget` handles that `removeTarget(_:)` needs — see
@@ -48,6 +55,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         TelemetryBootstrap.startAnalytics()
         self.dependencies = AppDependencies()
         super.init()
+        Self.shared = self
     }
 
     func application(

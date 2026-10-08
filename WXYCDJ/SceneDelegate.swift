@@ -51,14 +51,22 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate {
         handle(userActivity)
     }
 
-    /// Forward an activity to the shared composition root. Reaches it through the
-    /// `AppDelegate` so the scene and the BGTask handler share one
+    /// Forward an activity to the shared composition root. Reaches it through
+    /// ``appDependencies`` so the scene and the BGTask handler share one
     /// `AppDependencies` (and one `Router`/`CatalogRefreshService`).
     private func handle(_ activity: NSUserActivity) {
-        guard let dependencies = (UIApplication.shared.delegate as? AppDelegate)?.dependencies else {
+        guard let dependencies = Self.appDependencies else {
             deepLinkLog.error("Spotlight continuation dropped: no AppDependencies on the app delegate")
             return
         }
         Task { await dependencies.handleSpotlightContinuation(activity) }
+    }
+
+    /// The shared composition root the scene forwards to, read through
+    /// ``AppDelegate/shared``. Not `UIApplication.shared.delegate as?
+    /// AppDelegate`: under SwiftUI's adaptor that cast is always nil, which
+    /// dropped every activity this delegate received.
+    static var appDependencies: AppDependencies? {
+        AppDelegate.shared?.dependencies
     }
 }
