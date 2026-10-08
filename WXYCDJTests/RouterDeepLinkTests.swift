@@ -75,7 +75,7 @@ struct RouterDeepLinkTests {
 
         // Parked, not presented — never surfaces over the cold-launch spinner.
         #expect(deps.router.deepLink == nil)
-        #expect(deps.router.pending == 100)
+        #expect(deps.router.pending == DeepLinkRequest(albumID: 100, source: .spotlight))
     }
 
     @Test func coldLaunchSignedOutResolutionKeepsParkForLaterSignIn() async {
@@ -89,7 +89,7 @@ struct RouterDeepLinkTests {
         await deps.handleAuthChange(wasSignedIn: false, isSignedIn: false)
 
         #expect(deps.router.deepLink == nil)
-        #expect(deps.router.pending == 100)  // still parked for a later sign-in
+        #expect(deps.router.pending == DeepLinkRequest(albumID: 100, source: .spotlight))  // still parked for a later sign-in
     }
 
     @Test func replayOnSignedInPresentsWithCloneFallback() async throws {
@@ -100,11 +100,11 @@ struct RouterDeepLinkTests {
         await deps.handleSpotlightTap(albumID: 100, isSignedIn: false)         // cold-launch park
         await deps.handleAuthChange(wasSignedIn: false, isSignedIn: true)      // auth resolved → replay
 
-        let route = try #require(deps.router.deepLink)
-        #expect(route.id == 100)
+        let presented = try #require(deps.router.deepLink)
+        #expect(presented.id == 100)
         // Clone hit: the looked-up row's detailFallback renders the header instantly.
-        #expect(route.fallback?.albumTitle == "DOGA")
-        #expect(route.fallback?.artistName == "Juana Molina")
+        #expect(presented.route.fallback?.albumTitle == "DOGA")
+        #expect(presented.route.fallback?.artistName == "Juana Molina")
         #expect(deps.router.pending == nil)
     }
 
@@ -176,9 +176,11 @@ struct RouterDeepLinkTests {
 
         await deps.handleSpotlightTap(albumID: 100, isSignedIn: true)
 
-        let route = try #require(deps.router.deepLink)
-        #expect(route.id == 100)
-        #expect(route.fallback?.albumTitle == "DOGA")
+        let presented = try #require(deps.router.deepLink)
+        #expect(presented.id == 100)
+        #expect(presented.route.fallback?.albumTitle == "DOGA")
+        // The source rides the presentation, so the cover and the event name it.
+        #expect(presented.source == .spotlight)
         #expect(deps.router.pending == nil)
     }
 
@@ -190,10 +192,10 @@ struct RouterDeepLinkTests {
 
         await deps.handleSpotlightTap(albumID: 999, isSignedIn: true)
 
-        let route = try #require(deps.router.deepLink)
-        #expect(route.id == 999)
+        let presented = try #require(deps.router.deepLink)
+        #expect(presented.id == 999)
         // No fallback — AlbumDetailView resolves the row by awaiting /library/info.
-        #expect(route.fallback == nil)
+        #expect(presented.route.fallback == nil)
     }
 
     @Test func drainOnSignedInCloneMissReplaysWithNilFallback() async throws {
@@ -206,9 +208,9 @@ struct RouterDeepLinkTests {
         await deps.handleSpotlightTap(albumID: 999, isSignedIn: false)    // park a miss
         await deps.handleAuthChange(wasSignedIn: false, isSignedIn: true) // replay
 
-        let route = try #require(deps.router.deepLink)
-        #expect(route.id == 999)
-        #expect(route.fallback == nil)
+        let presented = try #require(deps.router.deepLink)
+        #expect(presented.id == 999)
+        #expect(presented.route.fallback == nil)
         #expect(deps.router.pending == nil)
     }
 
@@ -221,9 +223,9 @@ struct RouterDeepLinkTests {
 
         await deps.handleSpotlightTap(albumID: 100, isSignedIn: true)
 
-        let route = try #require(deps.router.deepLink)
-        #expect(route.id == 100)
-        #expect(route.fallback == nil)
+        let presented = try #require(deps.router.deepLink)
+        #expect(presented.id == 100)
+        #expect(presented.route.fallback == nil)
     }
 
     @Test func signedInTapClearsAnEarlierStash() async throws {
@@ -234,8 +236,8 @@ struct RouterDeepLinkTests {
         await deps.handleSpotlightTap(albumID: 100, isSignedIn: false)  // park 100
         await deps.handleSpotlightTap(albumID: 200, isSignedIn: true)   // then a signed-in tap
 
-        let route = try #require(deps.router.deepLink)
-        #expect(route.id == 200)
+        let presented = try #require(deps.router.deepLink)
+        #expect(presented.id == 200)
         #expect(deps.router.pending == nil)  // the stale stash is cleared
     }
 
@@ -343,7 +345,7 @@ struct RouterDeepLinkTests {
         // Mid-swap: A's cover is dismissing, B waits, and nothing has been
         // recorded for B because nothing has been shown.
         #expect(deps.router.deepLink == nil)
-        #expect(deps.router.queued == 200)
+        #expect(deps.router.queued == DeepLinkRequest(albumID: 200, source: .spotlight))
         #expect(analytics.captures.count == 1)
 
         await deps.deepLinkCoverDidDismiss()
@@ -372,7 +374,7 @@ struct RouterDeepLinkTests {
         await deps.handleSpotlightTap(albumID: 300, isSignedIn: true)
 
         #expect(deps.router.deepLink == nil)
-        #expect(deps.router.queued == 300)
+        #expect(deps.router.queued == DeepLinkRequest(albumID: 300, source: .spotlight))
 
         await deps.deepLinkCoverDidDismiss()
 
