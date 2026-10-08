@@ -105,7 +105,7 @@ struct RootView: View {
         // said it ignores one; it is no longer load-bearing either way).
         .fullScreenCover(item: $router.deepLink, onDismiss: {
             Task { await deps.deepLinkCoverDidDismiss() }
-        }) { route in
+        }) { deepLink in
             // fullScreenCover content is hosted in a separate presentation
             // context that does NOT inherit the presenter's
             // .environment(_:)-injected @Observable objects. Re-inject the SAME
@@ -113,7 +113,7 @@ struct RootView: View {
             // sites can't drift) — the shared AlbumDetailView then runs under an
             // identical environment whether reached here or pushed onto a tab
             // stack, so a future auth/router read can't crash only on this path.
-            DeepLinkAlbumCover(route: route)
+            DeepLinkAlbumCover(deepLink: deepLink)
                 .wxycAppEnvironment(deps)
         }
     }

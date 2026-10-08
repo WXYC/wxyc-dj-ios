@@ -99,7 +99,7 @@ final class AppDependencies {
     /// ``handleAuthChange(wasSignedIn:isSignedIn:)`` — because the `fallback`
     /// lookup needs ``catalogStore``.
     let router = Router()
-    /// Monotonic generation for ``present(albumID:)``'s most-recent-wins latch,
+    /// Monotonic generation for ``present(_:parked:)``'s most-recent-wins latch,
     /// so a stale parked drain can't clobber a freshly-tapped album when their
     /// clone lookups race across the `await`.
     private var presentationToken = 0
@@ -240,7 +240,7 @@ final class AppDependencies {
 
     /// Test seam: build the composition root around an injected catalog store,
     /// defaulting to no refresh service. The deep-link resolution path
-    /// (``handleSpotlightTap``, ``handleAuthChange``, ``present(albumID:)``) reads
+    /// (``handleSpotlightTap``, ``handleAuthChange``, ``present(_:parked:)``) reads
     /// only ``catalogStore``, so a unit test can supply a store whose `row(id:)`
     /// suspends on demand to drive `present`'s most-recent-wins token latch across
     /// the `await` — the one branch the sequential-await tests can't reach.
@@ -560,15 +560,25 @@ final class AppDependencies {
     /// replay logic is unit-testable without driving a real sign-in; the caller
     /// (RootView) supplies `authService.isSignedIn`.
     func handleSpotlightTap(albumID: Int, isSignedIn: Bool) async {
+        await handleDeepLink(albumID: albumID, isSignedIn: isSignedIn, source: .spotlight)
+    }
+
+    /// The source-neutral body every deep-link entry point funnels through
+    /// (issue #185). `source` is **required**, not defaulted — the same rule
+    /// `refreshCatalog(trigger:)` and `AlbumDetailView(origin:)` follow: a
+    /// forgotten argument would silently file the link under the default
+    /// source, corrupting the dimension the analytics event exists to measure.
+    private func handleDeepLink(albumID: Int, isSignedIn: Bool, source: DeepLinkSource) async {
+        let request = DeepLinkRequest(albumID: albumID, source: source)
         guard isSignedIn else {
-            router.pending = albumID
+            router.pending = request
             return
         }
         // A fresh signed-in tap supersedes any park: clear it synchronously
         // (before the resolve hop) so a concurrent drain can't replay the stale
         // parked id behind us.
         router.pending = nil
-        await present(albumID: albumID, parked: false)
+        await present(request, parked: false)
     }
 
     /// Reconcile the deep-link surface with an auth-state transition — RootView
@@ -593,11 +603,11 @@ final class AppDependencies {
     ///   later manual sign-in to replay.
     func handleAuthChange(wasSignedIn: Bool, isSignedIn: Bool) async {
         if isSignedIn {
-            guard let albumID = router.pending else { return }
+            guard let request = router.pending else { return }
             // Capture-and-clear synchronously: the resolve below suspends, and
             // clearing now stops a second replay from re-reading the same park.
             router.pending = nil
-            await present(albumID: albumID, parked: true)
+            await present(request, parked: true)
         } else if wasSignedIn {
             invalidateDeepLink()
             playbackController.stop()
@@ -606,7 +616,7 @@ final class AppDependencies {
 
     /// Tear down the deep-link surface on sign-out: dismiss the cover, drop any
     /// park **and any queued swap**, and bump ``presentationToken`` so an
-    /// in-flight ``present(albumID:)`` — one whose `resolveRoute` was still
+    /// in-flight ``present(_:parked:)`` — one whose `resolveRoute` was still
     /// suspended when sign-out landed — bows out instead of re-presenting an
     /// album over `LoginView`. The queue is cleared synchronously, before the
     /// `deepLink = nil` here triggers the cover's `onDismiss`, so that drain
@@ -621,15 +631,15 @@ final class AppDependencies {
     /// Drain an album queued behind a cover's dismissal (issue #126). RootView
     /// calls this from the deep-link cover's `onDismiss`, which SwiftUI invokes
     /// for a programmatic dismissal as well as the DJ's Close tap — so this is
-    /// what turns ``present(albumID:parked:)``'s `deepLink = nil` into the
+    /// what turns ``present(_:parked:)``'s `deepLink = nil` into the
     /// queued album's presentation. A Close with nothing queued is a no-op.
     ///
     /// The queued presentation records `parked: false`: it waited on a
     /// dismissal, not on sign-in, which is all `parked` means.
     func deepLinkCoverDidDismiss() async {
-        guard let albumID = router.queued else { return }
+        guard let request = router.queued else { return }
         router.queued = nil
-        await present(albumID: albumID, parked: false)
+        await present(request, parked: false)
     }
 
     /// Resolve `albumID` to a route and present it — the single resolve→present
@@ -650,7 +660,8 @@ final class AppDependencies {
     /// album already showing, a tap queued behind a dismissal, and a token
     /// bow-out from a superseded resolve all fire no event — none is a genuine
     /// new deep-link open; the queued tap records when its drain presents it).
-    private func present(albumID: Int, parked: Bool) async {
+    private func present(_ request: DeepLinkRequest, parked: Bool) async {
+        let albumID = request.albumID
         // Issue #126: a tap for a different album while a cover is showing
         // swaps the cover rather than being refused (#118 item 2's interim
         // fix). It cannot be done by writing `deepLink` in place: `nil` and the
@@ -663,7 +674,7 @@ final class AppDependencies {
         if let current = router.deepLink {
             // A re-tap of the album already showing changes nothing.
             guard current.id != albumID else { return }
-            router.queued = albumID
+            router.queued = request
             // Any resolve still in flight is now stale.
             presentationToken += 1
             router.deepLink = nil
@@ -672,7 +683,7 @@ final class AppDependencies {
         // A dismissal is already under way: replace what waits behind it
         // rather than presenting mid-dismissal and stranding the earlier id.
         if router.queued != nil {
-            router.queued = albumID
+            router.queued = request
             return
         }
         presentationToken += 1
@@ -681,8 +692,12 @@ final class AppDependencies {
         // A newer tap/sign-out bumped the token while we were resolving; bow out
         // so its fresher outcome is the one that lands.
         guard token == presentationToken else { return }
-        router.deepLink = route
-        analytics.capture(SpotlightDeeplinkOpenedEvent(cloneHit: route.fallback != nil, parked: parked))
+        router.deepLink = PresentedDeepLink(route: route, source: request.source)
+        let cloneHit = route.fallback != nil
+        switch request.source {
+        case .spotlight:
+            analytics.capture(SpotlightDeeplinkOpenedEvent(cloneHit: cloneHit, parked: parked))
+        }
     }
 
     /// Build the route for `albumID`, looking up the cloned row for an instant
