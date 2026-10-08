@@ -67,6 +67,8 @@ private let analyticsEventCatalog: [any AnalyticsEvent] = [
     BinItemAddedEvent(albumId: 100),
     BinItemRemovedEvent(albumId: 100),
     SpotlightDeeplinkOpenedEvent(cloneHit: true, parked: false),
+    ListenerAppLinkOpenedEvent(cloneHit: false, parked: true),
+    AlbumDetailViewedEvent(origin: .listenerApp, albumId: 100),
     CatalogRefreshCompletedEvent(outcome: .refreshed, rowCount: 100, upserted: 5, removed: 1, trigger: .launch),
     MetadataEnrichmentMissingEvent(kind: .notFound),
     ArtworkURLRetiredEvent(source: .clone),
@@ -317,6 +319,31 @@ struct CatalogRefreshCompletedEventMappingTests {
         #expect(event.outcome == .noStore)
         #expect(event.rowCount == 0)
         #expect(event.trigger == .launch)
+    }
+}
+
+@Suite("Listener-app deep link vocabulary")
+struct ListenerAppLinkVocabularyTests {
+    /// A name distinct from `spotlight_deeplink_opened`: this project is shared
+    /// with dj-site and events are told apart by name (issue #186).
+    @Test func eventNameAndPropertiesArePinned() {
+        let event = ListenerAppLinkOpenedEvent(cloneHit: true, parked: false)
+        #expect(ListenerAppLinkOpenedEvent.name == "listener_app_link_opened")
+        #expect(event.properties["clone_hit"] == .bool(true))
+        #expect(event.properties["parked"] == .bool(false))
+    }
+
+    /// A bare `case listenerApp` would send "listenerApp"; the wire vocabulary is snake_case.
+    @Test func originRawValueIsSnakeCase() {
+        #expect(AlbumDetailOrigin.listenerApp.rawValue == "listener_app")
+    }
+
+    @Test(arguments: [
+        (DeepLinkSource.spotlight, AlbumDetailOrigin.spotlight),
+        (DeepLinkSource.listenerApp, AlbumDetailOrigin.listenerApp),
+    ])
+    func coverOriginFollowsTheSource(source: DeepLinkSource, origin: AlbumDetailOrigin) {
+        #expect(DeepLinkAlbumCover.origin(for: source) == origin)
     }
 }
 

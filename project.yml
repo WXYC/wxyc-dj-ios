@@ -154,6 +154,15 @@ targets:
         BGTaskSchedulerPermittedIdentifiers:
           - org.wxyc.dj.catalog.refresh
           - org.wxyc.dj.catalog.reindex
+        # The listener app's "Open in WXYC DJ" button opens
+        # wxycdj://album/<id> (issue #186). A custom scheme, not a universal
+        # link: the button only renders once canOpenURL finds this app, so a
+        # web fallback would never be used. The literal is also in
+        # wxyc-ios-64's LSApplicationQueriesSchemes; DJAppLinkTests pins it.
+        CFBundleURLTypes:
+          - CFBundleURLName: org.wxyc.dj.album-link
+            CFBundleURLSchemes:
+              - wxycdj
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.wxyc.dj

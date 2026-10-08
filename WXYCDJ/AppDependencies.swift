@@ -563,6 +563,29 @@ final class AppDependencies {
         await handleDeepLink(albumID: albumID, isSignedIn: isSignedIn, source: .spotlight)
     }
 
+    // MARK: Listener-app link (issue #186)
+
+    /// Route a `wxycdj://album/<id>` link — opened by the listener app's "Open
+    /// in WXYC DJ" button — to the deep-link surface, the URL-scheme peer of
+    /// ``handleSpotlightContinuation(_:)``. ``SceneDelegate`` drives it for
+    /// cold launch (`connectionOptions.urlContexts`) and warm
+    /// (`scene(_:openURLContexts:)`). Any app can open a custom scheme, so the
+    /// URL is untrusted: `DJAppLink` accepts exactly one shape, anything else
+    /// is a no-op, and the link only ever navigates — it never adds to the bin.
+    func handleListenerAppURL(_ url: URL) async {
+        guard let albumID = DJAppLink.albumID(from: url) else { return }
+        deepLinkLog.debug("Listener-app link -> album \(albumID, privacy: .public) (signedIn=\(self.authService.isSignedIn, privacy: .public))")
+        await handleListenerAppLink(albumID: albumID, isSignedIn: authService.isSignedIn)
+    }
+
+    /// The listener-app link's peer of ``handleSpotlightTap(albumID:isSignedIn:)``,
+    /// with the signed-in gate passed in for the same testability reason.
+    func handleListenerAppLink(albumID: Int, isSignedIn: Bool) async {
+        await handleDeepLink(albumID: albumID, isSignedIn: isSignedIn, source: .listenerApp)
+    }
+
+    // MARK: Shared deep-link path
+
     /// The source-neutral body every deep-link entry point funnels through
     /// (issue #185). `source` is **required**, not defaulted — the same rule
     /// `refreshCatalog(trigger:)` and `AlbumDetailView(origin:)` follow: a
@@ -697,6 +720,8 @@ final class AppDependencies {
         switch request.source {
         case .spotlight:
             analytics.capture(SpotlightDeeplinkOpenedEvent(cloneHit: cloneHit, parked: parked))
+        case .listenerApp:
+            analytics.capture(ListenerAppLinkOpenedEvent(cloneHit: cloneHit, parked: parked))
         }
     }
 

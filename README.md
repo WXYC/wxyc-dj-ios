@@ -196,6 +196,10 @@ Tapping a catalog result in the iOS home-screen search opens its detail **in its
 
 The deep link is an in-app `NSUserActivity` continuation (`CSSearchableItemActionType`), **not** a Universal Link — so it needs no Associated Domains / AASA entitlement.
 
+### Listener-app link
+
+The WXYC listener app's playcut detail screen shows an **Open in WXYC DJ** button (when this app is installed and the play is linked to a catalog album) that opens `wxycdj://album/<id>`. It lands in the same cover as a Spotlight tap — parked until sign-in if needed, swapping any album already showing — and only navigates: adding the album to the bin is still the DJ's tap. Try it on a booted simulator with `xcrun simctl openurl booted wxycdj://album/<id>`.
+
 ### App icon
 
 `WXYCDJ/AppIcon.icon` is an [Icon Composer](https://developer.apple.com/documentation/xcode/creating-your-app-icon-using-icon-composer) document (a Liquid Glass layer stack, not a flat `.appiconset`), compiled by `actool` because `ASSETCATALOG_COMPILER_APPICON_NAME` is `AppIcon`. **The checked-in bundle is the only copy** — an earlier version of this section pointed at a design source at `~/Pictures/Graphic Design/WXYC Assets/dj app/app icon/iOS/AppIcon.icon`, and no such path exists (nor does any other DJ-app Icon Composer document on the design machine; `WXYC Assets/app/app icon/iOS/` holds the *listener* app's icons, a different product). So there is nothing to resync from and nothing holding a backup: treat `WXYCDJ/AppIcon.icon` as source of truth, and re-export into it rather than over it.
