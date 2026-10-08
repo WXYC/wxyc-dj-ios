@@ -445,6 +445,92 @@ struct RouterDeepLinkTests {
         #expect(deps.router.deepLink?.id == 300)
         #expect(deps.router.queued == nil)
     }
+
+    // MARK: - Issue #186: wxycdj://album/<id> links from the listener app
+
+    @Test func listenerAppLinkWhileSignedOutParksWithItsSourceAndReplays() async throws {
+        let analytics = SpyAnalytics()
+        let (deps, url) = Self.makeDeps(analytics: analytics)
+        defer { Self.cleanup(url) }
+        try await #require(deps.catalogStore).replace(rows: [Self.dogaRow()], lastModified: nil)
+
+        await deps.handleListenerAppLink(albumID: 100, isSignedIn: false)
+        #expect(deps.router.pending == DeepLinkRequest(albumID: 100, source: .listenerApp))
+
+        await deps.handleAuthChange(wasSignedIn: false, isSignedIn: true)
+
+        let presented = try #require(deps.router.deepLink)
+        #expect(presented.id == 100)
+        #expect(presented.source == .listenerApp)
+        let capture = try #require(analytics.captures.first)
+        #expect(analytics.captures.count == 1)
+        #expect(capture.name == "listener_app_link_opened")
+        #expect(capture.properties["parked"] == .bool(true))
+    }
+
+    @Test func listenerAppLinkWhileSignedInPresentsWithItsSource() async throws {
+        let analytics = SpyAnalytics()
+        let (deps, url) = Self.makeDeps(analytics: analytics)
+        defer { Self.cleanup(url) }
+        try await #require(deps.catalogStore).replace(rows: [Self.dogaRow()], lastModified: nil)
+
+        await deps.handleListenerAppLink(albumID: 100, isSignedIn: true)
+
+        let presented = try #require(deps.router.deepLink)
+        #expect(presented.source == .listenerApp)
+        #expect(presented.route.fallback?.albumTitle == "DOGA")
+        let capture = try #require(analytics.captures.first)
+        #expect(capture.name == "listener_app_link_opened")
+        #expect(capture.properties["clone_hit"] == .bool(true))
+        #expect(capture.properties["parked"] == .bool(false))
+    }
+
+    /// The feature's normal loop: open A from Spotlight (or an earlier link),
+    /// then a link for B swaps the cover and records one listener-app event.
+    @Test func listenerAppLinkForADifferentAlbumSwapsAnOpenSpotlightCover() async throws {
+        let analytics = SpyAnalytics()
+        let (deps, url) = Self.makeDeps(analytics: analytics)
+        defer { Self.cleanup(url) }
+        try await #require(deps.catalogStore).replace(
+            rows: [Self.dogaRow(id: 100), Self.dogaRow(id: 200)], lastModified: nil
+        )
+
+        await deps.handleSpotlightTap(albumID: 100, isSignedIn: true)
+        await deps.handleListenerAppLink(albumID: 200, isSignedIn: true)
+        #expect(deps.router.queued == DeepLinkRequest(albumID: 200, source: .listenerApp))
+
+        await deps.deepLinkCoverDidDismiss()
+
+        let presented = try #require(deps.router.deepLink)
+        #expect(presented.id == 200)
+        #expect(presented.source == .listenerApp)
+        #expect(analytics.captures.map(\.name) == ["spotlight_deeplink_opened", "listener_app_link_opened"])
+        #expect(analytics.captures.last?.properties["parked"] == .bool(false))
+    }
+
+    /// A link for the album already showing changes nothing — no swap, no
+    /// event, and the cover keeps the source that opened it.
+    @Test func listenerAppLinkForTheAlbumAlreadyShowingIsANoOp() async throws {
+        let analytics = SpyAnalytics()
+        let (deps, url) = Self.makeDeps(analytics: analytics)
+        defer { Self.cleanup(url) }
+        try await #require(deps.catalogStore).replace(rows: [Self.dogaRow()], lastModified: nil)
+
+        await deps.handleSpotlightTap(albumID: 100, isSignedIn: true)
+        await deps.handleListenerAppLink(albumID: 100, isSignedIn: true)
+
+        #expect(deps.router.deepLink?.source == .spotlight)
+        #expect(deps.router.queued == nil)
+        #expect(analytics.captures.count == 1)
+    }
+
+    /// A URL the parser rejects never reaches the router.
+    @Test func aMalformedListenerAppURLIsIgnored() async throws {
+        let deps = AppDependencies(catalogStoreURL: nil)
+        await deps.handleListenerAppURL(try #require(URL(string: "wxycdj://album/123?add=1")))
+        #expect(deps.router.deepLink == nil)
+        #expect(deps.router.pending == nil)
+    }
 }
 
 /// A `CatalogStore` whose `row(id:)` records the requested id then blocks until

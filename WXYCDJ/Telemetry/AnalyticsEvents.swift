@@ -121,11 +121,13 @@ struct SearchPerformedEvent: AnalyticsEvent {
 
 /// How a DJ arrived at the detail screen. Threaded into `AlbumDetailView`'s
 /// initializer by its three call sites (`SearchView`, `BinView`,
-/// `DeepLinkAlbumCover`) so the event never has to guess.
+/// `DeepLinkAlbumCover`) so the event never has to guess; the cover maps its
+/// link's `DeepLinkSource` onto the last two cases.
 enum AlbumDetailOrigin: String, AnalyticsEnum {
     case search
     case bin
     case spotlight
+    case listenerApp = "listener_app"
 }
 
 /// Answers: which releases do DJs actually look at, and does each surface
@@ -183,6 +185,23 @@ struct SpotlightDeeplinkOpenedEvent: AnalyticsEvent {
     /// Whether this presentation came from a tap that had to be parked
     /// (`Router.pending`, issue #19 step 7) and replayed once auth resolved,
     /// as opposed to an immediate signed-in tap.
+    let parked: Bool
+
+    var properties: [String: AnalyticsPropertyValue] {
+        ["clone_hit": .bool(cloneHit), "parked": .bool(parked)]
+    }
+}
+
+/// Answers: do DJs use the listener app's "Open in WXYC DJ" button (issue
+/// #186)? A name of its own rather than a `source` on
+/// `spotlight_deeplink_opened`, which keeps that event's meaning for existing
+/// dashboards — and this project, shared with dj-site, tells events apart by
+/// name. Same two properties, same meanings.
+struct ListenerAppLinkOpenedEvent: AnalyticsEvent {
+    static let name = "listener_app_link_opened"
+    /// Whether the on-device clone had a row for the linked id.
+    let cloneHit: Bool
+    /// Whether the link had to be parked until sign-in resolved.
     let parked: Bool
 
     var properties: [String: AnalyticsPropertyValue] {

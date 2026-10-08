@@ -25,6 +25,7 @@ struct DeepLinkAlbumCover: View {
     static func origin(for source: DeepLinkSource) -> AlbumDetailOrigin {
         switch source {
         case .spotlight: .spotlight
+        case .listenerApp: .listenerApp
         }
     }
 

@@ -23,6 +23,9 @@ import Observation
 enum DeepLinkSource: Equatable, Sendable {
     /// A home-screen Spotlight tap (issue #19 step 7).
     case spotlight
+    /// A `wxycdj://album/<id>` link, opened by the listener app's "Open in
+    /// WXYC DJ" button (issue #186).
+    case listenerApp
 }
 
 /// An album a deep link asked for, and where the link came from. The type of
