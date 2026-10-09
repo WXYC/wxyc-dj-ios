@@ -77,7 +77,7 @@ packages:
   # code goes through WXYCAPI, exactly as with WXYCAPIModels.
   WXYCAuth:
     url: https://github.com/WXYC/wxyc-swift-auth.git
-    minorVersion: 0.1.0
+    minorVersion: 0.2.0
   # Crash/error reporting (issue #106). `upToNextMajorVersion` -- the same
   # range style wxyc-ios-64/WXYC.xcodeproj declares for the same package --
   # rather than an exact pin, so a patch release (bug fixes on a
@@ -155,6 +155,15 @@ targets:
           - org.wxyc.dj.catalog.refresh
           - org.wxyc.dj.catalog.reindex
         NSCameraUsageDescription: WXYC DJ uses the camera to scan the QR code shown on the dj.wxyc.org sign-in screen.
+        # The listener app's "Open in WXYC DJ" button opens
+        # wxycdj://album/<id> (issue #186). A custom scheme, not a universal
+        # link: the button only renders once canOpenURL finds this app, so a
+        # web fallback would never be used. The literal is also in
+        # wxyc-ios-64's LSApplicationQueriesSchemes; DJAppLinkTests pins it.
+        CFBundleURLTypes:
+          - CFBundleURLName: org.wxyc.dj.album-link
+            CFBundleURLSchemes:
+              - wxycdj
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.wxyc.dj

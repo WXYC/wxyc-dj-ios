@@ -95,3 +95,46 @@ jobs:
             -skip-testing:WXYCDJTests/SpotlightClientStateToleranceTests \
             -skip-testing:WXYCDJTests/SpotlightFieldResolutionTests \
             CODE_SIGNING_ALLOWED=NO
+
+  verify-project:
+    name: Verify generated project
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 26.2
+        run: sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
+
+      - name: Install pinned XcodeGen
+        # Pinned to `.xcodegen-version` rather than `brew install xcodegen`, which
+        # tracks whatever is current: project.pbxproj is committed generated
+        # output, so the generator version is part of its definition. The versions
+        # disagree silently — 2.44.x and earlier do not recognise Xcode 26 `.icon`
+        # bundles and dissolve WXYCDJ/AppIcon.icon into loose icon.json/logo.svg
+        # resources, which still builds and ships a broken app icon.
+        run: |
+          VERSION=$(tr -d '[:space:]' < .xcodegen-version)
+          echo "Pinned XcodeGen: $VERSION"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/xcodegen.zip" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${VERSION}/xcodegen.zip"
+          unzip -oq "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP/xcodegen-dist"
+          "$RUNNER_TEMP/xcodegen-dist/xcodegen/bin/xcodegen" --version
+
+      - name: Regenerate and require a zero diff
+        # Nothing else in CI runs xcodegen — every other job consumes the committed
+        # pbxproj — so a stale or wrong-generator project file reaches main
+        # unnoticed. Regenerating here and failing on any diff makes project.yml
+        # the single source of truth, and catches all three ways the pbxproj drifts:
+        # a project.yml edit someone forgot to regen, a hand-edit, and a regen run
+        # with the wrong xcodegen version.
+        run: |
+          "$RUNNER_TEMP/xcodegen-dist/xcodegen/bin/xcodegen" generate
+          if ! git diff --quiet; then
+            echo "::error::Generated project does not match project.yml. Regenerate with the version in .xcodegen-version and commit the result (see CLAUDE.md, 'Repo layout')."
+            git --no-pager diff --stat
+            git --no-pager diff
+            exit 1
+          fi
+          echo "Generated project matches project.yml."

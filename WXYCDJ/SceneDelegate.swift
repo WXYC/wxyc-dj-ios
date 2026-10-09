@@ -2,11 +2,12 @@
 //  SceneDelegate.swift
 //  WXYCDJ
 //
-//  Reliable Core Spotlight deep-link delivery (issue #19 step 7 fix). A
-//  UIWindowSceneDelegate catches the CSSearchableItemActionType continuation in
-//  both states the flaky view-level .onContinueUserActivity was dropping:
-//  cold launch (the launch activity arrives in scene(_:willConnectTo:)'s
-//  connectionOptions) and warm (scene(_:continue:)). It forwards to the shared
+//  Reliable deep-link delivery. A UIWindowSceneDelegate catches the Core
+//  Spotlight CSSearchableItemActionType continuation (issue #19 step 7 fix) in
+//  both states the flaky view-level .onContinueUserActivity was dropping, and
+//  the listener app's wxycdj://album/<id> URL (issue #186): cold launch (both
+//  arrive in scene(_:willConnectTo:)'s connectionOptions) and warm
+//  (scene(_:continue:) / scene(_:openURLContexts:)). It forwards to the shared
 //  AppDependencies; it never creates a window, so SwiftUI's WindowGroup keeps
 //  hosting the UI.
 //
@@ -21,7 +22,8 @@ private let deepLinkLog = Logger(subsystem: "org.wxyc.dj", category: "deeplink")
 
 /// Scene delegate attached to SwiftUI's window scene (via
 /// ``AppDelegate/application(_:configurationForConnecting:options:)``) for the
-/// sole purpose of receiving Spotlight continuation activities. Scene-based apps
+/// sole purpose of receiving Spotlight continuation activities and
+/// `wxycdj://` URLs. Scene-based apps
 /// route `NSUserActivity` continuation through the scene, not
 /// `UIApplication`'s `continue` method — and SwiftUI's `onContinueUserActivity`
 /// was not delivering it here — so this is the path that actually fires.
@@ -31,8 +33,9 @@ private let deepLinkLog = Logger(subsystem: "org.wxyc.dj", category: "deeplink")
 /// continuation activities and hands them to ``AppDependencies``.
 @MainActor
 final class SceneDelegate: NSObject, UIWindowSceneDelegate {
-    /// Cold launch: if a Spotlight tap launched the app, the activity is here in
-    /// `connectionOptions` (not via `scene(_:continue:)`). `restoreSession()`
+    /// Cold launch: if a Spotlight tap or a `wxycdj://` link launched the app,
+    /// it is here in `connectionOptions` (not via `scene(_:continue:)` or
+    /// `scene(_:openURLContexts:)`). `restoreSession()`
     /// hasn't resolved yet, so the tap parks and replays once auth flips to
     /// `.signedIn` — exactly the path ``AppDependencies/handleAuthChange`` covers.
     func scene(
@@ -43,6 +46,7 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate {
         for activity in connectionOptions.userActivities {
             handle(activity)
         }
+        handle(connectionOptions.urlContexts)
     }
 
     /// Warm continuation: the app was already running when the DJ tapped a
@@ -51,14 +55,42 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate {
         handle(userActivity)
     }
 
-    /// Forward an activity to the shared composition root. Reaches it through the
-    /// `AppDelegate` so the scene and the BGTask handler share one
-    /// `AppDependencies` (and one `Router`/`CatalogRefreshService`).
+    /// Warm open: the app was already running when the listener app opened a
+    /// `wxycdj://album/<id>` link (issue #186).
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        handle(URLContexts)
+    }
+
+    /// Forward `wxycdj://` URLs to the shared composition root, which parses
+    /// and routes each (or ignores it if malformed).
+    private func handle(_ contexts: Set<UIOpenURLContext>) {
+        for context in contexts {
+            forward("Listener-app link") { await $0.handleListenerAppURL(context.url) }
+        }
+    }
+
+    /// Forward a Spotlight activity to the shared composition root.
     private func handle(_ activity: NSUserActivity) {
-        guard let dependencies = (UIApplication.shared.delegate as? AppDelegate)?.dependencies else {
-            deepLinkLog.error("Spotlight continuation dropped: no AppDependencies on the app delegate")
+        forward("Spotlight continuation") { await $0.handleSpotlightContinuation(activity) }
+    }
+
+    /// Run `work` against the shared composition root, reached through
+    /// ``appDependencies`` so the scene and the BGTask handler share one
+    /// `AppDependencies` (and one `Router`/`CatalogRefreshService`). Logs and
+    /// drops the delivery if it can't be reached.
+    private func forward(_ what: StaticString, _ work: @escaping @MainActor (AppDependencies) async -> Void) {
+        guard let dependencies = Self.appDependencies else {
+            deepLinkLog.error("\(what, privacy: .public) dropped: no AppDependencies on the app delegate")
             return
         }
-        Task { await dependencies.handleSpotlightContinuation(activity) }
+        Task { await work(dependencies) }
+    }
+
+    /// The shared composition root the scene forwards to, read through
+    /// ``AppDelegate/shared``. Not `UIApplication.shared.delegate as?
+    /// AppDelegate`: under SwiftUI's adaptor that cast is always nil, which
+    /// dropped every activity this delegate received.
+    static var appDependencies: AppDependencies? {
+        AppDelegate.shared?.dependencies
     }
 }

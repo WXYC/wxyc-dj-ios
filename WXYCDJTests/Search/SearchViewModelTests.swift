@@ -8,8 +8,10 @@
 //  the in-flight task and clears results without hitting the network. Offline
 //  (or on a failed request) the view model serves the on-device clone and
 //  exposes `.local` as the source (issue #58). The debounce *timing* is treated
-//  as an implementation detail — we poll the state until it settles rather than
-//  asserting against the wall clock.
+//  as an implementation detail — we poll until the property under assertion
+//  settles rather than asserting against the wall clock. Poll the property the
+//  test actually asserts, not a proxy for it: `state` and `digitalAudioIDs` are
+//  published at two different points in `performSearch` (issue #159).
 //
 //  Created by Jake on 5/20/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -100,25 +102,54 @@ struct SearchViewModelTests {
             ))
 
             viewModel.query = "ju"
-            try await Self.waitForSettle(viewModel)
+            // The badge set, not `state`. `performSearch` publishes `state`
+            // before it awaits the clone read, so a settled state leaves
+            // `digitalAudioIDs` still suspended (issue #159).
+            try await Self.waitUntil("the badge set to hydrate from the clone") {
+                viewModel.digitalAudioIDs == [100]
+            }
 
             #expect(viewModel.digitalAudioIDs == [100])
         }
     }
 
+    /// The clone answering "no digital audio" must leave the badge set empty —
+    /// and that emptiness has to be *earned*. `digitalAudioIDs` starts empty, so
+    /// asserting it straight after a single search proves nothing: the value
+    /// reads identically whether hydration ran and wrote nothing or never ran at
+    /// all — and `waitForSettle` returns while the clone read is still
+    /// suspended (issue #159), so it was routinely the latter.
+    ///
+    /// So seed the set first from a clone that says *yes*, then flip the clone's
+    /// answer to *no* and search again. That gives the wait a real edge —
+    /// `[100]` → `[]` — which only a hydration that ran to completion can
+    /// produce. Delete the `digitalAudioIDs` write from `hydrateDigitalAudioIDs`
+    /// and this now fails on its own deadline instead of passing on the initial
+    /// value.
     @Test func settledSearchLeavesDigitalAudioIDsEmptyWhenCloneSaysNo() async throws {
         let (client, session) = try await SignedInClient.make()
         defer { Self.removeStore() }
         do {
-            let store = try await Self.makeStore(rows: [Self.juanaCatalogRow])
+            let store = try await Self.makeStore(rows: [Self.juanaCatalogRow.withDigitalAudio(true)])
             let viewModel = Self.makeViewModel(client, store: store)
-            session.enqueue(StubRequestSession.Stub(
-                statusCode: 200,
-                body: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
-            ))
+            for _ in 0..<2 {
+                session.enqueue(StubRequestSession.Stub(
+                    statusCode: 200,
+                    body: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
+                ))
+            }
 
             viewModel.query = "ju"
-            try await Self.waitForSettle(viewModel)
+            try await Self.waitUntil("the clone's yes to seed the badge set") {
+                viewModel.digitalAudioIDs == [100]
+            }
+
+            // Same row, `hasDigitalAudio` back to its default false.
+            try await store.replace(rows: [Self.juanaCatalogRow], lastModified: nil)
+            viewModel.query = "jua"
+            try await Self.waitUntil("the clone's no to clear the badge set") {
+                viewModel.digitalAudioIDs.isEmpty
+            }
 
             #expect(viewModel.digitalAudioIDs.isEmpty)
         }
@@ -151,7 +182,13 @@ struct SearchViewModelTests {
         viewModel.query = "jua"
         // Let the first (now-cancelled) request resume and the second run.
         blocking.release()
-        try await Self.waitForSettle(viewModel)
+        // The badge set, not `state` — see `waitForSettle`'s doc. Waiting on
+        // `state` here is what made this test flake under full-suite load: it
+        // returned while the surviving search's clone read was still suspended,
+        // and the assertion below raced that continuation (issue #159).
+        try await Self.waitUntil("the surviving search to hydrate the badge set") {
+            viewModel.digitalAudioIDs == [100]
+        }
 
         #expect(store.rowsCallCount == 1)
         #expect(viewModel.digitalAudioIDs == [100])
@@ -166,19 +203,50 @@ struct SearchViewModelTests {
     /// is abandoned rather than replaced and no second search runs to write
     /// `digitalAudioIDs` for us. `onQueryChanged`'s abandonment arm clears
     /// `results` and `state` but deliberately never touches `digitalAudioIDs`,
-    /// so the emptiness asserted below can only come from the guard: delete
-    /// the `if Task.isCancelled { return }` at the end of
-    /// `hydrateDigitalAudioIDs` and the cancelled task writes `[100]`.
+    /// so whatever the badge set holds at the end is whatever the cancelled
+    /// task left it holding.
+    ///
+    /// Which is why this asserts `[100]` rather than `.isEmpty` (issue #159).
+    /// A test that asserts *nothing happened* has no edge of its own to wait
+    /// on, so it borrows two:
+    ///
+    /// - A **seed**. A first search, run to completion against a clone that
+    ///   says *yes*, leaves `digitalAudioIDs == [100]`; the clone then flips to
+    ///   *no*, so a cancelled task that ignored the guard would write `[]` —
+    ///   distinguishable from the seed. The old `.isEmpty` assertion was not:
+    ///   it read the same whether the guard fired or the hydration write had
+    ///   been deleted outright, and it passed in both cases.
+    /// - A **completion signal**. `rowsReturnCount` ticks when a parked read
+    ///   hands its rows back. `rowsCallCount` ticks on *entry* and is already
+    ///   nonzero by the time `waitForFirstRowsCall()` returns, so it cannot say
+    ///   whether the released read ever resumed.
+    ///
+    /// Delete the `if Task.isCancelled { return }` at the end of
+    /// `hydrateDigitalAudioIDs` and the cancelled task clears the seed.
     @Test func cancellationDuringTheCloneReadLeavesBadgesUntouched() async throws {
         let (client, session) = try await SignedInClient.make()
-        session.enqueue(StubRequestSession.Stub(
-            statusCode: 200,
-            body: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
-        ))
-        let store = CountingCatalogStore(rows: [Self.juanaCatalogRow.withDigitalAudio(true)], blocking: true)
+        for _ in 0..<2 {
+            session.enqueue(StubRequestSession.Stub(
+                statusCode: 200,
+                body: Data(Fixtures.juanaMolinaSearchResultsJSON.utf8)
+            ))
+        }
+        let store = CountingCatalogStore(rows: [Self.juanaCatalogRow.withDigitalAudio(true)])
         let viewModel = Self.makeViewModel(client, store: store)
 
+        // Seed: one search that runs all the way through, so the badge set
+        // holds a value hydration demonstrably *can* write.
         viewModel.query = "ju"
+        try await Self.waitUntil("the seeding search to hydrate the badge set") {
+            viewModel.digitalAudioIDs == [100]
+        }
+
+        // Flip the clone's answer, so an unguarded cancelled write would clear
+        // the seed rather than rewrite it, and park the next read.
+        store.replace(rows: [Self.juanaCatalogRow], lastModified: nil)
+        store.startBlocking()
+
+        viewModel.query = "jua"
         // Park until the clone read is genuinely in flight — the request has
         // already settled by this point, so `performSearch`'s own cancellation
         // check is behind us.
@@ -190,15 +258,22 @@ struct SearchViewModelTests {
         store.releaseRows()
 
         // `waitForSettle` is useless here: the abandonment arm sets `.idle`
-        // synchronously, so it returns before the cancelled task has resumed
-        // and the assertion below would pass vacuously — empty because nothing
-        // had run yet, not because the guard fired. Give the resumed task real
-        // turns to reach (and be stopped by) the guard instead.
+        // synchronously, so it returns before the cancelled task has resumed.
+        // Wait on the read handing its rows back instead.
+        try await Self.waitUntil("the parked clone read to return") {
+            store.rowsReturnCount == 2
+        }
+        // One MainActor hop still separates that return from the guard: the
+        // `await` in `hydrateDigitalAudioIDs` resumes on the MainActor to run
+        // `Task.isCancelled` and, if it were deleted, to write `[]` on the next
+        // line. A negative assertion cannot be waited on, only drained for —
+        // but the drain is now a bounded settle behind a real edge rather than
+        // a wall-clock bet on the whole release propagating.
         for _ in 0..<10 { await Task.yield() }
-        try await Task.sleep(for: .milliseconds(200))
+        try await Task.sleep(for: .milliseconds(50))
 
-        #expect(store.rowsCallCount == 1)
-        #expect(viewModel.digitalAudioIDs.isEmpty)
+        #expect(store.rowsCallCount == 2)
+        #expect(viewModel.digitalAudioIDs == [100])
     }
 
     @Test func emptyResponseTransitionsToEmptyState() async throws {
@@ -408,11 +483,53 @@ struct SearchViewModelTests {
         try await Task.sleep(for: .milliseconds(500))
     }
 
-    /// Poll until the view model leaves .searching, or 2 s elapses.
-    private static func waitForSettle(_ viewModel: SearchViewModel) async throws {
-        let deadline = Date().addingTimeInterval(2.0)
-        while viewModel.state == .searching && Date() < deadline {
+    /// Poll until `condition` holds, or `timeout` elapses.
+    ///
+    /// **A timeout is a failure, not a fall-through.** The predecessor of this
+    /// helper returned quietly when its deadline passed, which is the mechanism
+    /// that let a wait which never settled read exactly like one that did
+    /// (issue #159) — the assertion after it then raced the thing it had been
+    /// waiting for, and passed by margin until the machine was busy enough that
+    /// it didn't. Recording the `Issue` at the *caller's* source location puts
+    /// the failure on the line where the wait was written rather than in here.
+    ///
+    /// Polling rather than awaiting because `SearchViewModel` publishes no
+    /// completion edge; pass the predicate over the property the test actually
+    /// asserts, not a proxy for it (see ``waitForSettle(_:sourceLocation:)``).
+    private static func waitUntil(
+        _ what: String,
+        timeout: Duration = .seconds(2),
+        sourceLocation: SourceLocation = #_sourceLocation,
+        _ condition: () -> Bool
+    ) async throws {
+        let deadline = ContinuousClock.now + timeout
+        while !condition() {
+            guard ContinuousClock.now < deadline else {
+                Issue.record(
+                    "timed out after \(timeout) waiting for \(what)",
+                    sourceLocation: sourceLocation
+                )
+                return
+            }
             try await Task.sleep(for: .milliseconds(25))
+        }
+    }
+
+    /// Poll until the view model leaves `.searching`.
+    ///
+    /// This is the *front* half of a search and nothing more. `performSearch`
+    /// publishes `state` — and captures the analytics event — **before** it
+    /// awaits `hydrateDigitalAudioIDs`, so a settled state means results are on
+    /// screen while the badge set may still be suspended on the clone read. A
+    /// test that asserts on `digitalAudioIDs` must wait on `digitalAudioIDs`
+    /// (issue #159); the call sites left here assert on `state`, `results`,
+    /// `source`, or the analytics spy, all of which this genuinely covers.
+    private static func waitForSettle(
+        _ viewModel: SearchViewModel,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        try await waitUntil("the search to leave .searching", sourceLocation: sourceLocation) {
+            viewModel.state != .searching
         }
     }
 
@@ -458,10 +575,17 @@ struct SearchViewModelTests {
 /// assert the guard fired by call count rather than by the (identical either
 /// way) final hydrated value. Lock-guarded `Sendable`, matching
 /// `WXYCAPITests/Support/SpyCatalogStore.swift`'s shape.
+///
+/// Entries and returns are counted separately — while a blocking read is parked
+/// the two differ, and a test that has to know a *cancelled* read resumed needs
+/// the return (issue #159).
 private final class CountingCatalogStore: CatalogStore {
     private struct State {
         var rows: [Int: CatalogRow]
+        /// `rows(ids:)` entries.
         var rowsCalls = 0
+        /// `rows(ids:)` returns — ticked after the blocking gate, if any.
+        var rowsReturns = 0
         /// When true, `rows(ids:)` parks until `releaseRows()` — the store
         /// analogue of `BlockingRequestSession`, so a test can cancel the
         /// calling task while the clone read is genuinely in flight.
@@ -474,13 +598,16 @@ private final class CountingCatalogStore: CatalogStore {
 
     private let state: OSAllocatedUnfairLock<State>
 
-    init(rows: [CatalogRow], blocking: Bool = false) {
-        var initial = State(rows: Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) }))
-        initial.blocking = blocking
-        state = OSAllocatedUnfairLock(initialState: initial)
+    init(rows: [CatalogRow]) {
+        state = OSAllocatedUnfairLock(
+            initialState: State(rows: Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) }))
+        )
     }
 
     var rowsCallCount: Int { state.withLock { $0.rowsCalls } }
+    /// `rows(ids:)` calls that have **returned**, as opposed to merely been
+    /// entered. The only edge a test has for "the parked clone read resumed".
+    var rowsReturnCount: Int { state.withLock { $0.rowsReturns } }
 
     func row(id: Int) -> CatalogRow? { state.withLock { $0.rows[id] } }
     func count() -> Int { state.withLock { $0.rows.count } }
@@ -502,22 +629,36 @@ private final class CountingCatalogStore: CatalogStore {
         }
         for continuation in firstWaiters { continuation.resume() }
 
-        guard state.withLock({ $0.blocking }) else { return result }
-        await withCheckedContinuation { continuation in
-            let resumeNow: Bool = state.withLock { st in
-                if st.released { return true }
-                st.blocked.append(continuation)
-                return false
+        if state.withLock({ $0.blocking }) {
+            await withCheckedContinuation { continuation in
+                let resumeNow: Bool = state.withLock { st in
+                    if st.released { return true }
+                    st.blocked.append(continuation)
+                    return false
+                }
+                if resumeNow { continuation.resume() }
             }
-            if resumeNow { continuation.resume() }
         }
+        state.withLock { $0.rowsReturns += 1 }
         return result
     }
 
     // MARK: - Optional blocking gate
 
-    /// Suspends until at least one `rows(ids:)` call has been entered. Only
-    /// meaningful when the store was built with `blocking: true`.
+    /// Arm the blocking gate. Deliberately not an `init` parameter: a test that
+    /// needs the badge set seeded by a *completed* read before it parks the next
+    /// one would otherwise park the seeding read too. Resets the gate's one-shot
+    /// bookkeeping so `waitForFirstRowsCall()` refers to the read this arms for.
+    func startBlocking() {
+        state.withLock { st in
+            st.blocking = true
+            st.released = false
+            st.firstCallArrived = false
+        }
+    }
+
+    /// Suspends until at least one `rows(ids:)` call has been entered since the
+    /// gate was armed. Only meaningful after ``startBlocking()``.
     func waitForFirstRowsCall() async {
         await withCheckedContinuation { continuation in
             let resumeNow: Bool = state.withLock { st in

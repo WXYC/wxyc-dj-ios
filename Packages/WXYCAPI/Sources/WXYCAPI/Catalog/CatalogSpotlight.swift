@@ -46,13 +46,10 @@ public enum CatalogSpotlight {
     /// step 7's `CSSearchableItemActionType` continuation uses it to route a tap.
     public static func albumID(from identifier: String) -> Int? {
         guard identifier.hasPrefix(itemIdentifierPrefix) else { return nil }
-        let digits = identifier.dropFirst(itemIdentifierPrefix.count)
-        // Require non-empty ASCII digits only. `Int(_:)` alone also accepts a
-        // leading "+"/"-" (e.g. "album.-5" -> -5), which `itemIdentifier(_:)`
-        // never emits — so this stays the exact inverse and rejects a malformed
-        // identifier rather than routing a tap to a bogus (negative) id.
-        guard !digits.isEmpty, digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
-        return Int(digits)
+        // ASCII digits only: `itemIdentifier(_:)` never emits a sign, so this
+        // stays its exact inverse rather than routing a tap to a bogus
+        // (negative) id.
+        return CatalogID.decimal(identifier.dropFirst(itemIdentifierPrefix.count))
     }
 
     /// The album id carried by a Core Spotlight **continuation activity**, or

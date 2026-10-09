@@ -23,10 +23,6 @@ struct RootView: View {
     @Environment(ConnectivityMonitor.self) private var connectivity
 
     var body: some View {
-        // @Bindable so the cover can two-way bind $router.deepLink — dismissing
-        // the cover clears it back to nil.
-        @Bindable var router = router
-
         Group {
             switch auth.state {
             case .unknown, .signingIn:
@@ -49,13 +45,12 @@ struct RootView: View {
         // "album.<id>" identifier; handleSpotlightContinuation parses it and
         // either presents immediately (signed in) or stashes for replay.
         //
-        // NOTE: this view-level modifier is a FALLBACK. The primary, reliable
-        // delivery is `SceneDelegate` — this modifier was not firing for the
-        // CSSearchableItemActionType activity in either cold or warm state, which
-        // is the bug it caused. Both paths funnel through the same
-        // `handleSpotlightContinuation`, so a double-delivery is a harmless no-op
-        // (present() early-outs on the already-shown album). Kept until the
-        // scene-delegate path is confirmed on device, then it can be removed.
+        // NOTE: this view-level modifier is a FALLBACK; `SceneDelegate` is the
+        // primary delivery. Since #192 fixed the scene delegate's lookup, both
+        // fire for a warm tap. That is absorbed: present() ignores a same-source
+        // repeat of the album showing, and its token latch collapses two
+        // concurrent presents into one. Kept until Spotlight through the scene
+        // delegate is confirmed on a device, then it can be removed.
         .onContinueUserActivity(CSSearchableItemActionType) { activity in
             Task { await deps.handleSpotlightContinuation(activity) }
         }
@@ -95,25 +90,26 @@ struct RootView: View {
         // never on the Search/Bin tab stacks — so dismissing returns the DJ to
         // the exact tab + scroll position they left.
         //
-        // Known limitation: a second Spotlight tap while a cover is already up
-        // does not swap the cover; it is a no-op until the open cover is
-        // dismissed. `AppDependencies.present(albumID:parked:)` enforces that
-        // explicitly (issue #118) rather than leaving it to SwiftUI.
-        //
-        // **Unverified claim, flagged rather than repeated as fact** (issue
-        // #118 review): this comment used to assert that
-        // `fullScreenCover(item:)` "only watches nil↔non-nil, not an identity
-        // swap". `git blame` puts that on 6afa64b4, the issue-#19 step-7
-        // commit, whose message documents the surface at length but never
-        // records observing the behaviour, and `RouterDeepLinkTests` covers
-        // the router's value semantics rather than SwiftUI presentation. So it
-        // is plausible but unevidenced, and nobody has since checked it on
-        // device. Nothing depends on it being true: `present` refuses the
-        // second tap itself, so the no-op is the app's own decision under
-        // either SwiftUI behaviour. Swapping the cover to the newly-tapped
-        // album is the better UX and is tracked as issue #126, which records
-        // why an in-place `deepLink` swap cannot implement it.
-        .fullScreenCover(item: $router.deepLink) { route in
+        // A link for a different album while the cover is up swaps it (issue
+        // #126): `AppDependencies.present` writes the new route over the old
+        // one, and `fullScreenCover(item:)` dismisses and re-presents when the
+        // item's identity changes. The binding's setter is the one place the
+        // DJ's Close is visible: SwiftUI writes `nil` back only when dismissing
+        // a presented cover, so `closeDeepLinkCover()` marks a dismissal in
+        // progress and a link arriving during the animation waits for
+        // `onDismiss` instead of presenting into it.
+        .fullScreenCover(item: Binding(
+            get: { router.deepLink },
+            set: { newValue in
+                if let newValue {
+                    router.deepLink = newValue
+                } else {
+                    deps.closeDeepLinkCover()
+                }
+            }
+        ), onDismiss: {
+            Task { await deps.deepLinkCoverDidDismiss() }
+        }) { deepLink in
             // fullScreenCover content is hosted in a separate presentation
             // context that does NOT inherit the presenter's
             // .environment(_:)-injected @Observable objects. Re-inject the SAME
@@ -121,7 +117,7 @@ struct RootView: View {
             // sites can't drift) — the shared AlbumDetailView then runs under an
             // identical environment whether reached here or pushed onto a tab
             // stack, so a future auth/router read can't crash only on this path.
-            DeepLinkAlbumCover(route: route)
+            DeepLinkAlbumCover(deepLink: deepLink)
                 .wxycAppEnvironment(deps)
         }
     }
