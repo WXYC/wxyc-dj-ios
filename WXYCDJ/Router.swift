@@ -5,7 +5,8 @@
 //  Deep-link state for the Spotlight tap-through (issue #19 step 7). Owned by
 //  AppDependencies, injected via .environment, and read by RootView, which
 //  binds a fullScreenCover to `deepLink`, replays `pending` once auth resolves
-//  to .signedIn, and drains `queued` from the cover's onDismiss (issue #126).
+//  to .signedIn, and presents a link held during the DJ's Close from the
+//  cover's onDismiss (`dismissal`, issue #126).
 //  Each slot carries the link's source (issue #185), so the cover and the
 //  analytics event can name where the link came from.
 //
@@ -16,7 +17,7 @@
 import Observation
 
 /// Where a deep link came from. Threaded from the entry point, through the
-/// park and the swap queue, to the presentation, so `DeepLinkAlbumCover` and
+/// park and a link held during a Close, to the presentation, so `DeepLinkAlbumCover` and
 /// `present`'s analytics event name the right source rather than assuming one.
 /// Every consumer switches over it with no `default:`, so a new source is a
 /// compile-time decision at each.
@@ -29,9 +30,9 @@ enum DeepLinkSource: Equatable, Sendable {
 }
 
 /// An album a deep link asked for, and where the link came from. The type of
-/// both ``Router/pending`` and ``Router/queued``: the two *slots* stay separate
-/// (one is replayed on sign-in, the other on a dismissal), only the shape is
-/// shared — hence a name that says neither.
+/// both ``Router/pending`` and a link held in ``Router/dismissal``: the two
+/// *slots* stay separate (one is replayed on sign-in, the other when the DJ's
+/// Close finishes), only the shape is shared — hence a name that says neither.
 struct DeepLinkRequest: Equatable, Sendable {
     let albumID: Int
     let source: DeepLinkSource
@@ -48,7 +49,17 @@ struct PresentedDeepLink: Identifiable {
     var id: Int { route.id }
 }
 
-/// Holds the one in-flight deep link. Three slots, at most one set:
+/// The DJ's Close of the deep-link cover, from the tap until SwiftUI's
+/// `onDismiss` reports the cover gone. `next` is a link that arrived in that
+/// window, held so it isn't presented into a cover that is animating out.
+struct CoverDismissal: Equatable, Sendable {
+    var next: DeepLinkRequest?
+    /// Whether `next` was a parked replay, so the event it records keeps
+    /// `parked: true` when the dismissal presents it.
+    var nextParked = false
+}
+
+/// Holds the one in-flight deep link. Three slots:
 ///
 /// - ``deepLink`` is the resolved route (and its source) currently presented in RootView's
 ///   `fullScreenCover`. Setting it presents the album's detail in its own
@@ -57,11 +68,13 @@ struct PresentedDeepLink: Identifiable {
 /// - ``pending`` is the parked request from a link that arrived while signed out
 ///   or mid-`restoreSession()`. RootView drains it into ``deepLink`` (with a
 ///   local-clone `fallback` lookup) the moment auth flips to `.signedIn`.
-/// - ``queued`` is an album waiting behind a cover's dismissal (issue #126): a
-///   tap for a different album while a cover is showing queues itself and nils
-///   ``deepLink``, and the cover's `onDismiss` presents it. Deliberately not a
-///   reuse of ``pending``, which `handleAuthChange` replays — conflating the
-///   two would let an auth transition replay a swap.
+/// - ``dismissal`` is set while the cover the DJ closed is animating out (issue
+///   #126), and holds a link that arrived meanwhile for the cover's `onDismiss`
+///   to present. Only the DJ's Close sets it, never a swap or a sign-out, so it
+///   is set only for a cover that was on screen and whose `onDismiss` is
+///   therefore guaranteed to fire and clear it. A swap needs no slot: writing
+///   a different album into ``deepLink`` makes `fullScreenCover(item:)`
+///   dismiss the old cover and present the new one.
 ///
 /// State only — the clone lookup that turns a `pending` id into a `deepLink`
 /// route lives on ``AppDependencies`` (it owns the catalog store). `@MainActor`
@@ -78,8 +91,7 @@ final class Router {
     /// once replayed (or when the tap was handled immediately).
     var pending: DeepLinkRequest?
 
-    /// A request waiting for the current cover's dismissal to finish (issue
-    /// #126). Set only while ``deepLink`` is `nil` mid-dismissal; drained by
-    /// the cover's `onDismiss`, and cleared on sign-out.
-    var queued: DeepLinkRequest?
+    /// The DJ's Close in progress, and any link held behind it (issue #126).
+    /// `nil` when no Close is animating.
+    var dismissal: CoverDismissal?
 }

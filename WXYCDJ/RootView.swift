@@ -23,10 +23,6 @@ struct RootView: View {
     @Environment(ConnectivityMonitor.self) private var connectivity
 
     var body: some View {
-        // @Bindable so the cover can two-way bind $router.deepLink — dismissing
-        // the cover clears it back to nil.
-        @Bindable var router = router
-
         Group {
             switch auth.state {
             case .unknown, .signingIn:
@@ -49,13 +45,12 @@ struct RootView: View {
         // "album.<id>" identifier; handleSpotlightContinuation parses it and
         // either presents immediately (signed in) or stashes for replay.
         //
-        // NOTE: this view-level modifier is a FALLBACK. The primary, reliable
-        // delivery is `SceneDelegate` — this modifier was not firing for the
-        // CSSearchableItemActionType activity in either cold or warm state, which
-        // is the bug it caused. Both paths funnel through the same
-        // `handleSpotlightContinuation`, so a double-delivery is a harmless no-op
-        // (present() early-outs on the already-shown album). Kept until the
-        // scene-delegate path is confirmed on device, then it can be removed.
+        // NOTE: this view-level modifier is a FALLBACK; `SceneDelegate` is the
+        // primary delivery. Since #192 fixed the scene delegate's lookup, both
+        // fire for a warm tap. That is absorbed: present() ignores a same-source
+        // repeat of the album showing, and its token latch collapses two
+        // concurrent presents into one. Kept until Spotlight through the scene
+        // delegate is confirmed on a device, then it can be removed.
         .onContinueUserActivity(CSSearchableItemActionType) { activity in
             Task { await deps.handleSpotlightContinuation(activity) }
         }
@@ -95,15 +90,24 @@ struct RootView: View {
         // never on the Search/Bin tab stacks — so dismissing returns the DJ to
         // the exact tab + scroll position they left.
         //
-        // A tap for a different album while the cover is up swaps it (issue
-        // #126): `AppDependencies.present` queues the album and nils
-        // `deepLink`, and `onDismiss` — which SwiftUI calls for a programmatic
-        // dismissal as well as the Close button — presents the queued one.
-        // Nothing ever writes a different route over a presented one, so the
-        // swap does not depend on how `fullScreenCover(item:)` treats an
-        // identity change while presented (an old, never-verified claim here
-        // said it ignores one; it is no longer load-bearing either way).
-        .fullScreenCover(item: $router.deepLink, onDismiss: {
+        // A link for a different album while the cover is up swaps it (issue
+        // #126): `AppDependencies.present` writes the new route over the old
+        // one, and `fullScreenCover(item:)` dismisses and re-presents when the
+        // item's identity changes. The binding's setter is the one place the
+        // DJ's Close is visible: SwiftUI writes `nil` back only when dismissing
+        // a presented cover, so `closeDeepLinkCover()` marks a dismissal in
+        // progress and a link arriving during the animation waits for
+        // `onDismiss` instead of presenting into it.
+        .fullScreenCover(item: Binding(
+            get: { router.deepLink },
+            set: { newValue in
+                if let newValue {
+                    router.deepLink = newValue
+                } else {
+                    deps.closeDeepLinkCover()
+                }
+            }
+        ), onDismiss: {
             Task { await deps.deepLinkCoverDidDismiss() }
         }) { deepLink in
             // fullScreenCover content is hosted in a separate presentation
