@@ -92,10 +92,10 @@ final class AppDependencies {
     /// coverage never stands up a real `AVQueuePlayer`, and never writes to
     /// the process-wide `MPNowPlayingInfoCenter`.
     let playbackController: PlaybackController
-    /// Cold-launch Spotlight deep-link state (issue #19 step 7), injected via
-    /// `.environment` and bound to RootView's `fullScreenCover`. The resolution
-    /// that turns a tapped `album.<id>` into a route lives here — on
-    /// ``handleSpotlightTap(albumID:isSignedIn:)`` /
+    /// Deep-link state for Spotlight taps and listener-app links (issues #19,
+    /// #186), injected via `.environment` and bound to RootView's
+    /// `fullScreenCover`. The resolution that turns a linked album id into a
+    /// route lives here — on ``handleDeepLink(albumID:isSignedIn:source:)`` /
     /// ``handleAuthChange(wasSignedIn:isSignedIn:)`` — because the `fallback`
     /// lookup needs ``catalogStore``.
     let router = Router()
@@ -240,7 +240,7 @@ final class AppDependencies {
 
     /// Test seam: build the composition root around an injected catalog store,
     /// defaulting to no refresh service. The deep-link resolution path
-    /// (``handleSpotlightTap``, ``handleAuthChange``, ``present(_:parked:)``) reads
+    /// (``handleDeepLink(albumID:isSignedIn:source:)``, ``handleAuthChange``, ``present(_:parked:)``) reads
     /// only ``catalogStore``, so a unit test can supply a store whose `row(id:)`
     /// suspends on demand to drive `present`'s most-recent-wins token latch across
     /// the `await` — the one branch the sequential-await tests can't reach.
@@ -534,8 +534,8 @@ final class AppDependencies {
     /// type `CSSearchableItemActionType` the system hands back when a DJ taps a
     /// catalog item in home-screen Spotlight — to the deep-link surface. Parses
     /// the `"album.<id>"` identifier and forwards to
-    /// ``handleSpotlightTap(albumID:isSignedIn:)`` with the live auth state. A
-    /// non-continuation or malformed activity is a no-op.
+    /// ``handleDeepLink(albumID:isSignedIn:source:)`` with the live auth state.
+    /// A non-continuation or malformed activity is a no-op.
     ///
     /// This is the single entry point ``SceneDelegate`` drives for **both**
     /// cold-launch (`scene(_:willConnectTo:)`, where the launch activity arrives
@@ -545,20 +545,12 @@ final class AppDependencies {
     /// so the tap never reached the (correct, tested) park/replay/present logic.
     func handleSpotlightContinuation(_ activity: NSUserActivity) async {
         guard let albumID = CatalogSpotlight.albumID(fromActivity: activity) else { return }
-        deepLinkLog.debug("Spotlight continuation -> album \(albumID, privacy: .public) (signedIn=\(self.authService.isSignedIn, privacy: .public))")
-        await handleSpotlightTap(albumID: albumID, isSignedIn: authService.isSignedIn)
+        await handleDeepLink(albumID: albumID, isSignedIn: authService.isSignedIn, source: .spotlight)
     }
 
-    /// Handle a Spotlight tap on `album.<id>`. When signed in, resolve the route
-    /// (with an O(1) clone lookup for the instant-header `fallback`) and present
-    /// it immediately by setting ``Router/deepLink``. Otherwise — a tap that
-    /// landed while signed out or mid-`restoreSession()` — park the id in
-    /// ``Router/pending`` for ``handleAuthChange(wasSignedIn:isSignedIn:)`` to
-    /// replay once auth resolves. Never flips auth state or surfaces a sign-in prompt.
-    ///
-    /// `isSignedIn` is passed in (rather than read off ``authService``) so the
-    /// replay logic is unit-testable without driving a real sign-in; the caller
-    /// (RootView) supplies `authService.isSignedIn`.
+    /// A Spotlight tap on `album.<id>`: ``handleDeepLink(albumID:isSignedIn:source:)``
+    /// with the source filled in. Kept as the tests' shorthand for the
+    /// Spotlight source.
     func handleSpotlightTap(albumID: Int, isSignedIn: Bool) async {
         await handleDeepLink(albumID: albumID, isSignedIn: isSignedIn, source: .spotlight)
     }
@@ -574,24 +566,27 @@ final class AppDependencies {
     /// is a no-op, and the link only ever navigates — it never adds to the bin.
     func handleListenerAppURL(_ url: URL) async {
         guard let albumID = DJAppLink.albumID(from: url) else { return }
-        deepLinkLog.debug("Listener-app link -> album \(albumID, privacy: .public) (signedIn=\(self.authService.isSignedIn, privacy: .public))")
-        await handleListenerAppLink(albumID: albumID, isSignedIn: authService.isSignedIn)
-    }
-
-    /// The listener-app link's peer of ``handleSpotlightTap(albumID:isSignedIn:)``,
-    /// with the signed-in gate passed in for the same testability reason.
-    func handleListenerAppLink(albumID: Int, isSignedIn: Bool) async {
-        await handleDeepLink(albumID: albumID, isSignedIn: isSignedIn, source: .listenerApp)
+        await handleDeepLink(albumID: albumID, isSignedIn: authService.isSignedIn, source: .listenerApp)
     }
 
     // MARK: Shared deep-link path
 
     /// The source-neutral body every deep-link entry point funnels through
-    /// (issue #185). `source` is **required**, not defaulted — the same rule
-    /// `refreshCatalog(trigger:)` and `AlbumDetailView(origin:)` follow: a
-    /// forgotten argument would silently file the link under the default
-    /// source, corrupting the dimension the analytics event exists to measure.
-    private func handleDeepLink(albumID: Int, isSignedIn: Bool, source: DeepLinkSource) async {
+    /// (issue #185). When signed in, resolve the route (with an O(1) clone
+    /// lookup for the instant-header `fallback`) and present it. Otherwise (a
+    /// link that landed while signed out or mid-`restoreSession()`) park it in
+    /// ``Router/pending`` for ``handleAuthChange(wasSignedIn:isSignedIn:)`` to
+    /// replay once auth resolves. Never flips auth state or surfaces a sign-in
+    /// prompt.
+    ///
+    /// `isSignedIn` is passed in (rather than read off ``authService``) so the
+    /// replay logic is unit-testable without driving a real sign-in. `source`
+    /// is **required**, not defaulted — the same rule `refreshCatalog(trigger:)`
+    /// and `AlbumDetailView(origin:)` follow: a forgotten argument would
+    /// silently file the link under the default source, corrupting the
+    /// dimension the analytics event exists to measure.
+    func handleDeepLink(albumID: Int, isSignedIn: Bool, source: DeepLinkSource) async {
+        deepLinkLog.debug("\(String(describing: source), privacy: .public) link -> album \(albumID, privacy: .public) (signedIn=\(isSignedIn, privacy: .public))")
         let request = DeepLinkRequest(albumID: albumID, source: source)
         guard isSignedIn else {
             router.pending = request
@@ -698,7 +693,7 @@ final class AppDependencies {
             // A duplicate delivery or re-tap changes nothing. A different
             // source reaching the album already open still counts as its open.
             if current.source != request.source {
-                recordOpened(request.source, cloneHit: current.route.fallback != nil, parked: parked)
+                analytics.capture(request.source.openedEvent(cloneHit: current.route.fallback != nil, parked: parked))
             }
             return
         }
@@ -720,17 +715,7 @@ final class AppDependencies {
         // cover and presents the new one when the item's identity changes, so
         // there is no queue to strand.
         router.deepLink = PresentedDeepLink(route: route, source: request.source)
-        recordOpened(request.source, cloneHit: route.fallback != nil, parked: parked)
-    }
-
-    /// Record the opened event for a deep link's source.
-    private func recordOpened(_ source: DeepLinkSource, cloneHit: Bool, parked: Bool) {
-        switch source {
-        case .spotlight:
-            analytics.capture(SpotlightDeeplinkOpenedEvent(cloneHit: cloneHit, parked: parked))
-        case .listenerApp:
-            analytics.capture(ListenerAppLinkOpenedEvent(cloneHit: cloneHit, parked: parked))
-        }
+        analytics.capture(request.source.openedEvent(cloneHit: route.fallback != nil, parked: parked))
     }
 
     /// Build the route for `albumID`, looking up the cloned row for an instant
