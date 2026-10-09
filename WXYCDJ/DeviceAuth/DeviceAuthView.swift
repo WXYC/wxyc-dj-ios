@@ -11,35 +11,60 @@
 import SwiftUI
 import WXYCAPI
 
+/// The half-height sheet a DJ sees after scanning a dj.wxyc.org sign-in QR:
+/// a spinner while the code is verified, then the request card with
+/// Approve / Reject, or an error card, or — after a successful approve — the
+/// success card.
+///
+/// Presented by `SearchView` once `CameraView` hands back a scan. Which card
+/// shows is decided by the pure `DeviceAuthViewModel.sheetContent(...)`; this
+/// view only renders it. Approve keeps the sheet up and reports failure inline
+/// (the DJ may need to act on it); Reject dismisses and reports through
+/// `onDismissWithToast`.
 struct DeviceAuthView: View {
     @Environment(AppDependencies.self) private var deps
     @Environment(AuthService.self) private var auth
     @Environment(\.dismiss) private var dismiss
     
     @State private var viewModel: DeviceAuthViewModel?
+    /// The raw scan from `CameraView`; parsed once, in `onAppear`.
     @Binding var scannedCode: String?
+    /// The parsed `user_code`, held for Approve/Reject. `nil` when the scan
+    /// couldn't be parsed.
     @State private var userCode: String?
+    /// Fallback copy for the error card when there is no `user_code` and the view
+    /// model hasn't produced its own message yet.
     @State var message: String = "Unknown code"
     
+    /// Called after Reject, just before the sheet dismisses, with the copy to show
+    /// and a toast kind (`"red"`, `"amber"`, or `"ok"`) the presenter maps to a color.
     var onDismissWithToast: ((_ toastText: String, _ toastKind: String) -> Void)? = nil
     
+    /// Seconds since verify confirmed the code, shown as "Requested Ns ago";
+    /// refreshed by `timer` from `DeviceAuthViewModel.requestDate`.
     @State private var elapsedSeconds: Int = 4
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Group {
             if let viewModel {
-                if case .approved(let toastMessage) = viewModel.workflowState {
+                switch DeviceAuthViewModel.sheetContent(
+                    workflowState: viewModel.workflowState,
+                    userCode: userCode,
+                    approveError: viewModel.approveError,
+                    fallbackMessage: message
+                ) {
+                case .approved(let toastMessage):
                     DeviceAuthSuccessView(
                        // username: viewModel.username,
                         toastMessage: toastMessage
                     )
-                } else if case .unrecognized(let errorText) = viewModel.workflowState {
+                case .error(let errorText):
                     DeviceAuthErrorView(message: errorText)
-                } else if let code = userCode {
-                    content(for: viewModel, with: code)
-                } else {
-                    DeviceAuthErrorView(message: message)
+                case .verifying:
+                    ProgressView()
+                case .request(let code, let approveError):
+                    content(for: viewModel, with: code, approveError: approveError)
                 }
             } else {
                 ProgressView()
@@ -70,7 +95,7 @@ struct DeviceAuthView: View {
     }
         
     @ViewBuilder
-    private func content(for viewModel: DeviceAuthViewModel, with userCode: String) -> some View {
+    private func content(for viewModel: DeviceAuthViewModel, with userCode: String, approveError: String?) -> some View {
         VStack(spacing: 16) {
             // Top Header Section: Icon, Domain, and Context Metadata
             HStack(spacing: 14) {
@@ -192,34 +217,42 @@ struct DeviceAuthView: View {
             
             Spacer()
             
+            // Approve failure: stays on screen rather than flashing as a
+            // toast, since the DJ may need to act on it (re-scan, ask for a fresh
+            // QR, sign in again). Cleared by the next Approve tap.
+            if let approveError {
+                approveFailureNote(approveError)
+            }
+            
             // Action Buttons Section
             VStack(spacing: 8) {
                     Button {
                         Task {
-                            let result = await viewModel.approve(userCode: userCode)
-                            message = result
+                            // The outcome is rendered from view-model state:
+                            // success flips `workflowState` to `.approved`, and a
+                            // failure sets `approveError`, shown above.
+                            _ = await viewModel.approve(userCode: userCode)
                         }
                     } label: {
                         Text("Approve")
                             .font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(Color(uiColor: .tertiaryLabel))
+                            .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .frame(height: 50)
-                            .background(Color(uiColor: .quaternarySystemFill))
+                            .background(Color.blue)
                             .clipShape(.rect(cornerRadius: 14))
                     }
-                    .disabled(true)
                     
                     Button {
                         Task {
                             let result = await viewModel.deny(userCode: userCode)
-                            onDismissWithToast?(result, "amber")
+                            onDismissWithToast?(result, "red")
                             dismiss()
                         }
                     } label: {
                         Text("Reject")
                             .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.red)
                             .frame(maxWidth: .infinity)
                             .frame(height: 44)
                     }
@@ -227,6 +260,26 @@ struct DeviceAuthView: View {
             .padding(.bottom, 16)
         }
         .padding(.horizontal, 20)
+    }
+
+    private func approveFailureNote(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 15))
+                .foregroundStyle(.red)
+            
+            Text(text)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.primary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(Color.red.opacity(0.10))
+        .clipShape(.rect(cornerRadius: 12))
+        .accessibilityElement(children: .combine)
     }
 
     private func permissionRow(title: String) -> some View {
@@ -245,7 +298,8 @@ struct DeviceAuthView: View {
     }
 }
 
-// Visual feedback view for unrecognized or failed QR verification states
+/// The error card: an unreadable QR, an invalid/expired/already-used code, or a
+/// verify failure. Its only action is Dismiss — recovery is a fresh QR.
 struct DeviceAuthErrorView: View {
     let message: String
     @Environment(\.dismiss) private var dismiss
@@ -295,7 +349,9 @@ struct DeviceAuthErrorView: View {
     }
 }
 
-// Visual feedback view presented when browser authorization is approved successfully
+/// The success card shown after Approve succeeds. The "12 hours" figure is the
+/// QR-issued session lifetime ADR 0002 sets server-side; it is static copy here,
+/// not read from the server, so it must change if that lifetime does.
 struct DeviceAuthSuccessView: View {
     //let domain: String
     //var username: String

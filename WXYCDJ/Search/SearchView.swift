@@ -18,11 +18,15 @@ struct SearchView: View {
     @Environment(AuthService.self) private var auth
     @State private var viewModel: SearchViewModel?
     @State private var searchText: String = ""
-    @State var showSheet: Bool = false
+    // QR browser sign-in (issue #64). The account menu's "QR Browser Sign-in"
+    // opens the scanner; a successful scan opens the approval sheet; closing that
+    // sheet clears the scan so the next one starts clean.
     @State var showScanner: Bool = false
     @State var scannedCode: String?
     @State var showDeviceAuth: Bool = false
 
+    /// Transient bottom toast (2.5 s), currently used only for the QR Reject
+    /// outcome. `toastKind` is `"red"`, `"amber"`, or `"ok"` (green).
     @State private var toastMessage: String? = nil
     @State private var toastKind: String = "ok"
 
@@ -123,7 +127,9 @@ struct SearchView: View {
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 if case .signedIn(let payload) = auth.state {
+                    /*
                     let email = payload?.email?.components(separatedBy: "@").first ?? payload?.sub ?? "Unknown User"
+                     */
                     Section {
                         //TO-DO: add user tag
                         //Text("Signed in as \(email) [\(payload?.role?.uppercased() ?? "Unknown Role")]")

@@ -11,6 +11,8 @@
 import SwiftUI
 import AVFoundation
 
+/// Hosts an `AVCaptureVideoPreviewLayer` in SwiftUI. UIKit is unavoidable here:
+/// SwiftUI has no native camera-preview view.
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
     
@@ -29,6 +31,8 @@ struct CameraPreview: UIViewRepresentable {
     }
 }
 
+/// A `UIView` whose backing layer *is* the preview layer, so it resizes with the
+/// view without manual frame updates.
 final class VideoPreviewUIView: UIView {
     override class var layerClass: AnyClass {
         AVCaptureVideoPreviewLayer.self

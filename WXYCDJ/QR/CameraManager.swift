@@ -11,11 +11,20 @@
 import AVFoundation
 import SwiftUI
 
+/// The scanner's observable state for `CameraView`: camera permission, whether
+/// the capture session is running, and the most recent decoded QR string.
+///
+/// The `AVCaptureSession` itself is owned by `CameraService`, an actor, so the
+/// blocking configure/start/stop calls run off the main actor.
 @MainActor
 @Observable
 class CameraManager {
+    /// The last QR payload decoded. `CameraView` observes this and hands the first
+    /// non-empty value back to its presenter.
     var capturedCode: String?
     var isSessionRunning = false
+    /// Mirrors `AVCaptureDevice.authorizationStatus(for: .video)`; `.restricted`
+    /// and unknown future values are folded into `.denied`.
     var authorizationStatus: AVAuthorizationStatus = .notDetermined
     
     private let cameraService = CameraService()
@@ -24,6 +33,11 @@ class CameraManager {
         cameraService.session
     }
     
+    /// Reads camera permission, prompting on first use, and starts the camera if
+    /// it is (or becomes) granted. The prompt text is `NSCameraUsageDescription`,
+    /// declared in `project.yml` — `WXYCDJ/Info.plist` is generated, so a key
+    /// added only there would be wiped by the next `xcodegen generate`, and iOS
+    /// terminates an app that opens the camera without one.
     func checkAuthorization() {
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         self.authorizationStatus = status
@@ -70,6 +84,11 @@ class CameraManager {
     }
 }
 
+/// Owns the `AVCaptureSession`: picks the back camera, attaches a QR-only
+/// metadata output, and starts/stops the session. An actor so
+/// `startRunning()`/`stopRunning()` — blocking calls Apple says not to make on the
+/// main thread — never run there. Configuration happens once; later starts only
+/// re-attach a fresh delegate.
 actor CameraService {
     nonisolated(unsafe) let session = AVCaptureSession()
     private let qrOutput = AVCaptureMetadataOutput()
@@ -135,6 +154,9 @@ actor CameraService {
     }
 }
 
+/// Receives metadata callbacks on `CameraService`'s private queue and forwards each
+/// non-empty QR string to `onResult`. `@unchecked Sendable` is sound because its
+/// only stored property is an immutable `@Sendable` closure.
 final class QRScannerDelegate: NSObject, AVCaptureMetadataOutputObjectsDelegate, @unchecked Sendable {
     private let onResult: @Sendable (String) -> Void
     

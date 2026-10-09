@@ -28,7 +28,8 @@ struct DeviceCodeParserTests {
         
         let code = DeviceCodeParser.userCode(fromScanned: scanned)
         
-        #expect(code == nil)
+        // A bare code passes through as-is.
+        #expect(code == "ABCD-1234")
     }
     @Test func deviceParserScannedIsURLWithNoUserCode() throws {
         //sample scanned URL
@@ -36,7 +37,9 @@ struct DeviceCodeParserTests {
         
         let code = DeviceCodeParser.userCode(fromScanned: scanned)
         
-        #expect(code == nil)
+        // No `user_code` item: falls back to the raw string; verify rejects it
+        // server-side as an invalid code.
+        #expect(code == "https://dj.wxyc.org")
     }
     @Test func deviceParserScannedIsWhiteSpace() throws {
         //sample scanned URL

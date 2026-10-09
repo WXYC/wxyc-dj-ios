@@ -11,6 +11,12 @@
 import SwiftUI
 import AVFoundation
 
+/// The full-sheet QR scanner: a live camera preview with a reticle, or a
+/// "Camera Access Required" state with a Settings link when permission is denied.
+///
+/// On the first decoded QR it writes the string to `scannedCode`, stops the camera,
+/// and calls `onDismiss`; the presenter (`SearchView`) then opens `DeviceAuthView`.
+/// Camera capture can't run on the Simulator, so this screen is device-only.
 struct CameraView: View {
     @Binding var showScanner: Bool
     @Binding var scannedCode: String?
@@ -109,7 +115,7 @@ struct CameraView: View {
     }
 }
 
-// Custom Shape for the rounded QR corners
+/// The four rounded corner brackets drawn over the preview to frame the QR.
 struct ScannerReticle: View {
     var body: some View {
         Path { path in

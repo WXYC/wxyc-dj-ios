@@ -891,28 +891,65 @@ public final class AuthService {
     }
 
     // MARK: - Device Auth (QR Sign-In)
+    //
+    // The approver half of better-auth's `device-authorization` plugin (RFC 8628;
+    // issue #64, ADR 0002). dj-site owns the browser half — it requests a code
+    // (`POST /auth/device/code`), renders `verification_uri_complete` as a QR, and
+    // polls `POST /auth/device/token`. This app scans that QR (`DeviceCodeParser`
+    // extracts the `user_code`) and answers for the signed-in DJ through the three
+    // methods below.
+    //
+    // **They live on `AuthService`, not `APIClient`, because of the credential
+    // (#164).** `APIClient.perform` attaches `Bearer <JWT>`, but `/auth/device/*`
+    // are better-auth routes resolved by `getSessionFromCtx`, which needs the
+    // *session token*. better-auth's `bearer()` plugin checks the header as an HMAC
+    // pair — `verify(secret, token.split(".")[0], token.split(".")[1])` — and a JWT
+    // is `header.payload.signature`, signed asymmetrically against JWKS, so that
+    // check compares the payload against `HMAC(secret, header)`, fails, installs no
+    // session, and the route answers `401 UNAUTHORIZED`. Reproduced on a physical
+    // device against production. The session token is `private` to this type, so
+    // the methods that need it live here.
+    //
+    // **No 401 retry, deliberately.** `APIClient`'s retry exists because a JWT is
+    // re-mintable; a session token is not, so a rejected one stays rejected and a
+    // retry only doubles requests against a rate-limited endpoint. A 401 from
+    // these routes also does **not** demote `state` the way `currentJWT()`'s does —
+    // it is surfaced to the caller as a typed error and nothing else changes.
+    //
+    // **Wire casing is mixed on purpose** (api.yaml): approve/deny bodies are
+    // camelCase `userCode`; verify's query parameter and response are snake_case
+    // `user_code`; error bodies are snake_case `{error, error_description}`. The
+    // request/response types are the vendored `WXYCAPIModels` schemas (see
+    // `DTOs/DeviceAuth.swift`), and `GeneratedModelsContractTests` pins the casing.
 
-    // Wires DeviceAuthViewModel to Backend Service
-    // What's going on at the backend:
-    // dj-site requests code and renders QR, waits for device's response.
-    // DJ must be signed into app to have access to this feature.
-    // DJ scans QR Code, extracts a user_code, and the following functions call the backend to approve or deny the browser login on the DJ's behalf.
-    // Three endpoints from wxyc-shared/api.yaml: /device/approve, /device/deny, and (verification) GET /device.
-    // These methods interact with better-auth routes so they authenticate using the session token, not the JWT, and they do not retry on 401.
-
+    /// Approves a pending browser sign-in on behalf of the signed-in DJ.
+    ///
+    /// `POST /auth/device/approve` with `{"userCode": …}`, authenticated with the
+    /// session token (see the section comment above for why not the JWT). On success
+    /// the browser's next `/auth/device/token` poll receives its session.
+    ///
+    /// - Parameter userCode: The `user_code` from the scanned QR, as returned by
+    ///   ``DeviceCodeParser/userCode(fromScanned:)``.
+    /// - Returns: The server's `{success: true}` acknowledgement.
+    /// - Throws: ``AuthError/notSignedIn`` before any request when there is no
+    ///   session token. ``DeviceAuthActionError`` for any non-200 answer, carrying
+    ///   the HTTP status and the decoded `error` code — `401 unauthorized` (session
+    ///   rejected), `403 access_denied` (the server's role gate: approving requires
+    ///   `dj` or above), `400 invalid_request` / `expired_token` (bad or consumed
+    ///   code). An unrecognized `error` string decodes to `code: nil` with the
+    ///   status preserved, never a decode failure. A transport failure rethrows the
+    ///   underlying `URLError` untouched.
     public func approveDevice(userCode: String) async throws -> DeviceAuthActionResponse {
         guard let token = sessionToken else { throw AuthError.notSignedIn }
-        // Encode the approve request payload into JSON data using the expected camelCase wire key ("userCode").
         let body = try JSONCoders.encoder.encode(DeviceAuthApproveRequest(userCode: userCode))
-        // Dispatch a POST request to the device approval endpoint, which automatically injects the current DJ's session token.
         let (data, http) = try await sendDeviceAuthRequest(path: "device/approve", method: "POST", query: [], body: body, token: token)
         
         switch http.statusCode {
         case 200:
-            // Decode and return the success confirmation response when the backend accepts the approval.
             return try JSONCoders.decoder.decode(DeviceAuthActionResponse.self, from: data)
         default:
-            // Fall back to decoding the error envelope if the request fails, mapping unknown codes to nil while preserving the HTTP status.
+            // `try?`: an unparseable body still throws a typed error, just with
+            // `code: nil` — the status alone distinguishes 401 from 403.
             let envelope = try? JSONCoders.decoder.decode(DeviceAuthActionErrorEnvelope.self, from: data)
             throw DeviceAuthActionError(
                 status: http.statusCode,
@@ -921,7 +958,15 @@ public final class AuthService {
         }
     }
     
-    // Same as approveDevice, but for /auth/device/deny
+    /// Rejects a pending browser sign-in on behalf of the signed-in DJ.
+    ///
+    /// `POST /auth/device/deny` with `{"userCode": …}`. Identical in credential,
+    /// status handling, and thrown errors to ``approveDevice(userCode:)``; the
+    /// browser's next poll receives `access_denied` and stops.
+    ///
+    /// - Parameter userCode: The `user_code` from the scanned QR.
+    /// - Returns: The server's `{success: true}` acknowledgement.
+    /// - Throws: The same set as ``approveDevice(userCode:)``.
     public func denyDevice(userCode: String) async throws -> DeviceAuthActionResponse {
         guard let token = sessionToken else { throw AuthError.notSignedIn }
         let body = try JSONCoders.encoder.encode(DeviceAuthDenyRequest(userCode: userCode))
@@ -931,7 +976,6 @@ public final class AuthService {
         case 200:
             return try JSONCoders.decoder.decode(DeviceAuthActionResponse.self, from: data)
         default:
-            // Decode the error body safely to preserve error categories like expired tokens or unauthorized states.
             let envelope = try? JSONCoders.decoder.decode(DeviceAuthActionErrorEnvelope.self, from: data)
             throw DeviceAuthActionError(
                 status: http.statusCode,
@@ -940,20 +984,28 @@ public final class AuthService {
         }
     }
     
-    // 3rd device auth endpoint -- verify
-    // difference between verify & approve/deny: verify is a GET, w/ query [URLQueryItem(name: "user_code", value: userCode)] and no body
+    /// Looks up a device code's current status without changing it.
+    ///
+    /// `GET /auth/device?user_code=…` (snake_case query parameter, no body). Called
+    /// before Approve is offered: the route answers **200 for a consumed code too**,
+    /// so callers must read ``DeviceAuthVerifyResponse/status`` — only `.pending`
+    /// may be approved. (`DeviceAuthViewModel.verify` gates on exactly that.)
+    ///
+    /// - Parameter userCode: The `user_code` from the scanned QR.
+    /// - Returns: The code echoed back with its status: `pending`, `approved`,
+    ///   `denied`, or `.unknownDefaultOpenApi` for a value this build doesn't know.
+    /// - Throws: ``AuthError/notSignedIn`` with no session token;
+    ///   ``DeviceAuthVerifyError`` for any non-200 answer (`400 invalid_request` /
+    ///   `expired_token`, or `code: nil` for anything unrecognized); a transport
+    ///   `URLError` untouched.
     public func verifyDevice(userCode: String) async throws -> DeviceAuthVerifyResponse {
         guard let token = sessionToken else { throw AuthError.notSignedIn }
-        // Build the query parameters using snake_case ("user_code") as required by the verify endpoint contract.
-        // Perform a GET request to query the current status of the device sign-in code.
         let (data, http) = try await sendDeviceAuthRequest(path: "device", method: "GET", query: [URLQueryItem(name: "user_code", value: userCode)], body: nil, token: token)
         
         switch http.statusCode {
         case 200:
-            // Decode and return the response containing the code's current lifecycle state (pending, approved, or denied).
             return try JSONCoders.decoder.decode(DeviceAuthVerifyResponse.self, from: data)
         default:
-            // Parse and throw an error if the verification request encounters invalid parameters or expiration.
             let envelope = try? JSONCoders.decoder.decode(DeviceAuthVerifyErrorEnvelope.self, from: data)
             throw DeviceAuthVerifyError(
                 status: http.statusCode,
@@ -962,6 +1014,12 @@ public final class AuthService {
         }
     }
 
+    /// Shared transport for the three device-auth methods: builds the request
+    /// against `configuration.authBaseURL`, attaches `Bearer <session token>`, and
+    /// sends it through ``send(_:)`` — so it inherits the `CookielessSession`
+    /// policy (issue #99) and reports its outcome to the connectivity monitor like
+    /// every other auth request. Returns the raw response **without** a status
+    /// policy; each caller maps non-200 to its own typed error.
     private func sendDeviceAuthRequest(path: String, method: String, query: [URLQueryItem], body: Data?, token: String) async throws -> (Data, HTTPURLResponse) {
         var components = URLComponents(url: configuration.authBaseURL.appending(path: path), resolvingAgainstBaseURL: false)
         if !query.isEmpty { components?.queryItems = query }
@@ -980,7 +1038,7 @@ public final class AuthService {
         guard let http = response as? HTTPURLResponse else {
             throw AuthError.network(message: "Non-HTTP response")
         }
-        // No 401-retry loop here since a session token is not refreshable. If the token is rejected, we just return the response and the caller throws the mapped error.
+        // No 401 retry: a session token isn't refreshable (see the section comment).
         return (data, http)
     }
 }

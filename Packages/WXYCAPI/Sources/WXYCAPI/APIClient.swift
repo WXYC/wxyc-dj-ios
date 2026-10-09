@@ -148,7 +148,7 @@ public final class APIClient: Sendable {
     /// don't observe connectivity). Kept actor-free here; `AppDependencies`
     /// supplies a closure that hops to `ConnectivityMonitor` on the main actor.
     private let onOutcome: (@Sendable (Bool) -> Void)?
-    
+
     public init(
         configuration: WXYCAPIConfiguration,
         session: any RequestSession = URLSession.shared,
@@ -160,7 +160,7 @@ public final class APIClient: Sendable {
         self.authService = authService
         self.onOutcome = onOutcome
     }
-    
+
     public func searchLibrary(artist: String?, title: String?, limit: Int = 25) async throws -> [AlbumSearchResult] {
         var items: [URLQueryItem] = []
         if let artist, !artist.isEmpty { items.append(URLQueryItem(name: "artist_name", value: artist)) }
@@ -168,7 +168,7 @@ public final class APIClient: Sendable {
         items.append(URLQueryItem(name: "n", value: String(limit)))
         return try await getJSON("/library/", query: items)
     }
-    
+
     public func albumInfo(albumId: Int) async throws -> AlbumInfo {
         try await getJSON("/library/info", query: [URLQueryItem(name: "album_id", value: String(albumId))])
     }
@@ -200,7 +200,7 @@ public final class APIClient: Sendable {
         }
         return try await getJSON("/proxy/metadata/album", query: items)
     }
-    
+
     /// GET /library/catalog — the full catalog bulk export (BS#1468) the
     /// on-device Spotlight clone mirrors. Conditional GET: pass the
     /// `Last-Modified` string from the previous successful fetch as
@@ -242,7 +242,6 @@ public final class APIClient: Sendable {
         }
     }
 
-
     /// The DJ's bin, newest server truth. The response is a **bare array** of
     /// denormalized library rows (api.yaml `BinLibraryDetails`), not an
     /// envelope object — the DJ is identified by the bearer token, so nothing
@@ -281,26 +280,18 @@ public final class APIClient: Sendable {
     public func addToBin(albumId: Int, trackTitle: String? = nil) async throws {
         let body = try JSONCoders.encoder.encode(AddToBinRequest(albumId: albumId, trackTitle: trackTitle))
         _ = try await sendRaw(path: "/djs/bin", method: "POST", query: [], body: body)
-
     }
-    
+
     public func removeFromBin(albumId: Int, trackTitle: String? = nil) async throws {
         var items = [URLQueryItem(name: "album_id", value: String(albumId))]
         if let trackTitle { items.append(URLQueryItem(name: "track_title", value: trackTitle)) }
         _ = try await sendRaw(path: "/djs/bin", method: "DELETE", query: items, body: nil)
     }
-    
+
     private func getJSON<T: Decodable>(_ path: String, query: [URLQueryItem]) async throws -> T {
         let data = try await sendRaw(path: path, method: "GET", query: query, body: nil)
         return try decode(T.self, from: data)
     }
-    
-    private func postJSON<B: Encodable, T: Decodable>(_ path: String, body: B) async throws -> T {
-        let encoded = try JSONCoders.encoder.encode(body)
-        let data = try await sendRaw(path: path, method: "POST", query: [], body: encoded)
-        return try decode(T.self, from: data)
-    }
-    
 
     private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         do {
@@ -359,11 +350,11 @@ public final class APIClient: Sendable {
             return "unrecognized decoding error"
         }
     }
-    
+
     private static func pathString(_ path: [any CodingKey]) -> String {
         path.map { $0.stringValue }.joined(separator: ".")
     }
-    
+
     /// Decode an inflated NDJSON body — one ``CatalogRow`` per line,
     /// `\n`-separated (the `GET /library/catalog` wire shape; see
     /// `catalog-export.service.ts` `serializeCatalogNdjson`). It is **not** a
@@ -392,14 +383,14 @@ public final class APIClient: Sendable {
         }
         return rows
     }
-    
+
     /// The JSON grammar's insignificant-whitespace bytes (space, tab, LF, CR;
     /// RFC 8259 §2). Used to skip blank NDJSON separator lines instead of
     /// handing them to `JSONDecoder`, which rejects a whitespace-only buffer.
     private static func isJSONWhitespace(_ byte: UInt8) -> Bool {
         byte == 0x20 || byte == 0x09 || byte == 0x0A || byte == 0x0D
     }
-    
+
     /// Map a non-success HTTP response to an `APIError`, decoding the server's
     /// `APIErrorResponse` message body when present. Shared by the 2xx-only
     /// ``sendRaw(path:method:query:body:)`` guard and ``catalog(ifModifiedSince:)``'s
@@ -410,7 +401,7 @@ public final class APIClient: Sendable {
         let message = (try? JSONCoders.decoder.decode(APIErrorResponse.self, from: body))?.message
         return .http(status: status, message: message)
     }
-    
+
     /// 2xx-only transport: returns the body for a successful response or throws
     /// `.http`/`.unauthorized`. Thin policy layer over ``perform(path:method:query:body:extraHeaders:isRetry:)``.
     private func sendRaw(path: String, method: String, query: [URLQueryItem], body: Data?) async throws -> Data {
@@ -420,7 +411,7 @@ public final class APIClient: Sendable {
         }
         return data
     }
-    
+
     /// Transport core shared by every typed method: attaches the bearer token,
     /// fires the request, and applies the one-shot `401` → `invalidateJWT` →
     /// retry. Returns the raw `(Data, HTTPURLResponse)` **without** imposing a
@@ -454,7 +445,7 @@ public final class APIClient: Sendable {
         }
         return (data, http)
     }
-    
+
     private func buildRequest(path: String, method: String, query: [URLQueryItem], body: Data?, token: String) throws -> URLRequest {
         var components = URLComponents(url: configuration.apiBaseURL.appending(path: path), resolvingAgainstBaseURL: false)
         if !query.isEmpty { components?.queryItems = query }
@@ -471,7 +462,7 @@ public final class APIClient: Sendable {
         }
         return request
     }
-    
+
     private func fire(_ request: URLRequest) async throws -> (Data, URLResponse) {
         do {
             let result = try await session.data(for: request)
@@ -509,7 +500,6 @@ public final class APIClient: Sendable {
         }
     }
 
-
     /// The classification shared by every site in this file that discards a
     /// raw, non-`APIError` transport error into this enum: ``fire(_:)``'s
     /// catch-all above, and ``currentJWT()``'s below (the lazy JWT-refresh
@@ -535,6 +525,4 @@ public final class APIClient: Sendable {
             throw Self.classifyTransportFailure(error)
         }
     }
-    
 }
-

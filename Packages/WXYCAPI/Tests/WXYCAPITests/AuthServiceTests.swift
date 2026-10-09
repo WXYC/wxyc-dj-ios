@@ -1371,7 +1371,11 @@ struct AuthServiceTests {
         // Assert that we used the session token, NOT the JWT
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer session-abc")
     }
-
+    
+    ///Removed the isMember / dj role stuff so this isn't really necessary right now
+    ///TO-DO: add back later if considering roles
+    /*
+     
     @Test func approveDeviceLacksDJRoleError() async throws {
         let session = StubRequestSession()
         let storage = InMemoryTokenStorage()
@@ -1392,6 +1396,9 @@ struct AuthServiceTests {
             #expect(error.code == .accessDenied)
         }
     }
+  
+     */
+    
     
     @Test func approveDeviceDoesNotRetryOn401AndAttachesSessionToken() async throws {
         let session = StubRequestSession()
@@ -1422,6 +1429,9 @@ struct AuthServiceTests {
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer session-abc")
     }
 
+    ///Safeguard in the case that the backend adds more error codes that aren't currently considered by the DeviceAuthError tests
+    ///creates a stubsession, auth session token, authservice ession, enqueues randome error and error_descriptions then verifies that
+    ///th DeviceAuthAction error returned a 400 with no error code
     @Test func approveDeviceReturnsUnknownErrorCode() async throws {
         let session = StubRequestSession()
         let storage = InMemoryTokenStorage()
