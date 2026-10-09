@@ -638,35 +638,45 @@ final class AppDependencies {
     }
 
     /// Tear down the deep-link surface on sign-out: dismiss the cover, drop any
-    /// park **and any queued swap**, and bump ``presentationToken`` so an
-    /// in-flight ``present(_:parked:)`` — one whose `resolveRoute` was still
-    /// suspended when sign-out landed — bows out instead of re-presenting an
-    /// album over `LoginView`. The queue is cleared synchronously, before the
-    /// `deepLink = nil` here triggers the cover's `onDismiss`, so that drain
-    /// finds nothing to replay (issue #126).
+    /// park **and any link held behind a Close**, and bump
+    /// ``presentationToken`` so an in-flight ``present(_:parked:)`` — one whose
+    /// `resolveRoute` was still suspended when sign-out landed — bows out
+    /// instead of re-presenting an album over `LoginView`. The held link is
+    /// dropped synchronously, so the `onDismiss` this dismissal triggers finds
+    /// nothing to present (issue #126).
     private func invalidateDeepLink() {
         presentationToken += 1
-        router.queued = nil
+        router.dismissal = nil
         router.deepLink = nil
         router.pending = nil
     }
 
-    /// Drain an album queued behind a cover's dismissal (issue #126). RootView
-    /// calls this from the deep-link cover's `onDismiss`, which SwiftUI invokes
-    /// for a programmatic dismissal as well as the DJ's Close tap — so this is
-    /// what turns ``present(_:parked:)``'s `deepLink = nil` into the
-    /// queued album's presentation. A Close with nothing queued is a no-op.
-    ///
-    /// The queued presentation records `parked: false`: it waited on a
-    /// dismissal, not on sign-in, which is all `parked` means.
+    /// The DJ closed the deep-link cover. RootView's cover binding calls this
+    /// when SwiftUI writes `nil` back, which it does only for a dismissal of a
+    /// presented cover (the Close button's `dismiss()`), never for a swap or a
+    /// programmatic `deepLink = nil`. So ``Router/dismissal`` is set only for a
+    /// cover that is on screen, whose `onDismiss` will fire and clear it.
+    func closeDeepLinkCover() {
+        deepLinkLog.info("Deep-link cover closed by the DJ")
+        router.deepLink = nil
+        router.dismissal = CoverDismissal()
+    }
+
+    /// The deep-link cover finished dismissing (issue #126). RootView calls this
+    /// from the cover's `onDismiss`. After the DJ's Close it ends the dismissal
+    /// and presents a link that arrived during the animation, keeping that
+    /// link's `parked` flag. After a swap or a sign-out there is no dismissal
+    /// in progress, so it does nothing.
     func deepLinkCoverDidDismiss() async {
-        guard let request = router.queued else { return }
-        router.queued = nil
-        await present(request, parked: false)
+        guard let dismissal = router.dismissal else { return }
+        router.dismissal = nil
+        guard let next = dismissal.next else { return }
+        await present(next, parked: dismissal.nextParked)
     }
 
     /// Resolve `albumID` to a route and present it — the single resolve→present
-    /// step both deep-link entry points funnel through. `resolveRoute`'s `await`
+    /// step every deep-link path funnels through: an immediate signed-in link,
+    /// a parked replay, and a link held behind the DJ's Close. `resolveRoute`'s `await`
     /// releases the main actor (a clone lookup can queue behind a multi-second
     /// `CatalogRefreshService` store replace), so two presentations can be in
     /// flight at once: a parked replay racing a fresh tap, or a sign-out landing
@@ -676,48 +686,46 @@ final class AppDependencies {
     /// clobber a just-tapped one (or strand over `LoginView`).
     ///
     /// `parked` (issue #108) is passed through from the caller rather than
-    /// inferred here — `handleSpotlightTap` (an immediate signed-in tap) and
-    /// the `handleAuthChange` replay (a tap that had to wait on `Router.pending`)
-    /// are the only two callers, and they already know which one they are.
-    /// Recorded only when a route is actually presented (a re-tap of the
-    /// album already showing, a tap queued behind a dismissal, and a token
-    /// bow-out from a superseded resolve all fire no event — none is a genuine
-    /// new deep-link open; the queued tap records when its drain presents it).
+    /// inferred here, because each caller already knows whether its link
+    /// waited on sign-in. The event is recorded when a route is presented, and
+    /// for a link from a different source landing on the album already showing
+    /// (the button worked; the DJ is on its album). A same-source repeat of the
+    /// album showing, a link held behind a Close, and a token bow-out from a
+    /// superseded resolve record nothing; the held link records when the
+    /// dismissal presents it.
     private func present(_ request: DeepLinkRequest, parked: Bool) async {
-        let albumID = request.albumID
-        // Issue #126: a tap for a different album while a cover is showing
-        // swaps the cover rather than being refused (#118 item 2's interim
-        // fix). It cannot be done by writing `deepLink` in place: `nil` and the
-        // new route in one main-actor turn coalesce under Observation, so
-        // SwiftUI's body only ever sees the final value and no dismissal is
-        // observed. Instead the album is queued, the dismissal starts here, and
-        // the cover's `onDismiss` drains the queue through
-        // `deepLinkCoverDidDismiss()`. Nothing ever writes a non-nil route over
-        // a non-nil one, so no SwiftUI identity-swap behaviour is relied on.
-        if let current = router.deepLink {
-            // A re-tap of the album already showing changes nothing.
-            guard current.id != albumID else { return }
-            router.queued = request
-            // Any resolve still in flight is now stale.
-            presentationToken += 1
-            router.deepLink = nil
-            return
-        }
-        // A dismissal is already under way: replace what waits behind it
-        // rather than presenting mid-dismissal and stranding the earlier id.
-        if router.queued != nil {
-            router.queued = request
+        if let current = router.deepLink, current.id == request.albumID {
+            // A duplicate delivery or re-tap changes nothing. A different
+            // source reaching the album already open still counts as its open.
+            if current.source != request.source {
+                recordOpened(request.source, cloneHit: current.route.fallback != nil, parked: parked)
+            }
             return
         }
         presentationToken += 1
         let token = presentationToken
-        let route = await resolveRoute(albumID: albumID)
+        let route = await resolveRoute(albumID: request.albumID)
         // A newer tap/sign-out bumped the token while we were resolving; bow out
         // so its fresher outcome is the one that lands.
         guard token == presentationToken else { return }
+        // The DJ's Close is animating the cover out: hold the link for the
+        // cover's `onDismiss` rather than presenting into the dismissal. A
+        // newer link replaces an older held one.
+        if router.dismissal != nil {
+            router.dismissal = CoverDismissal(next: request, nextParked: parked)
+            return
+        }
+        // Issue #126: a different album while a cover is showing is written
+        // straight over it. `fullScreenCover(item:)` dismisses the current
+        // cover and presents the new one when the item's identity changes, so
+        // there is no queue to strand.
         router.deepLink = PresentedDeepLink(route: route, source: request.source)
-        let cloneHit = route.fallback != nil
-        switch request.source {
+        recordOpened(request.source, cloneHit: route.fallback != nil, parked: parked)
+    }
+
+    /// Record the opened event for a deep link's source.
+    private func recordOpened(_ source: DeepLinkSource, cloneHit: Bool, parked: Bool) {
+        switch source {
         case .spotlight:
             analytics.capture(SpotlightDeeplinkOpenedEvent(cloneHit: cloneHit, parked: parked))
         case .listenerApp:
