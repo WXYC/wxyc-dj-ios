@@ -526,7 +526,7 @@ struct RouterDeepLinkTests {
         defer { Self.cleanup(url) }
         try await #require(deps.catalogStore).replace(rows: [Self.dogaRow()], lastModified: nil)
 
-        await deps.handleListenerAppLink(albumID: 100, isSignedIn: false)
+        await deps.handleDeepLink(albumID: 100, isSignedIn: false, source: .listenerApp)
         #expect(deps.router.pending == DeepLinkRequest(albumID: 100, source: .listenerApp))
 
         await deps.handleAuthChange(wasSignedIn: false, isSignedIn: true)
@@ -546,7 +546,7 @@ struct RouterDeepLinkTests {
         defer { Self.cleanup(url) }
         try await #require(deps.catalogStore).replace(rows: [Self.dogaRow()], lastModified: nil)
 
-        await deps.handleListenerAppLink(albumID: 100, isSignedIn: true)
+        await deps.handleDeepLink(albumID: 100, isSignedIn: true, source: .listenerApp)
 
         let presented = try #require(deps.router.deepLink)
         #expect(presented.source == .listenerApp)
@@ -568,7 +568,7 @@ struct RouterDeepLinkTests {
         )
 
         await deps.handleSpotlightTap(albumID: 100, isSignedIn: true)
-        await deps.handleListenerAppLink(albumID: 200, isSignedIn: true)
+        await deps.handleDeepLink(albumID: 200, isSignedIn: true, source: .listenerApp)
 
         let presented = try #require(deps.router.deepLink)
         #expect(presented.id == 200)
@@ -587,7 +587,7 @@ struct RouterDeepLinkTests {
         try await #require(deps.catalogStore).replace(rows: [Self.dogaRow()], lastModified: nil)
 
         await deps.handleSpotlightTap(albumID: 100, isSignedIn: true)
-        await deps.handleListenerAppLink(albumID: 100, isSignedIn: true)
+        await deps.handleDeepLink(albumID: 100, isSignedIn: true, source: .listenerApp)
 
         #expect(deps.router.deepLink?.source == .spotlight)
         #expect(analytics.captures.map(\.name) == ["spotlight_deeplink_opened", "listener_app_link_opened"])
@@ -602,8 +602,8 @@ struct RouterDeepLinkTests {
         defer { Self.cleanup(url) }
         try await #require(deps.catalogStore).replace(rows: [Self.dogaRow()], lastModified: nil)
 
-        await deps.handleListenerAppLink(albumID: 100, isSignedIn: true)
-        await deps.handleListenerAppLink(albumID: 100, isSignedIn: true)
+        await deps.handleDeepLink(albumID: 100, isSignedIn: true, source: .listenerApp)
+        await deps.handleDeepLink(albumID: 100, isSignedIn: true, source: .listenerApp)
 
         #expect(analytics.captures.count == 1)
     }

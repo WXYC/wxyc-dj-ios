@@ -24,10 +24,10 @@ public enum DJAppLink {
 
     /// The catalog album id in `wxycdj://album/<id>`, or `nil` for anything
     /// else. Scheme and host compare case-insensitively (both are, per RFC
-    /// 3986); the id must be ASCII digits only, positive, and fit in `Int`.
-    /// Like ``CatalogSpotlight/albumID(from:)``, this rejects the leading
-    /// `+`/`-` that `Int(_:)` would accept. Nothing may ride along with the id
-    /// — no further path, query, fragment, user, or port.
+    /// 3986); the id must be ASCII digits only (`CatalogID.decimal`, shared
+    /// with ``CatalogSpotlight/albumID(from:)``), positive, and fit in `Int`.
+    /// Nothing may ride along with the id — no further path, query, fragment,
+    /// user, or port.
     public static func albumID(from url: URL) -> Int? {
         guard url.scheme?.lowercased() == scheme,
               url.host()?.lowercased() == albumHost,
@@ -36,10 +36,7 @@ public enum DJAppLink {
         else { return nil }
         let path = url.path(percentEncoded: true)
         guard path.hasPrefix("/") else { return nil }
-        let digits = path.dropFirst()
-        guard !digits.isEmpty, digits.allSatisfy({ $0.isASCII && $0.isNumber }),
-              let albumID = Int(digits), albumID > 0
-        else { return nil }
+        guard let albumID = CatalogID.decimal(path.dropFirst()), albumID > 0 else { return nil }
         return albumID
     }
 }

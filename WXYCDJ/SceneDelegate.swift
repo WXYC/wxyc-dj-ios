@@ -46,9 +46,7 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate {
         for activity in connectionOptions.userActivities {
             handle(activity)
         }
-        for context in connectionOptions.urlContexts {
-            handle(context.url)
-        }
+        handle(connectionOptions.urlContexts)
     }
 
     /// Warm continuation: the app was already running when the DJ tapped a
@@ -60,30 +58,32 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate {
     /// Warm open: the app was already running when the listener app opened a
     /// `wxycdj://album/<id>` link (issue #186).
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
-        for context in URLContexts {
-            handle(context.url)
+        handle(URLContexts)
+    }
+
+    /// Forward `wxycdj://` URLs to the shared composition root, which parses
+    /// and routes each (or ignores it if malformed).
+    private func handle(_ contexts: Set<UIOpenURLContext>) {
+        for context in contexts {
+            forward("Listener-app link") { await $0.handleListenerAppURL(context.url) }
         }
     }
 
-    /// Forward a `wxycdj://` URL to the shared composition root, which parses
-    /// and routes it (or ignores it if malformed).
-    private func handle(_ url: URL) {
-        guard let dependencies = Self.appDependencies else {
-            deepLinkLog.error("Listener-app link dropped: no AppDependencies on the app delegate")
-            return
-        }
-        Task { await dependencies.handleListenerAppURL(url) }
-    }
-
-    /// Forward an activity to the shared composition root. Reaches it through
-    /// ``appDependencies`` so the scene and the BGTask handler share one
-    /// `AppDependencies` (and one `Router`/`CatalogRefreshService`).
+    /// Forward a Spotlight activity to the shared composition root.
     private func handle(_ activity: NSUserActivity) {
+        forward("Spotlight continuation") { await $0.handleSpotlightContinuation(activity) }
+    }
+
+    /// Run `work` against the shared composition root, reached through
+    /// ``appDependencies`` so the scene and the BGTask handler share one
+    /// `AppDependencies` (and one `Router`/`CatalogRefreshService`). Logs and
+    /// drops the delivery if it can't be reached.
+    private func forward(_ what: StaticString, _ work: @escaping @MainActor (AppDependencies) async -> Void) {
         guard let dependencies = Self.appDependencies else {
-            deepLinkLog.error("Spotlight continuation dropped: no AppDependencies on the app delegate")
+            deepLinkLog.error("\(what, privacy: .public) dropped: no AppDependencies on the app delegate")
             return
         }
-        Task { await dependencies.handleSpotlightContinuation(activity) }
+        Task { await work(dependencies) }
     }
 
     /// The shared composition root the scene forwards to, read through

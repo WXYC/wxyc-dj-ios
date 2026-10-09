@@ -176,36 +176,62 @@ struct BinItemRemovedEvent: AnalyticsEvent {
 
 /// Answers: is the Spotlight index (issue #19 step 3, #36's delta-reindex
 /// reshape) earning its complexity?
-struct SpotlightDeeplinkOpenedEvent: AnalyticsEvent {
+struct SpotlightDeeplinkOpenedEvent: DeepLinkOpenedEvent {
     static let name = "spotlight_deeplink_opened"
-    /// Whether the on-device clone had a row for the tapped id, i.e. whether
-    /// the header rendered instantly via `CatalogRow.detailFallback` rather
-    /// than waiting on `/library/info`.
     let cloneHit: Bool
-    /// Whether this presentation came from a tap that had to be parked
-    /// (`Router.pending`, issue #19 step 7) and replayed once auth resolved,
-    /// as opposed to an immediate signed-in tap.
     let parked: Bool
-
-    var properties: [String: AnalyticsPropertyValue] {
-        ["clone_hit": .bool(cloneHit), "parked": .bool(parked)]
-    }
 }
 
 /// Answers: do DJs use the listener app's "Open in WXYC DJ" button (issue
 /// #186)? A name of its own rather than a `source` on
 /// `spotlight_deeplink_opened`, which keeps that event's meaning for existing
 /// dashboards — and this project, shared with dj-site, tells events apart by
-/// name. Same two properties, same meanings.
-struct ListenerAppLinkOpenedEvent: AnalyticsEvent {
+/// name. Same two properties, same meanings, through ``DeepLinkOpenedEvent``.
+struct ListenerAppLinkOpenedEvent: DeepLinkOpenedEvent {
     static let name = "listener_app_link_opened"
-    /// Whether the on-device clone had a row for the linked id.
     let cloneHit: Bool
-    /// Whether the link had to be parked until sign-in resolved.
     let parked: Bool
+}
 
+/// The properties every deep-link opened event carries, defined once so the
+/// events can't drift apart. Each conforming type supplies only its name.
+protocol DeepLinkOpenedEvent: AnalyticsEvent {
+    init(cloneHit: Bool, parked: Bool)
+    /// Whether the on-device clone had a row for the linked id, i.e. whether
+    /// the header rendered instantly via `CatalogRow.detailFallback` rather
+    /// than waiting on `/library/info`.
+    var cloneHit: Bool { get }
+    /// Whether the link had to be parked (`Router.pending`, issue #19 step 7)
+    /// and replayed once auth resolved, as opposed to an immediate signed-in
+    /// link.
+    var parked: Bool { get }
+}
+
+extension DeepLinkOpenedEvent {
     var properties: [String: AnalyticsPropertyValue] {
         ["clone_hit": .bool(cloneHit), "parked": .bool(parked)]
+    }
+}
+
+extension DeepLinkSource {
+    /// The opened event for a link from this source. A total switch, so a new
+    /// source has to name its event here.
+    func openedEvent(cloneHit: Bool, parked: Bool) -> any AnalyticsEvent {
+        switch self {
+        case .spotlight: SpotlightDeeplinkOpenedEvent(cloneHit: cloneHit, parked: parked)
+        case .listenerApp: ListenerAppLinkOpenedEvent(cloneHit: cloneHit, parked: parked)
+        }
+    }
+}
+
+extension AlbumDetailOrigin {
+    /// The `album_detail_viewed` origin for a deep link's source. A total
+    /// switch, so a new source can't silently file its views under Spotlight.
+    init(_ source: DeepLinkSource) {
+        switch source {
+        case .spotlight: self = .spotlight
+        case .listenerApp: self = .listenerApp
+        }
     }
 }
 

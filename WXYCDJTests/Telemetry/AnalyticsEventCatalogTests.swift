@@ -339,11 +339,14 @@ struct ListenerAppLinkVocabularyTests {
     }
 
     @Test(arguments: [
-        (DeepLinkSource.spotlight, AlbumDetailOrigin.spotlight),
-        (DeepLinkSource.listenerApp, AlbumDetailOrigin.listenerApp),
+        (DeepLinkSource.spotlight, AlbumDetailOrigin.spotlight, "spotlight_deeplink_opened"),
+        (DeepLinkSource.listenerApp, AlbumDetailOrigin.listenerApp, "listener_app_link_opened"),
     ])
-    func coverOriginFollowsTheSource(source: DeepLinkSource, origin: AlbumDetailOrigin) {
-        #expect(DeepLinkAlbumCover.origin(for: source) == origin)
+    func eachSourceMapsToItsOriginAndOpenedEvent(source: DeepLinkSource, origin: AlbumDetailOrigin, eventName: String) {
+        #expect(AlbumDetailOrigin(source) == origin)
+        let event = source.openedEvent(cloneHit: true, parked: false)
+        #expect(type(of: event).name == eventName)
+        #expect(event.properties == ["clone_hit": .bool(true), "parked": .bool(false)])
     }
 }
 
