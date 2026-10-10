@@ -46,20 +46,24 @@ final class DeviceAuthViewModel {
     init(auth: AuthService) {
         self.auth = auth
     }
-    /// Checks user role
-    /*
+
+    /// Whether the signed-in account's decoded JWT role is `member`, which
+    /// the server never lets approve.
+    ///
+    /// A member is stopped before *any* device-auth request, not just
+    /// approve: verify claims the code for the caller, and deny is terminal,
+    /// so either would lock a real DJ out of the same QR for its 5-minute
+    /// window. Every other case — another role, a missing role claim, the
+    /// issue-#53 pending-JWT window, signed out — is `false` and left to the
+    /// server's `403 access_denied`. See `DeviceAuthRoleGate` for why.
     var isMember: Bool {
-        if case .signedIn(let payload) = auth.state {
-            //TO-DO: there could be a lot of different roles like stationmanager or dj or member, so for now I'm just
-            //considering the case where the role is nil
-            return payload?.role?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() != nil
-        }
-        return false
+        guard case .signedIn(let payload) = auth.state else { return false }
+        return DeviceAuthRoleGate.isMember(role: payload?.role)
     }
-    */
-        
-        //TO-DO: Add a member verification thing using the authservice?
-        
+
+    /// Copy for a member who reached the approve or deny path anyway.
+    nonisolated static let memberBlockedMessage = "Your account can’t approve this. Approving requires a DJ role."
+
         /*
         
         func updateUserProfile(role: String?, username: String? = nil) {
@@ -80,6 +84,9 @@ final class DeviceAuthViewModel {
             case verifying
             /// Verify reported the code `pending`; Approve and Reject are offered.
             case readyToApprove
+            /// The account is a member: no request was sent, and only Close is
+            /// offered, so the code stays approvable by a real DJ.
+            case memberBlocked
             /// Approve succeeded; carries the success toast copy.
             case approved(String)
             /// The scan or the code can't be acted on (unreadable QR, invalid or
@@ -112,6 +119,8 @@ final class DeviceAuthViewModel {
             /// the server says the code is `pending`, it may already be consumed.
             case verifying
             case request(userCode: String, approveError: String?)
+            /// The member denial card: no Approve, no Reject, only Close.
+            case memberDenied
         }
 
         nonisolated static func sheetContent(
@@ -120,6 +129,9 @@ final class DeviceAuthViewModel {
             approveError: String?,
             fallbackMessage: String
         ) -> SheetContent {
+            if workflowState == .memberBlocked {
+                return .memberDenied
+            }
             if case .approved(let toast) = workflowState {
                 return .approved(toast: toast)
             }
@@ -147,7 +159,7 @@ final class DeviceAuthViewModel {
         /// "An unexpected error occurred".
         nonisolated static func actionFailureMessage(for error: any Error) -> String {
             switch error {
-            case let e as DeviceAuthActionError:
+            case let e as DeviceAuthActionFailure:
                 switch (e.status, e.code) {
                 case (401, .unauthorized):
                     return "You’re not signed in."
@@ -198,8 +210,13 @@ final class DeviceAuthViewModel {
         ///   need it), or `nil` when nothing could be parsed — in which case
         ///   `workflowState` becomes `.unrecognized("Could not read QR code.")`.
         ///   Verify runs in an unstructured task, so `workflowState` is still
-        ///   `.verifying` when this returns.
+        ///   `.verifying` when this returns. For a member, returns `nil`,
+        ///   sets `.memberBlocked`, and sends nothing — see `isMember`.
         func processCode(scannedCode: String?) -> String? {
+            if isMember {
+                self.workflowState = .memberBlocked
+                return nil
+            }
             guard let code = scannedCode else {
                 self.workflowState = .unrecognized("Could not read QR code.")
                 return nil
@@ -218,8 +235,8 @@ final class DeviceAuthViewModel {
         /// Approves the browser sign-in for `userCode`.
         ///
         /// No device-owner check (Face ID / passcode) runs first — a deliberate
-        /// decision recorded in ADR 0002's amendments; the phone being signed in
-        /// is the only gate on the app side.
+        /// decision recorded in ADR 0002's amendments. The app-side gate is the
+        /// role: a member gets `memberBlockedMessage` with no request sent.
         ///
         /// Clears `approveError` first, so a retry never shows the previous
         /// attempt's failure while it is in flight. On success moves
@@ -231,13 +248,10 @@ final class DeviceAuthViewModel {
         ///   view renders from state, the return value is for tests and callers
         ///   that want it).
         func approve(userCode: String) async -> String {
-            //ADD isMember variable to class once you figure out the token situation
-            // TO-DO: add back in if we end up doing
-            /*
             if isMember {
-                return "Your account can’t approve this. Approving requires a DJ role."
+                approveError = Self.memberBlockedMessage
+                return Self.memberBlockedMessage
             }
-            */
             approveError = nil
             do {
                 _ = try await auth.approveDevice(userCode: userCode)
@@ -257,18 +271,16 @@ final class DeviceAuthViewModel {
         /// copy as a toast whether the call succeeded or failed.
         ///
         /// - Returns: "Rejected — browser session was not started" on success, or
-        ///   `actionFailureMessage(for:)`'s copy on failure.
+        ///   `actionFailureMessage(for:)`'s copy on failure. A member gets
+        ///   `memberBlockedMessage` and no request: deny is terminal, and a
+        ///   member rejecting would kill the code for the DJ it was meant for.
         func deny(userCode: String) async -> String {
+            if isMember {
+                return Self.memberBlockedMessage
+            }
             do {
                 _ = try await auth.denyDevice(userCode: userCode)
-                // "Closed" was the member-only wording, paired with the member
-                // sheet's "Close" button. With the role gate removed every DJ sees
-                // "Reject", so the toast says "Rejected" to match.
                 return "Rejected — browser session was not started"
-                
-                /*
-                return isMember ? "Closed — browser session was not started" : "Rejected — browser session was not started"
-                 */
             } catch {
                 return Self.actionFailureMessage(for: error)
             }
@@ -291,7 +303,7 @@ final class DeviceAuthViewModel {
                 }
                 requestDate = Date()
                 workflowState = .readyToApprove
-            } catch let e as DeviceAuthVerifyError {
+            } catch let e as DeviceAuthVerifyFailure {
                 switch (e.status, e.code) {
                 case (400, .invalidRequest), (400, .expiredToken):
                     workflowState = .unrecognized("This code is invalid or expired. Ask for a fresh QR.")

@@ -29,7 +29,7 @@ struct DeviceAuthViewModelTests {
         )
     }
 
-    private static func makeAuth(session: StubRequestSession, role: String = "dj") async throws -> AuthService {
+    private static func makeAuth(session: StubRequestSession, role: String? = "dj") async throws -> AuthService {
         let storage = InMemoryTokenStorage()
         try storage.save("session-abc", for: .sessionToken)
         let auth = AuthService(configuration: WXYCAPIConfiguration.localDevelopment, storage: storage, session: session)
@@ -58,24 +58,92 @@ struct DeviceAuthViewModelTests {
         #expect(Self.renderedSheet(viewModel, userCode: userCode) == .approved(toast: "Approved — browser session started"))
     }
     
-    /*
-    //TO-DO: add back in when we pay attention to dj roles
-    @Test func approveMemberRoleGateBlockedLocally() async throws {
+    // MARK: - Member role gate
+
+    /// `nil` = a decoded token with no role claim, which may be a transient
+    /// membership-lookup failure at mint time — the server decides.
+    @Test(arguments: ["dj", "musicDirector", "stationManager", nil] as [String?])
+    func nonMemberRolesAreNotBlocked(role: String?) async throws {
         let session = StubRequestSession()
-        let auth = try await DeviceAuthViewModelTests.makeAuth(session: session, role: "member")
+        let auth = try await Self.makeAuth(session: session, role: role)
+        #expect(Self.makeViewModel(auth).isMember == false)
+    }
+
+    @Test func memberRoleIsBlocked() async throws {
+        let session = StubRequestSession()
+        let auth = try await Self.makeAuth(session: session, role: "member")
+        #expect(Self.makeViewModel(auth).isMember == true)
+    }
+
+    /// Issue-#53 pending-JWT window: role unknown, so the phone doesn't
+    /// guess — the server's 403 decides.
+    @Test func pendingJWTWindowIsNotAMember() async throws {
+        // A sign-in whose JWT leg fails transiently is what enters the window
+        // (a cold-launch restore with no grace anchor signs out instead).
+        let session = StubRequestSession()
+        let auth = AuthService(configuration: WXYCAPIConfiguration.localDevelopment, storage: InMemoryTokenStorage(), session: session)
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, headers: ["set-auth-token": "session-abc"]))
+        session.enqueue(StubRequestSession.Stub(statusCode: 503, body: Data(#"{"error":"boom"}"#.utf8)))
+        await auth.signIn(identifier: "juana", password: "hunter2")
+        try #require(auth.state == .signedIn(payload: nil))
+
+        #expect(Self.makeViewModel(auth).isMember == false)
+    }
+
+    /// Catches: a member's scan reaching `GET /auth/device`, which would claim
+    /// the code and lock the DJ it was meant for out of it.
+    @Test func memberScanSendsNothingAndShowsDenialCard() async throws {
+        let session = StubRequestSession()
+        let auth = try await Self.makeAuth(session: session, role: "member")
         let viewModel = Self.makeViewModel(auth)
         let baseline = session.recordedRequests.count
-        
-        #expect(viewModel.isMember == true)
-        
-        let userCode = "ABCD-1234"
-        let message = await viewModel.approve(userCode: userCode)
-        
-        #expect(message == "Your account can’t approve this. Approving requires a DJ role.")
+
+        let userCode = viewModel.processCode(scannedCode: "https://dj.wxyc.org/device-auth?user_code=ABCD-1234")
+        await Task.yield()
+
+        #expect(userCode == nil)
+        #expect(viewModel.workflowState == .memberBlocked)
+        #expect(Self.renderedSheet(viewModel, userCode: userCode) == .memberDenied)
         #expect(session.recordedRequests.count == baseline)
     }
-    */
-    
+
+    @Test func approveMemberRoleGateBlockedLocally() async throws {
+        let session = StubRequestSession()
+        let auth = try await Self.makeAuth(session: session, role: "member")
+        let viewModel = Self.makeViewModel(auth)
+        let baseline = session.recordedRequests.count
+
+        let message = await viewModel.approve(userCode: "ABCD-1234")
+
+        #expect(message == DeviceAuthViewModel.memberBlockedMessage)
+        #expect(viewModel.approveError == DeviceAuthViewModel.memberBlockedMessage)
+        #expect(session.recordedRequests.count == baseline)
+    }
+
+    /// Deny is terminal server-side; a member must never send it.
+    @Test func denyMemberRoleGateBlockedLocally() async throws {
+        let session = StubRequestSession()
+        let auth = try await Self.makeAuth(session: session, role: "member")
+        let viewModel = Self.makeViewModel(auth)
+        let baseline = session.recordedRequests.count
+
+        let message = await viewModel.deny(userCode: "ABCD-1234")
+
+        #expect(message == DeviceAuthViewModel.memberBlockedMessage)
+        #expect(session.recordedRequests.count == baseline)
+    }
+
+    @Test func memberBlockedStateRendersDenialCardEvenWithUserCode() {
+        let content = DeviceAuthViewModel.sheetContent(
+            workflowState: .memberBlocked,
+            userCode: "ABCD-1234",
+            approveError: nil,
+            fallbackMessage: "Unknown code"
+        )
+        #expect(content == .memberDenied)
+    }
+
+
     @Test func approveAccessDeniedError403() async throws {
         let session = StubRequestSession()
         let auth = try await DeviceAuthViewModelTests.makeAuth(session: session)
@@ -210,11 +278,12 @@ struct DeviceAuthViewModelTests {
 
     @Test func actionFailureMessageCoversEveryArm() {
         let map = DeviceAuthViewModel.actionFailureMessage(for:)
-        #expect(map(DeviceAuthActionError(status: 401, code: .unauthorized)) == "You’re not signed in.")
-        #expect(map(DeviceAuthActionError(status: 403, code: .accessDenied)) == "Your account can’t approve this. Approving requires a DJ role.")
-        #expect(map(DeviceAuthActionError(status: 400, code: .invalidRequest)) == "This code is invalid or expired. Ask for a fresh QR.")
-        #expect(map(DeviceAuthActionError(status: 400, code: .expiredToken)) == "This code is invalid or expired. Ask for a fresh QR.")
-        #expect(map(DeviceAuthActionError(status: 500, code: nil)) == "Unknown error. Try again later.")
+        #expect(map(DeviceAuthActionFailure(status: 401, code: .unauthorized)) == "You’re not signed in.")
+        #expect(map(DeviceAuthActionFailure(status: 403, code: .accessDenied)) == "Your account can’t approve this. Approving requires a DJ role.")
+        #expect(map(DeviceAuthActionFailure(status: 400, code: .invalidRequest)) == "This code is invalid or expired. Ask for a fresh QR.")
+        #expect(map(DeviceAuthActionFailure(status: 400, code: .expiredToken)) == "This code is invalid or expired. Ask for a fresh QR.")
+        #expect(map(DeviceAuthActionFailure(status: 500, code: nil)) == "Unknown error. Try again later.")
+        #expect(map(DeviceAuthActionFailure(status: 400, code: .unknownDefaultOpenApi)) == "Unknown error. Try again later.")
         // No session token: thrown before any request, so it is not a network error.
         #expect(map(AuthError.notSignedIn) == "You’re not signed in.")
         #expect(map(AuthError.network(message: "Non-HTTP response")) == "Network error. Try again later.")
@@ -242,23 +311,6 @@ struct DeviceAuthViewModelTests {
     @Test func denySuccessForDJ() async throws {
         let session = StubRequestSession()
         let auth = try await DeviceAuthViewModelTests.makeAuth(session: session)
-        let viewModel = Self.makeViewModel(auth)
-        let baseline = session.recordedRequests.count
-        
-        let userCode = "ABCD-1234"
-        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success": true}"#.utf8)))
-        
-        let message = await viewModel.deny(userCode: userCode)
-        
-        #expect(message == "Rejected — browser session was not started")
-        #expect(session.recordedRequests.count == baseline + 1)
-    }
-    
-    /// Roles no longer affect the approve/deny sheet, so a member's reject
-    /// reads exactly like a DJ's.
-    @Test func denySuccessForMember() async throws {
-        let session = StubRequestSession()
-        let auth = try await DeviceAuthViewModelTests.makeAuth(session: session, role: "member")
         let viewModel = Self.makeViewModel(auth)
         let baseline = session.recordedRequests.count
         

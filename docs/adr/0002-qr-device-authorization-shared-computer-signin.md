@@ -44,7 +44,7 @@ The paragraph above says iOS calls the device route "carrying the DJ's Bearer JW
 
 The paragraph above names `/device/verify` as the phone's call. The route the plugin exposes, and api.yaml declares, is `GET /auth/device`; approval itself is `POST /auth/device/approve` (and rejection `POST /auth/device/deny`). That lookup answers `200` for a code that is already approved or denied, so a 2xx alone does not mean the code can be approved: two DJs at the control-room computer, the first approves, the browser hasn't navigated yet, the second scans the same QR and receives `{status: "approved"}`. The phone therefore shows "already approved" / "already rejected" for those statuses, fails closed on a status it doesn't recognize, and shows no Approve button until the lookup has answered.
 
-### Amendment 3 — the role gate is enforced by the server only
+### Amendment 3 — the role gate is enforced by the server only (superseded by Amendment 5)
 
 **Decision: the phone performs no client-side role check; `member` accounts are refused by the server's `403 access_denied` on approve, which the phone renders as "Approving requires a DJ role."**
 
@@ -57,3 +57,16 @@ An earlier iOS build decoded the role from the JWT and showed members a disabled
 This reverses the `LAContext.evaluatePolicy(.deviceOwnerAuthentication, …)` gate in the Consequences above, and with it the third item under "Verification needed before shipping" (the biometric prompt firing on every Approve), which no longer applies. `NSFaceIDUsageDescription` is accordingly not declared (closing [#167](https://github.com/WXYC/wxyc-dj-ios/issues/167) as won't-fix rather than as a missing key).
 
 What this gives up is the walked-away-phone mitigation: anyone holding the DJ's unlocked phone with the app signed in can approve a browser sign-in as that DJ. What still bounds it: the phone's own lock screen, the server's `dj`-and-above role gate, the 5-minute device-code window, and the 12-hour session lifetime. If walked-away approvals are ever observed, re-adding the gate is a contained change in front of `DeviceAuthViewModel.approve(userCode:)`.
+
+### Amendment 5 — the phone gates members before any device-auth request
+
+**Decision: this supersedes Amendment 3. When the decoded JWT role is exactly `member`, `DeviceAuthViewModel.isMember` stops the phone before it sends verify, approve, or deny. The sheet shows a "Sign-in requires DJ role" card with only a Close button, and Close sends nothing. Every other case is left to the server's `403 access_denied`, which remains the authority.**
+
+Amendment 3 assumed a member's attempt costs nothing because the server refuses approve. It does cost something, because of the claim mechanics. `GET /auth/device` binds the row to the scanning user (better-auth's `routes.mjs`), and approve requires the claimant to be the approver. The server's S1 reset (`applyDeviceApproveRoleGate` clearing the claim) only runs on a rejected *approve*. So a member who scans and then closes the sheet without tapping Approve leaves the code claimed by an account that can never approve it. A member who taps Reject is worse, because deny is terminal. Either way the DJ at the control-room computer is locked out until the code's 5-minute window expires. Stopping the member client-side is the only point that comes before the claim.
+
+**The phone checks for `member`; it does not keep a list of allowed roles.** The server's rule is "every role in `WXYCRoles` except `member`", and the phone cannot read `WXYCRoles` at runtime. `WXYCAPI.DeviceAuthRoleGate` therefore blocks only the one role the server is certain to refuse. It compares the raw string exactly, as the server's `row.role === 'member'` does, with no case folding or aliasing. A role later added to `WXYCRoles` then works on the phone as soon as Backend-Service deploys; a list of allowed roles would block it until an App Store release. Two cases are left to the server on purpose:
+
+- **A missing role claim.** `buildJwtPayload` omits `role` both when the user has no membership and when the membership lookup threw at mint time. The approve gate re-reads the role live, so treating `nil` as a member could block a real DJ until the next JWT mint.
+- **An unrecognized role string, or a role changed after the JWT was minted.** These are rare, and the server's 403 rejects them.
+
+The cost is that those cases still claim the code before the server refuses them. That is accepted as the price of never blocking an eligible approver on the phone.

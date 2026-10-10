@@ -36,15 +36,8 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>WXYC DJ uses the camera to scan the QR code shown on the dj.wxyc.org sign-in screen.</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>WXYC DJ connects to a development server on your local network.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -64,9 +57,5 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<key>WXYCAPIBaseURL</key>
-	<string>http://meiras-macbook-pro-54.local:8080</string>
-	<key>WXYCAuthBaseURL</key>
-	<string>http://meiras-macbook-pro-54.local:8082/auth</string>
 </dict>
 </plist>

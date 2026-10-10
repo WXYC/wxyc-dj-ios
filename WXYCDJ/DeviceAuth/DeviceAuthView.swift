@@ -65,6 +65,13 @@ struct DeviceAuthView: View {
                     ProgressView()
                 case .request(let code, let approveError):
                     content(for: viewModel, with: code, approveError: approveError)
+                case .memberDenied:
+                    DeviceAuthMemberDeniedView {
+                        // No deny call: deny is terminal, and the code must
+                        // stay approvable by a DJ.
+                        onDismissWithToast?("Closed — browser session was not started", "amber")
+                        dismiss()
+                    }
                 }
             } else {
                 ProgressView()
@@ -96,69 +103,41 @@ struct DeviceAuthView: View {
         
     @ViewBuilder
     private func content(for viewModel: DeviceAuthViewModel, with userCode: String, approveError: String?) -> some View {
-        VStack(spacing: 16) {
-            // Top Header Section: Icon, Domain, and Context Metadata
-            HStack(spacing: 14) {
+        VStack(spacing: 20) {
+            Spacer()
+
+            // Header: icon, title, and request age, centered like the
+            // error and success cards.
+            VStack(spacing: 12) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .fill(LinearGradient(colors: [Color.blue, Color(red: 0.35, green: 0.78, blue: 0.98)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .frame(width: 48, height: 48)
-                    
+                        .frame(width: 72, height: 72)
+
                     Image(systemName: "globe")
-                        .font(.system(size: 24))
+                        .font(.system(size: 36))
                         .foregroundStyle(.white)
                 }
-                
-                VStack(alignment: .leading, spacing: 2) {
+
+                VStack(spacing: 6) {
                     //ADD hostDomain later if there's a way to access that information
                    /*
                     Text(viewModel.hostDomain)
                         .font(.system(size: 19, weight: .bold))
                         .foregroundStyle(.primary)
                     */
+                    Text("Browser sign-in request")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(.primary)
+
                     //TO-DO: Add browser info, such as Macbook pro · Firefox"
                     Text("Requested \(elapsedSeconds)s ago")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                
-                Spacer()
-            }
-            .padding(.top, 16)
-            
-            Divider()
-            
-            /*
-            
-            if viewModel.isMember {
-                // Member Denial Card (Flow 3)
-                VStack(spacing: 10) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.red.opacity(0.12))
-                            .frame(width: 52, height: 52)
-                        
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 24))
-                            .foregroundStyle(.red)
-                    }
-                    
-                    Text("Sign-in requires DJ role")
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundStyle(.primary)
-                    
-                    Text("Your account is a Member. Only DJs, Music Directors, and station staff can authorize browser sign-in on the control-room computer.")
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 8)
                 }
-                .padding(14)
-                .background(Color(uiColor: .systemBackground))
-                .clipShape(.rect(cornerRadius: 14))
             }
-            
-            */
+            .multilineTextAlignment(.center)
+
             //TO-DO:
             // User Profile Section
             /*
@@ -212,7 +191,10 @@ struct DeviceAuthView: View {
                     Divider()
                     permissionRow(title: "Edit your personal bin")
                 }
-                .padding(.horizontal, 4)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 4)
+                .background(Color(uiColor: .secondarySystemBackground))
+                .clipShape(.rect(cornerRadius: 14))
            // }
             
             Spacer()
@@ -259,7 +241,7 @@ struct DeviceAuthView: View {
             }
             .padding(.bottom, 16)
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 24)
     }
 
     private func approveFailureNote(_ text: String) -> some View {
@@ -336,6 +318,55 @@ struct DeviceAuthErrorView: View {
                 dismiss()
             } label: {
                 Text("Dismiss")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(Color(uiColor: .systemGray5))
+                    .clipShape(.rect(cornerRadius: 14))
+            }
+            .padding(.bottom, 16)
+        }
+        .padding(.horizontal, 24)
+    }
+}
+
+/// The member denial card: the signed-in account's role is `member`, so the
+/// sheet offers neither Approve nor Reject — only
+/// Close, which sends nothing. See `DeviceAuthViewModel.isMember`.
+struct DeviceAuthMemberDeniedView: View {
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Spacer()
+
+            ZStack {
+                Circle()
+                    .fill(Color.red.opacity(0.12))
+                    .frame(width: 72, height: 72)
+
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 36))
+                    .foregroundStyle(.red)
+            }
+
+            VStack(spacing: 8) {
+                Text("Sign-in requires DJ role")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(.primary)
+
+                Text("Your account is a Member. Only DJs, Music Directors, and station staff can authorize browser sign-in on the control-room computer.")
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 16)
+            }
+
+            Spacer()
+
+            Button(action: onClose) {
+                Text("Close")
                     .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(.primary)
                     .frame(maxWidth: .infinity)

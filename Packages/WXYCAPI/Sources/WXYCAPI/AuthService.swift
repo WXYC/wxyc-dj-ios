@@ -932,12 +932,13 @@ public final class AuthService {
     ///   ``DeviceCodeParser/userCode(fromScanned:)``.
     /// - Returns: The server's `{success: true}` acknowledgement.
     /// - Throws: ``AuthError/notSignedIn`` before any request when there is no
-    ///   session token. ``DeviceAuthActionError`` for any non-200 answer, carrying
+    ///   session token. ``DeviceAuthActionFailure`` for any non-200 answer, carrying
     ///   the HTTP status and the decoded `error` code — `401 unauthorized` (session
     ///   rejected), `403 access_denied` (the server's role gate: approving requires
     ///   `dj` or above), `400 invalid_request` / `expired_token` (bad or consumed
-    ///   code). An unrecognized `error` string decodes to `code: nil` with the
-    ///   status preserved, never a decode failure. A transport failure rethrows the
+    ///   code). An unrecognized `error` string decodes to `.unknownDefaultOpenApi`
+    ///   and a missing or unparseable body to `code: nil`, with the status
+    ///   preserved either way — never a decode failure. A transport failure rethrows the
     ///   underlying `URLError` untouched.
     public func approveDevice(userCode: String) async throws -> DeviceAuthActionResponse {
         guard let token = sessionToken else { throw AuthError.notSignedIn }
@@ -948,13 +949,7 @@ public final class AuthService {
         case 200:
             return try JSONCoders.decoder.decode(DeviceAuthActionResponse.self, from: data)
         default:
-            // `try?`: an unparseable body still throws a typed error, just with
-            // `code: nil` — the status alone distinguishes 401 from 403.
-            let envelope = try? JSONCoders.decoder.decode(DeviceAuthActionErrorEnvelope.self, from: data)
-            throw DeviceAuthActionError(
-                status: http.statusCode,
-                code: envelope.flatMap { DeviceAuthActionErrorCode(rawValue: $0.error) }
-            )
+            throw DeviceAuthActionFailure(status: http.statusCode, body: data)
         }
     }
     
@@ -976,11 +971,7 @@ public final class AuthService {
         case 200:
             return try JSONCoders.decoder.decode(DeviceAuthActionResponse.self, from: data)
         default:
-            let envelope = try? JSONCoders.decoder.decode(DeviceAuthActionErrorEnvelope.self, from: data)
-            throw DeviceAuthActionError(
-                status: http.statusCode,
-                code: envelope.flatMap { DeviceAuthActionErrorCode(rawValue: $0.error) }
-            )
+            throw DeviceAuthActionFailure(status: http.statusCode, body: data)
         }
     }
     
@@ -995,8 +986,9 @@ public final class AuthService {
     /// - Returns: The code echoed back with its status: `pending`, `approved`,
     ///   `denied`, or `.unknownDefaultOpenApi` for a value this build doesn't know.
     /// - Throws: ``AuthError/notSignedIn`` with no session token;
-    ///   ``DeviceAuthVerifyError`` for any non-200 answer (`400 invalid_request` /
-    ///   `expired_token`, or `code: nil` for anything unrecognized); a transport
+    ///   ``DeviceAuthVerifyFailure`` for any non-200 answer (`400 invalid_request` /
+    ///   `expired_token`, `.unknownDefaultOpenApi` for an unrecognized code, or
+    ///   `code: nil` for a missing or unparseable body); a transport
     ///   `URLError` untouched.
     public func verifyDevice(userCode: String) async throws -> DeviceAuthVerifyResponse {
         guard let token = sessionToken else { throw AuthError.notSignedIn }
@@ -1006,11 +998,7 @@ public final class AuthService {
         case 200:
             return try JSONCoders.decoder.decode(DeviceAuthVerifyResponse.self, from: data)
         default:
-            let envelope = try? JSONCoders.decoder.decode(DeviceAuthVerifyErrorEnvelope.self, from: data)
-            throw DeviceAuthVerifyError(
-                status: http.statusCode,
-                code: envelope.flatMap { DeviceAuthVerifyErrorCode(rawValue: $0.error) }
-            )
+            throw DeviceAuthVerifyFailure(status: http.statusCode, body: data)
         }
     }
 
