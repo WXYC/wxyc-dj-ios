@@ -1346,4 +1346,168 @@ struct AuthServiceTests {
         }
         #expect(service.state == .signedOut)
     }
+
+    // MARK: - Device Auth (QR Sign-In)
+
+    @Test func approveSuccess() async throws {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+        // restore session to get state into .signedIn
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)))
+        await service.restoreSession()
+
+        // fake response for approve
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"success": true}"#.utf8)))
+        
+        let userCode = "ABCD-1234"
+        let result = try await service.approveDevice(userCode: userCode)
+
+        let request = session.recordedRequests.last!
+        let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+        #expect(body.contains("\"userCode\":\"\(userCode)\""))
+        
+        // Assert that we used the session token, NOT the JWT
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer session-abc")
+    }
+    
+    /// The server's role gate: a 403 must reach the app as `access_denied`
+    /// with its status, distinct from a 401.
+    @Test func approveDeviceLacksDJRoleError() async throws {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)))
+        await service.restoreSession()
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 403, body: Data(#"{"error": "access_denied", "error_description": "Caller lacks the dj role."}"#.utf8)))
+
+        let userCode = "ABCD-1234"
+
+        do {
+            _ = try await service.approveDevice(userCode: userCode)
+            Issue.record("Expected approveDevice to throw an error, but it succeeded.")
+        } catch let error as DeviceAuthActionFailure {
+            #expect(error.status == 403)
+            #expect(error.code == .accessDenied)
+        }
+    }
+    
+    
+    @Test func approveDeviceDoesNotRetryOn401AndAttachesSessionToken() async throws {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)))
+        await service.restoreSession()
+
+        // Send a 401. If it was retrying, it would consume another stub (which isn't there, so it'd throw network error, or we could enqueue a success and see if it fails).
+        // Since we only enqueue one 401, if it doesn't retry, it just throws DeviceAuthActionFailure.
+        let errorBody = Data(#"{"error": "unauthorized", "error_description": "Caller not signed in."}"#.utf8)
+        session.enqueue(StubRequestSession.Stub(statusCode: 401, body: errorBody))
+
+        let userCode = "ABCD-1234"
+
+        do {
+            _ = try await service.approveDevice(userCode: userCode)
+            Issue.record("Expected approveDevice to throw an error, but it succeeded.")
+        } catch let error as DeviceAuthActionFailure {
+            #expect(error.status == 401)
+            #expect(error.code == .unauthorized)
+        }
+        
+        // Ensure only the auth restore and the single approve call were made. No retry.
+        #expect(session.recordedRequests.count == 2)
+        let request = session.recordedRequests.last!
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer session-abc")
+    }
+
+    /// A code the server adds later must not fail the decode: the vendored enum
+    /// is `CaseIterableDefaultsLast`, so it lands on `.unknownDefaultOpenApi`
+    /// with the status preserved.
+    @Test func approveDeviceReturnsUnknownErrorCode() async throws {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)))
+        await service.restoreSession()
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 400, body: Data(#"{"error": "weather", "error_description": "Some reason."}"#.utf8)))
+
+        let userCode = "ABCD-1234"
+
+        do {
+            _ = try await service.approveDevice(userCode: userCode)
+            Issue.record("Expected approveDevice to throw an error, but it succeeded.")
+        } catch let error as DeviceAuthActionFailure {
+            #expect(error.status == 400)
+            #expect(error.code == .unknownDefaultOpenApi)
+        }
+    }
+
+    /// A body that isn't the error schema (proxy HTML, empty) still throws a
+    /// typed failure, with `code: nil` and the status intact.
+    @Test func approveDeviceUnparseableBodyKeepsStatus() async throws {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)))
+        await service.restoreSession()
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 502, body: Data("<html>Bad Gateway</html>".utf8)))
+
+        do {
+            _ = try await service.approveDevice(userCode: "ABCD-1234")
+            Issue.record("Expected approveDevice to throw an error, but it succeeded.")
+        } catch let error as DeviceAuthActionFailure {
+            #expect(error.status == 502)
+            #expect(error.code == nil)
+        }
+    }
+
+    @Test func verifyDeviceReturnsUnknownErrorCode() async throws {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)))
+        await service.restoreSession()
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 400, body: Data(#"{"error": "weather", "error_description": "Some reason."}"#.utf8)))
+
+        do {
+            _ = try await service.verifyDevice(userCode: "ABCD-1234")
+            Issue.record("Expected verifyDevice to throw an error, but it succeeded.")
+        } catch let error as DeviceAuthVerifyFailure {
+            #expect(error.status == 400)
+            #expect(error.code == .unknownDefaultOpenApi)
+        }
+    }
+
+    @Test func verifySuccess() async throws {
+        let session = StubRequestSession()
+        let storage = InMemoryTokenStorage()
+        try storage.save("session-abc", for: .sessionToken)
+        let service = AuthService(configuration: Self.config, storage: storage, session: session)
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{"token":"\#(Fixtures.jwt())"}"#.utf8)))
+        await service.restoreSession()
+
+        let userCode = "ABCD-1234"
+
+        session.enqueue(StubRequestSession.Stub(statusCode: 200, body: Data(#"{ "user_code": "\#(userCode)", "status": "pending" }"#.utf8)))
+        
+        let result = try await service.verifyDevice(userCode: userCode)
+
+        #expect(result.status == .pending)
+
+        let request = session.recordedRequests.last!
+        #expect(request.httpMethod == "GET")
+        #expect(request.url!.query?.contains("user_code=\(userCode)") == true)
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer session-abc")
+    }
 }

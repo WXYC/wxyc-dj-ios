@@ -762,4 +762,5 @@ struct APIClientTests {
 
         #expect(recorder.values.isEmpty)
     }
+    
 }

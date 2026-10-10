@@ -117,12 +117,14 @@ enum Fixtures {
     static let catalogNDJSON =
         #"{"id":100,"artist_name":"Juana Molina","album_title":"DOGA","code_letters":"MOL","code_number":12,"code_artist_number":1,"label":"Sonamos","genre_name":"Rock","format_name":"CD","on_streaming":true,"plays":34,"artwork_url":"https://img.discogs.com/doga.jpg","rotation_bin":"H","rotation_kill_date":"2026-07-01"}"#
 
-    /// JWT with payload {"sub":"42","email":"juana@wxyc.org","role":"dj","exp": <Date>}.
-    /// Signature is a placeholder; the client doesn't verify it.
-    static func jwt(expiresIn seconds: TimeInterval = 600) -> String {
+    /// JWT with payload {"sub":"42","email":"juana@wxyc.org","role": role,"exp": <Date>}.
+    /// A `nil` role omits the claim, as the server does when it finds no
+    /// `auth_member` row (or the lookup fails) at mint time. Signature is a placeholder; the client doesn't verify it.
+    static func jwt(role: String? = "dj", expiresIn seconds: TimeInterval = 600) -> String {
         let exp = Int(Date().addingTimeInterval(seconds).timeIntervalSince1970)
         let header = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
-        let payloadJSON = #"{"sub":"42","email":"juana@wxyc.org","role":"dj","exp":\#(exp)}"#
+        let roleClaim = role.map { #""role":"\#($0)","# } ?? ""
+        let payloadJSON = #"{"sub":"42","email":"juana@wxyc.org",\#(roleClaim)"exp":\#(exp)}"#
         let payload = Data(payloadJSON.utf8).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
