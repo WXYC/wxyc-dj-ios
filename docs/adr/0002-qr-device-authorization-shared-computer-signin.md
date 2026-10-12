@@ -25,3 +25,48 @@ Scope: QR sign-in is restricted to `dj` and above (Music Directors, Station Mana
 - **Phone JWT refresh** is handled by the existing `APIClient` 401-retry pattern — if the phone's JWT is stale at scan time, the silent JWT-exchange retry kicks in transparently. If refresh also fails (refresh token expired), the user is prompted to re-sign-in with username/password. No new code path for QR specifically.
 - **Reversibility.** Decision is reversible — pulling the `device-authorization` plugin retires the three endpoints and the schema migration is one-table forward. Cost of reverting grows with adoption: DJs trained on QR who lose the path would feel the regression. The 12-hour session expiry, role gate, and biometric gate are all configurable post-ship without protocol changes.
 - **Verification needed before shipping.** End-to-end manual test on staging dj.wxyc.org with: one MD account, one DJ account, and one `member` account — confirming the role gate rejects `member` cleanly, the 12-hour expiry triggers as expected, and the biometric prompt fires on every Approve.
+
+## Amendments (iOS `qr-signin` implementation)
+
+The mechanism paragraph above was written before the iOS approver was built. Three of its statements about the iOS side turned out wrong in implementation; this section records what shipped and why, without changing the decision itself (QR is a transfer from an already-signed-in phone, approve is server-gated to `dj`+, the QR session lasts 12 hours).
+
+### Amendment 1 — the phone authenticates the device routes with its session token, not its JWT
+
+**Decision: `approveDevice` / `denyDevice` / `verifyDevice` live on `AuthService` and send `Authorization: Bearer <session token>`. They are not `APIClient` methods.**
+
+The paragraph above says iOS calls the device route "carrying the DJ's Bearer JWT", and the Consequences bullet on phone JWT refresh relies on `APIClient`'s 401-retry. Both were implemented that way first, and every approve failed with `401` against production ([#164](https://github.com/WXYC/wxyc-dj-ios/issues/164)). `/auth/device/*` are better-auth routes resolved via `getSessionFromCtx`, which needs the session; better-auth's `bearer()` plugin verifies the header value as an HMAC pair (`verify(secret, token.split(".")[0], token.split(".")[1])`). A JWT is `header.payload.signature`, signed asymmetrically against JWKS, so that check compares the payload against `HMAC(secret, header)`, fails, installs no session, and the route answers `UNAUTHORIZED`. The session token — which `AuthService` captures from `set-auth-token` and keeps `private` — is what the plugin accepts, so the three methods moved to the type that holds it.
+
+**There is no 401 retry on these routes.** A session token is not refreshable, so a retry cannot succeed and only doubles requests against a rate-limited endpoint. A rejected session surfaces to the DJ as "You're not signed in." The Consequences bullet about phone JWT refresh does not apply to QR approval.
+
+### Amendment 2 — the status lookup is `GET /auth/device`, and its `200` is not an approval check
+
+**Decision: before offering Approve, the phone calls `GET /auth/device?user_code=…` and offers Approve only when `status == "pending"`.**
+
+The paragraph above names `/device/verify` as the phone's call. The route the plugin exposes, and api.yaml declares, is `GET /auth/device`; approval itself is `POST /auth/device/approve` (and rejection `POST /auth/device/deny`). That lookup answers `200` for a code that is already approved or denied, so a 2xx alone does not mean the code can be approved: two DJs at the control-room computer, the first approves, the browser hasn't navigated yet, the second scans the same QR and receives `{status: "approved"}`. The phone therefore shows "already approved" / "already rejected" for those statuses, fails closed on a status it doesn't recognize, and shows no Approve button until the lookup has answered.
+
+### Amendment 3 — the role gate is enforced by the server only (superseded by Amendment 5)
+
+**Decision: the phone performs no client-side role check; `member` accounts are refused by the server's `403 access_denied` on approve, which the phone renders as "Approving requires a DJ role."**
+
+An earlier iOS build decoded the role from the JWT and showed members a disabled Approve button. That duplicated a server-side gate with a client-side guess (role aliases are canonicalized server-side), so it was removed. The Scope paragraph's rule — QR sign-in restricted to `dj` and above — is unchanged; only where it is enforced is clarified. (The Scope paragraph places the rejection at `/device/verify`; in practice it is the approve call that returns `403`.)
+
+### Amendment 4 — no device-owner check on Approve
+
+**Decision: Approve runs no Face ID / Touch ID / passcode prompt. A signed-in phone tapping Approve is sufficient.**
+
+This reverses the `LAContext.evaluatePolicy(.deviceOwnerAuthentication, …)` gate in the Consequences above, and with it the third item under "Verification needed before shipping" (the biometric prompt firing on every Approve), which no longer applies. `NSFaceIDUsageDescription` is accordingly not declared (closing [#167](https://github.com/WXYC/wxyc-dj-ios/issues/167) as won't-fix rather than as a missing key).
+
+What this gives up is the walked-away-phone mitigation: anyone holding the DJ's unlocked phone with the app signed in can approve a browser sign-in as that DJ. What still bounds it: the phone's own lock screen, the server's `dj`-and-above role gate, the 5-minute device-code window, and the 12-hour session lifetime. If walked-away approvals are ever observed, re-adding the gate is a contained change in front of `DeviceAuthViewModel.approve(userCode:)`.
+
+### Amendment 5 — the phone gates members before any device-auth request
+
+**Decision: this supersedes Amendment 3. When the decoded JWT role is exactly `member`, `DeviceAuthViewModel.isMember` stops the phone before it sends verify, approve, or deny. The sheet shows a "Sign-in requires DJ role" card with only a Close button, and Close sends nothing. Every other case is left to the server's `403 access_denied`, which remains the authority.**
+
+Amendment 3 assumed a member's attempt costs nothing because the server refuses approve. It does cost something, because of the claim mechanics. `GET /auth/device` binds the row to the scanning user (better-auth's `routes.mjs`), and approve requires the claimant to be the approver. The server's S1 reset (`applyDeviceApproveRoleGate` clearing the claim) only runs on a rejected *approve*. So a member who scans and then closes the sheet without tapping Approve leaves the code claimed by an account that can never approve it. A member who taps Reject is worse, because deny is terminal. Either way the DJ at the control-room computer is locked out until the code's 5-minute window expires. Stopping the member client-side is the only point that comes before the claim.
+
+**The phone checks for `member`; it does not keep a list of allowed roles.** The server's rule is "every role in `WXYCRoles` except `member`", and the phone cannot read `WXYCRoles` at runtime. `WXYCAPI.DeviceAuthRoleGate` therefore blocks only the one role the server is certain to refuse. It compares the raw string exactly, as the server's `row.role === 'member'` does, with no case folding or aliasing. A role later added to `WXYCRoles` then works on the phone as soon as Backend-Service deploys; a list of allowed roles would block it until an App Store release. Two cases are left to the server on purpose:
+
+- **A missing role claim.** `buildJwtPayload` omits `role` both when the user has no membership and when the membership lookup threw at mint time. The approve gate re-reads the role live, so treating `nil` as a member could block a real DJ until the next JWT mint.
+- **An unrecognized role string, or a role changed after the JWT was minted.** These are rare, and the server's 403 rejects them.
+
+The cost is that those cases still claim the code before the server refuses them. That is accepted as the price of never blocking an eligible approver on the phone.

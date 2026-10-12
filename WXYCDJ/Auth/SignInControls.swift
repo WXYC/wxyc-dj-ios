@@ -61,5 +61,10 @@ struct PrimaryActionButton: View {
             }
         }
         .disabled(!isEnabled)
+        // A Form row aligns its separator to the leading edge of its first
+        // text, which for a centered label is mid-row: the separator then
+        // starts under the title and makes the centered title read as shifted
+        // right. Pin it to the row's leading edge instead.
+        .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
     }
 }

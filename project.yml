@@ -154,6 +154,7 @@ targets:
         BGTaskSchedulerPermittedIdentifiers:
           - org.wxyc.dj.catalog.refresh
           - org.wxyc.dj.catalog.reindex
+        NSCameraUsageDescription: WXYC DJ uses the camera to scan the QR code shown on the dj.wxyc.org sign-in screen.
         # The listener app's "Open in WXYC DJ" button opens
         # wxycdj://album/<id> (issue #186). A custom scheme, not a universal
         # link: the button only renders once canOpenURL finds this app, so a
