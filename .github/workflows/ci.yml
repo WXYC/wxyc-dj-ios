@@ -1,10 +1,15 @@
 name: CI
 
+# Markdown-only changes skip this workflow: it runs on macOS, billed at a 10x
+# multiplier and rounded up to a whole minute, and a .md diff cannot change
+# what these jobs check (no Swift source or bundle resource reads one).
 on:
   pull_request:
     branches: [main]
+    paths-ignore: ['**/*.md']
   push:
     branches: [main]
+    paths-ignore: ['**/*.md']
   workflow_dispatch:
 
 concurrency:
