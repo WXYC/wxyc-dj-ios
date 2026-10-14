@@ -864,7 +864,7 @@ Test fixtures use WXYC-representative artists — Juana Molina / DOGA, Jessica P
 
 ## CI / pre-push checks
 
-Two workflows run on PRs: `.github/workflows/ci.yml` (every PR and push to `main`) and `.github/workflows/verify-api-types.yml` (only when the vendored tree, the contract pin, or either codegen script changes — see [Code generation](#code-generation-wxycapimodels)). The local pre-flight mirrors them — run these before opening a PR so CI minutes aren't wasted on red builds. The third command is needed **only if you touched `Packages/WXYCAPIModels/**` or `scripts/*-api-types.sh`**:
+Two workflows run on PRs: `.github/workflows/ci.yml` (every PR and push to `main`, except a change touching only Markdown files, which does not run it) and `.github/workflows/verify-api-types.yml` (only when the vendored tree, the contract pin, or either codegen script changes — see [Code generation](#code-generation-wxycapimodels)). The local pre-flight mirrors them — run these before opening a PR so CI minutes aren't wasted on red builds. The third command is needed **only if you touched `Packages/WXYCAPIModels/**` or `scripts/*-api-types.sh`**:
 
 ```bash
 # Xcode's Swift explicitly -- NOT a bare `swift`. CI runs this step with the
