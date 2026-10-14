@@ -1,15 +1,20 @@
 name: CI
 
-# Markdown-only changes skip this workflow: it runs on macOS, billed at a 10x
-# multiplier and rounded up to a whole minute, and a .md diff cannot change
-# what these jobs check (no Swift source or bundle resource reads one).
+# A change touching only Markdown at the repo root or under docs/ skips this
+# workflow: it runs on macOS, billed at a 10x multiplier and rounded up to a
+# whole minute, and such a diff cannot change what these jobs check. Markdown
+# anywhere else still runs it, because XcodeGen adds every file under a
+# target's source folder to the project as a resource, so Markdown there can
+# change the build. If Test & Build or Verify generated project ever becomes a
+# required check, revisit this filter: a required check from a skipped
+# workflow stays pending.
 on:
   pull_request:
     branches: [main]
-    paths-ignore: ['**/*.md']
+    paths-ignore: ['*.md', 'docs/**/*.md']
   push:
     branches: [main]
-    paths-ignore: ['**/*.md']
+    paths-ignore: ['*.md', 'docs/**/*.md']
   workflow_dispatch:
 
 concurrency:
