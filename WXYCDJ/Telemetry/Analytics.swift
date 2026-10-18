@@ -232,11 +232,24 @@ enum AnalyticsPrivacyAllowlist {
     /// data rather than SDK context, and why `personProfiles = .never` does
     /// not already cover them.
     static func filterNonSDKProperties(_ properties: [String: Any]) -> [String: Any] {
-        properties.filter { key, _ in
+        var filtered = properties.filter { key, _ in
             if personPayloadKeys.contains(key) { return false }
             return key.hasPrefix("$") || allowedKeys.contains(key) || sdkLifecycleKeys.contains(key)
         }
+        if let exceptionList = filtered[exceptionListKey] {
+            filtered[exceptionListKey] = TelemetryPrivacyScrub.scrub(exceptionList)
+        }
+        return filtered
     }
+
+    /// The one `$` key whose *value* is rewritten rather than passed through:
+    /// posthog-ios builds `$exception_list` from the error's description,
+    /// which can inline a failing request URL with its query string -- the
+    /// same channel ADR 0007 closes on the Sentry path. Every string leaf
+    /// (`value`, `type`, `module`, the `mechanism` dictionary, stack frames)
+    /// goes through ``TelemetryPrivacyScrub``, since the pinned SDK's shape
+    /// has no fixed set of URL-bearing fields to name.
+    static let exceptionListKey = "$exception_list"
 
     /// The three `$`-prefixed keys that are **person data**, not SDK context,
     /// and are therefore the one exception to the carve-out above.

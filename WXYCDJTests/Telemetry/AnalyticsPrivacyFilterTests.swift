@@ -113,6 +113,42 @@ struct AnalyticsPrivacyFilterTests {
         #expect(filtered.isEmpty)
     }
 
+    /// The shape is the pinned posthog-ios 3.69.10's
+    /// `PostHogExceptionProcessor`: `type`/`value`/`module`/`thread_id`, a
+    /// `mechanism` of `type`/`handled`/`synthetic`, and a `stacktrace`. It has
+    /// no `desc`/`data` like Sentry's mechanism, so every string leaf is
+    /// scrubbed rather than a list of named fields.
+    @Test("a URL's query and fragment inside $exception_list are scrubbed at every depth")
+    func exceptionListUrlsAreScrubbed() throws {
+        let filtered = AnalyticsPrivacyAllowlist.filterNonSDKProperties([
+            "$exception_list": [[
+                "type": "NSURLErrorDomain",
+                "value": "failed: https://api.wxyc.org/library/search?artist=Juana%20Molina#top, retry",
+                "mechanism": ["type": "generic", "handled": true, "synthetic": true],
+                "stacktrace": ["frames": [["function": "load https://wxyc.org/a?token=abc"]]],
+                "thread_id": 1,
+            ] as [String: Any]],
+        ])
+
+        let exception = try #require((filtered["$exception_list"] as? [[String: Any]])?.first)
+        #expect(exception["value"] as? String == "failed: https://api.wxyc.org/library/search, retry")
+        let frames = (exception["stacktrace"] as? [String: Any])?["frames"] as? [[String: Any]]
+        #expect(frames?.first?["function"] as? String == "load https://wxyc.org/a")
+        // Non-string leaves and query-free strings are untouched.
+        #expect(exception["type"] as? String == "NSURLErrorDomain")
+        #expect(exception["thread_id"] as? Int == 1)
+        #expect((exception["mechanism"] as? [String: Any])?["handled"] as? Bool == true)
+    }
+
+    @Test("other $-prefixed keys are not rewritten, even when their value holds a URL")
+    func otherDollarKeysAreUnchanged() {
+        let filtered = AnalyticsPrivacyAllowlist.filterNonSDKProperties([
+            "$current_url": "https://dj.wxyc.org/x?y=1",
+        ])
+
+        #expect(filtered["$current_url"] as? String == "https://dj.wxyc.org/x?y=1")
+    }
+
     @Test("no person-payload key is also an allowlisted or SDK-lifecycle key")
     func personPayloadKeysDoNotOverlapTheAllowlists() {
         // If one ever did, the exclusion above would silently start dropping a
