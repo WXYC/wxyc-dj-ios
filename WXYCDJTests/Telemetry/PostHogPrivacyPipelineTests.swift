@@ -336,6 +336,47 @@ struct PostHogPrivacyPipelineTests {
         }
     }
 
+    // MARK: - MetricKit hang diagnostics (issue #234)
+
+    /// A hang fixture whose attributed frame names a binary with a URL-shaped
+    /// name carrying a query string -- MetricKit never produces one, so the
+    /// scrub is what has to hold if it ever does.
+    private static let hangJSON = """
+    {"callStackTree": {"callStacks": [{"threadAttributed": true, "callStackRootFrames": [
+       {"binaryUUID": "AAAA", "offsetIntoBinaryTextSegment": 4096, "sampleCount": 1,
+        "binaryName": "https://api.wxyc.org/bins?\(queryString)", "address": 4300000000}]}]},
+     "diagnosticMetaData": {"appBuildVersion": "412"}}
+    """
+
+    @Test("a hang event keeps its non-$ properties through beforeSend and its string leaves are scrubbed")
+    func hangEventKeepsPropertiesAndScrubsLeaves() throws {
+        let event = try #require(MetricKitDiagnosticMapper.event(
+            kind: .hang,
+            json: Data(Self.hangJSON.utf8),
+            appBinaryName: "WXYCDJ",
+            period: DateInterval(start: Date(timeIntervalSince1970: 1_800_000_000), duration: 60),
+            hangDurationMilliseconds: 4_200
+        ))
+
+        let properties = try #require(TelemetryBootstrap.debugCaptureDiagnosticProperties(event, apiKey: Self.testAPIKey))
+
+        #expect(properties["source"] as? String == "metrickit")
+        #expect(properties["diagnostic_kind"] as? String == "hang")
+        #expect(properties["hang_duration_ms"] as? Int == 4_200)
+        #expect(properties["diagnostic_app_build"] as? Int == 412)
+        #expect(properties["diagnostic_period_start"] as? String == "2027-01-15T08:00:00Z")
+        #expect(properties["$exception_list"] != nil)
+        #expect(properties["$debug_images"] != nil)
+        #expect(properties["$process_person_profile"] as? Bool == false)
+
+        let strings = SerializedValueStrings.allStrings(in: properties)
+        // Positive control: the URL's scheme, host and path survive, so the walk found the scrubbed leaf.
+        #expect(strings.contains { $0.contains("api.wxyc.org/bins") })
+        for string in strings {
+            #expect(!string.contains(Self.queryString), "leaked a query string in: \(string)")
+        }
+    }
+
     @Test("PostHog crash and exception autocapture stays off while Sentry's crash handler is installed")
     func errorAutoCaptureIsOff() {
         #expect(TelemetryBootstrap.debugErrorAutoCaptureEnabled() == false)

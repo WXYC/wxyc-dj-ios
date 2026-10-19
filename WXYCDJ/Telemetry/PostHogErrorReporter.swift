@@ -31,6 +31,19 @@ struct PostHogErrorReporter: ErrorReporter {
         PostHogSDK.shared.captureException(reported, properties: Self.properties(context: context, extra: extra))
     }
 
+    /// Sends a MetricKit diagnostic as an `$exception` (issue #234). A second
+    /// entry point beside ``report(_:context:extra:)`` rather than a case of
+    /// it: that one takes an `Error` and rebuilds it from domain and code, so
+    /// it cannot carry hand-built frames. PostHog-only by design -- it is not
+    /// on `ErrorReporter` or `CompositeErrorReporter`, because Sentry has its
+    /// own hang tracking during the dual run. Fail-open like `report`: the SDK
+    /// call neither throws nor blocks, and is a no-op until the SDK starts.
+    /// The typed ``ExceptionEvent`` is the privacy contract; `beforeSend` is
+    /// the backstop that scrubs its string leaves.
+    func report(diagnostic: ExceptionEvent) {
+        PostHogSDK.shared.capture(ExceptionEvent.name, properties: diagnostic.properties)
+    }
+
     /// The `userInfo` keys ``sanitized(_:)`` carries over from the reported
     /// error. **Empty, and an allowlist rather than a denylist** (issue #233
     /// review): posthog-ios 3.69.10's `PostHogExceptionProcessor` reads

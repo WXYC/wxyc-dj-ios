@@ -211,6 +211,33 @@ struct AnalyticsPrivacyFilterTests {
 
         #expect(filtered[AnalyticsPrivacyAllowlist.errorExtraKey] == nil)
     }
+
+    // MARK: - Diagnostic keys (issue #234)
+
+    @Test("the MetricKit diagnostic keys survive on $exception and are dropped from any other event", arguments: [
+        (AnalyticsPrivacyAllowlist.exceptionEventName as String?, true),
+        (nil, false),
+        ("rogue_test_event", false),
+    ])
+    func diagnosticKeysAreAdmittedOnExceptionOnly(event: String?, survives: Bool) {
+        var properties: [String: Any] = ["$exception_level": "error"]
+        for key in AnalyticsPrivacyAllowlist.exceptionDiagnosticKeys {
+            properties[key] = 1
+        }
+
+        let filtered = AnalyticsPrivacyAllowlist.filterNonSDKProperties(properties, event: event)
+
+        #expect(filtered["$exception_level"] as? String == "error")
+        for key in AnalyticsPrivacyAllowlist.exceptionDiagnosticKeys {
+            #expect((filtered[key] != nil) == survives, "\(key)")
+        }
+    }
+
+    @Test("the diagnostic keys are disjoint from the catalog's keys, so an app event cannot reuse one")
+    func diagnosticKeysAreDisjointFromTheCatalog() {
+        #expect(AnalyticsPrivacyAllowlist.exceptionDiagnosticKeys.isDisjoint(with: AnalyticsPrivacyAllowlist.allowedKeys))
+        #expect(AnalyticsPrivacyAllowlist.exceptionDiagnosticKeys.isDisjoint(with: AnalyticsPrivacyAllowlist.errorReportKeys))
+    }
 }
 
 @Suite("TelemetryBootstrap.isRunningUnitTests")

@@ -289,6 +289,10 @@ enum TelemetryBootstrap {
         // test key, so nothing is lost by skipping the production start here.
         guard !isRunningUnitTests(environment: ProcessInfo.processInfo.environment) else { return }
         startAnalytics(apiKey: postHogAPIKey, host: productionHost)
+        // Issue #234: MetricKit hangs, through PostHogErrorReporter. After the
+        // SDK starts so the first delivery lands on a live instance, and
+        // behind the test guard above so CI never registers with MetricKit.
+        MetricKitSubscriber.shared.start()
     }
 
     /// Whether this process was launched by the test runner.
@@ -573,6 +577,24 @@ enum TelemetryBootstrap {
         startAnalytics(apiKey: apiKey, host: host)
 
         PostHogErrorReporter().report(error, context: context)
+        return lastAnalyticsEventProperties
+    }
+
+    /// Test-only hook (issue #234): sends `event` through a real
+    /// `PostHogErrorReporter().report(diagnostic:)` against a fresh SDK
+    /// instance and returns the `$exception` event's properties after
+    /// `beforeSend`. Same teardown and loopback host as
+    /// ``debugCaptureExceptionProperties(for:context:apiKey:host:)``.
+    static func debugCaptureDiagnosticProperties(
+        _ event: ExceptionEvent,
+        apiKey: String = "phc_test_00000000000000000000000000000000",
+        host: String = "http://127.0.0.1:9"
+    ) -> [String: Any]? {
+        lastAnalyticsEventProperties = nil
+        PostHogSDK.shared.close()
+        startAnalytics(apiKey: apiKey, host: host)
+
+        PostHogErrorReporter().report(diagnostic: event)
         return lastAnalyticsEventProperties
     }
 

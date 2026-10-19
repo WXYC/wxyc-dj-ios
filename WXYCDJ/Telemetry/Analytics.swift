@@ -226,6 +226,20 @@ enum AnalyticsPrivacyAllowlist {
     /// ``errorReportKeys`` may ride on.
     static let exceptionEventName = "$exception"
 
+    /// The non-`$` keys an ``ExceptionEvent`` (a MetricKit diagnostic, issue
+    /// #234) sends beyond `source`, which ``allowedKeys`` already admits.
+    /// Admitted **only** on ``exceptionEventName``, like ``errorReportKeys``
+    /// and for the same reason, and kept disjoint from ``allowedKeys`` so no
+    /// app event can reach the wire by reusing one. Every value is an `Int`
+    /// or a closed-enum string the event type builds, never call-site text.
+    static let exceptionDiagnosticKeys: Set<String> = [
+        "diagnostic_kind",
+        "hang_duration_ms",
+        "diagnostic_app_build",
+        "diagnostic_period_start",
+        "diagnostic_period_end",
+    ]
+
     /// Every key that may appear **inside** ``errorExtraKey``, after
     /// ``PostHogErrorReporter`` flattens an `.errorIdentity` to
     /// `<key>.domain` / `<key>.code`. `ErrorReporter`'s extra keys are
@@ -268,13 +282,15 @@ enum AnalyticsPrivacyAllowlist {
             if personPayloadKeys.contains(key) {
                 return false
             }
-            if errorReportKeys.contains(key) {
+            if errorReportKeys.contains(key) || exceptionDiagnosticKeys.contains(key) {
                 return isException
             }
             return key.hasPrefix("$") || allowedKeys.contains(key) || sdkLifecycleKeys.contains(key)
         }
-        if let exceptionList = filtered[exceptionListKey] {
-            filtered[exceptionListKey] = TelemetryPrivacyScrub.scrub(exceptionList)
+        for key in [exceptionListKey, debugImagesKey] {
+            if let value = filtered[key] {
+                filtered[key] = TelemetryPrivacyScrub.scrub(value)
+            }
         }
         if let extra = filtered[errorExtraKey] {
             let conforming = filterErrorExtra(extra)
@@ -314,6 +330,11 @@ enum AnalyticsPrivacyAllowlist {
     /// goes through ``TelemetryPrivacyScrub``, since the pinned SDK's shape
     /// has no fixed set of URL-bearing fields to name.
     static let exceptionListKey = "$exception_list"
+
+    /// `$debug_images` (issue #234) holds a binary's name beside its UUID and
+    /// load address, so it gets the same leaf-by-leaf scrub as the list it
+    /// accompanies rather than a pass-through under the `$` carve-out.
+    static let debugImagesKey = "$debug_images"
 
     /// The three `$`-prefixed keys that are **person data**, not SDK context,
     /// and are therefore the one exception to the carve-out above.
