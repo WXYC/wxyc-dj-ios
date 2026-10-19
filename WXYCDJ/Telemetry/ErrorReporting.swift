@@ -153,7 +153,9 @@ struct NoOpErrorReporter: ErrorReporter {
 /// both live while Sentry is phased out. Each member curates the error
 /// itself, so this hands them the original and holds no policy of its own.
 struct CompositeErrorReporter: ErrorReporter {
-    private let reporters: [any ErrorReporter]
+    /// Internal rather than private so the production-wiring test can check
+    /// the members ``AppDependencies/makeProductionErrorReporter()`` lists.
+    let reporters: [any ErrorReporter]
 
     init(_ reporters: [any ErrorReporter]) {
         self.reporters = reporters

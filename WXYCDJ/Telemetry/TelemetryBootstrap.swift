@@ -380,11 +380,13 @@ enum TelemetryBootstrap {
         // restating a default).
         config.sessionReplay = false
         config.surveys = false
-        // Sentry owns errors (issue #106); PostHog's own crash/exception
-        // autocapture stays off explicitly rather than resting on its
-        // already-`false` default, so a future SDK version can't quietly
-        // stand up a second, uncurated error-reporting pipeline alongside
-        // ADR 0007's. This local flag is authoritative: `getIntegrations()`
+        // Errors reach PostHog only through PostHogErrorReporter (issue #233),
+        // which curates and allowlist-strips each one; during the dual run
+        // Sentry's crash handler is still installed. PostHog's own
+        // crash/exception autocapture stays off explicitly rather than resting
+        // on its already-`false` default, so a future SDK version can't
+        // quietly stand up a second, uncurated error-reporting pipeline
+        // alongside ADR 0007's. This local flag is authoritative: `getIntegrations()`
         // only installs PostHogErrorTrackingAutoCaptureIntegration when it's
         // true, so the SDK's *remote* `errorTracking.autocaptureExceptions`
         // config can't switch it back on.
@@ -437,7 +439,7 @@ enum TelemetryBootstrap {
     private static func filterAnalyticsEvent(_ event: PostHogEvent) -> PostHogEvent? {
         var properties = event.properties
         properties["build_type"] = BuildEnvironment.current.rawValue
-        event.properties = AnalyticsPrivacyAllowlist.filterNonSDKProperties(properties)
+        event.properties = AnalyticsPrivacyAllowlist.filterNonSDKProperties(properties, event: event.event)
         #if DEBUG
         TelemetryBootstrap.lastAnalyticsEventProperties = event.properties
         #endif

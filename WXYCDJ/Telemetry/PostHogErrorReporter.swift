@@ -31,25 +31,38 @@ struct PostHogErrorReporter: ErrorReporter {
         PostHogSDK.shared.captureException(reported, properties: Self.properties(context: context, extra: extra))
     }
 
-    /// Drops the two `userInfo` channels posthog-ios's exception processor
-    /// reads that `TelemetryErrorClassification.curated` does not control:
-    /// `NSDebugDescriptionErrorKey` becomes `exception.value`, and the
-    /// `NSUnderlyingErrorKey` chain becomes one more entry in `$exception_list`
-    /// each, with its own debug description. The URL scrub on that list
-    /// (issue #232) strips query strings but cannot recognize free text, so
-    /// the chain does not go to the SDK at all. Domain and code -- what makes
-    /// a transport failure legible -- are kept, as is the rest of `userInfo`.
+    /// The `userInfo` keys ``sanitized(_:)`` carries over from the reported
+    /// error. **Empty, and an allowlist rather than a denylist** (issue #233
+    /// review): posthog-ios 3.69.10's `PostHogExceptionProcessor` reads
+    /// exactly three things off an `NSError` -- `NSDebugDescriptionErrorKey`
+    /// (becomes `exception.value`), `localizedDescription` (the fallback for
+    /// `exception.value`, which a native `NSError` or a `CustomNSError`
+    /// builds from free text in `NSLocalizedDescriptionKey` and its
+    /// siblings), and the `NSUnderlyingErrorKey` chain (one more
+    /// `$exception_list` entry each). Nothing else in `userInfo` is sent, so
+    /// a key here buys nothing unless it feeds one of those channels -- and a
+    /// key that does is a leak the #232 URL scrub cannot recognize. Adding a
+    /// member is a privacy review, not a convenience.
+    static let allowedUserInfoKeys: Set<String> = []
+
+    /// Rebuilds `error` from its domain and code alone, plus any
+    /// ``allowedUserInfoKeys``, and pins `NSDebugDescriptionErrorKey` to the
+    /// domain so posthog-ios's `exception.value` reads `"<domain> (Code:
+    /// <code>)"` rather than falling back to `localizedDescription`. Domain
+    /// and code -- what makes a transport failure legible -- are a developer
+    /// constant and an integer; no free text reaches the event.
     static func sanitized(_ error: any Error) -> NSError {
         let nsError = error as NSError
-        var userInfo = nsError.userInfo
-        userInfo.removeValue(forKey: NSUnderlyingErrorKey)
-        userInfo.removeValue(forKey: NSDebugDescriptionErrorKey)
+        var userInfo = nsError.userInfo.filter { key, _ in allowedUserInfoKeys.contains(key) }
+        userInfo[NSDebugDescriptionErrorKey] = nsError.domain
         return NSError(domain: nsError.domain, code: nsError.code, userInfo: userInfo)
     }
 
     /// The properties merged into the `$exception` event: the context, and the
     /// extras nested under one key (an `.errorIdentity` flattened to
-    /// `<key>.domain` / `<key>.code`, as the Sentry reporter does).
+    /// `<key>.domain` / `<key>.code`, as the Sentry reporter does). Each
+    /// flattened key must be on ``AnalyticsPrivacyAllowlist/errorExtraKeys``
+    /// or `beforeSend` drops it.
     static func properties(context: StaticString, extra: [String: TelemetryValue]) -> [String: Any] {
         var properties: [String: Any] = [AnalyticsPrivacyAllowlist.errorContextKey: "\(context)"]
         var nested: [String: Any] = [:]

@@ -216,15 +216,34 @@ enum AnalyticsPrivacyAllowlist {
     /// ``TelemetryValue`` extras nested under one key. A named set beside
     /// ``allowedKeys`` and ``sdkLifecycleKeys`` rather than a merge into
     /// either, so the event-catalog audit keeps meaning "keys this app's own
-    /// events emit"; the nesting is what keeps a call site's extra *keys*
-    /// from needing an entry each, since only their closed-enum values are
-    /// type-constrained.
+    /// events emit". Admitted **only** on ``exceptionEventName``: on any other
+    /// event they are dropped like any unreviewed key.
     static let errorContextKey = "error_context"
     static let errorExtraKey = "error_extra"
     static let errorReportKeys: Set<String> = [errorContextKey, errorExtraKey]
 
+    /// The event name posthog-ios's `captureException` emits, the one event
+    /// ``errorReportKeys`` may ride on.
+    static let exceptionEventName = "$exception"
+
+    /// Every key that may appear **inside** ``errorExtraKey``, after
+    /// ``PostHogErrorReporter`` flattens an `.errorIdentity` to
+    /// `<key>.domain` / `<key>.code`. `ErrorReporter`'s extra keys are
+    /// runtime `String`s, not `StaticString`s, so the type system cannot keep
+    /// a computed key out; this reviewed list is what does, exactly as
+    /// ``allowedKeys`` does for top-level keys. A call site's new extra key
+    /// is dropped until it is added here.
+    static let errorExtraKeys: Set<String> = [
+        "storeError.domain",
+        "storeError.code",
+    ]
+
     /// Filters `properties` to PostHog's own `$`-prefixed context, this
-    /// catalog's reviewed key set, or the reviewed SDK-lifecycle key set.
+    /// catalog's reviewed key set, or the reviewed SDK-lifecycle key set --
+    /// plus, on `$exception` only, ``errorReportKeys`` with ``errorExtraKey``'s
+    /// contents held to ``errorExtraKeys``. `event` defaults to `nil`, which
+    /// admits no error-report key, so a caller that forgets it loses those two
+    /// keys rather than widening the filter.
     ///
     /// Scoping to non-`$` keys is load-bearing, not incidental: PostHog's
     /// `beforeSend` runs over the *fully merged* property dict, after its
@@ -243,15 +262,48 @@ enum AnalyticsPrivacyAllowlist {
     /// its doc comment for why `$set` / `$set_once` / `$groups` are person
     /// data rather than SDK context, and why `personProfiles = .never` does
     /// not already cover them.
-    static func filterNonSDKProperties(_ properties: [String: Any]) -> [String: Any] {
+    static func filterNonSDKProperties(_ properties: [String: Any], event: String? = nil) -> [String: Any] {
+        let isException = event == exceptionEventName
         var filtered = properties.filter { key, _ in
-            if personPayloadKeys.contains(key) { return false }
-            return key.hasPrefix("$") || allowedKeys.contains(key) || sdkLifecycleKeys.contains(key) || errorReportKeys.contains(key)
+            if personPayloadKeys.contains(key) {
+                return false
+            }
+            if errorReportKeys.contains(key) {
+                return isException
+            }
+            return key.hasPrefix("$") || allowedKeys.contains(key) || sdkLifecycleKeys.contains(key)
         }
         if let exceptionList = filtered[exceptionListKey] {
             filtered[exceptionListKey] = TelemetryPrivacyScrub.scrub(exceptionList)
         }
+        if let extra = filtered[errorExtraKey] {
+            let conforming = filterErrorExtra(extra)
+            if conforming.isEmpty {
+                filtered.removeValue(forKey: errorExtraKey)
+            } else {
+                filtered[errorExtraKey] = conforming
+            }
+        }
         return filtered
+    }
+
+    /// The nested half of the backstop: keeps only entries of ``errorExtraKey``
+    /// whose key is in ``errorExtraKeys`` and whose value has one of the
+    /// shapes ``TelemetryValue`` flattens to -- `Int`, `Bool` or `String`.
+    /// Anything else (a non-dictionary, an unreviewed key, a nested
+    /// collection) is dropped: `beforeSend` sees `Any`, so it cannot prove a
+    /// `String` came from a `StaticString`, and dropping is the only
+    /// type-safe answer.
+    private static func filterErrorExtra(_ extra: Any) -> [String: Any] {
+        guard let dictionary = extra as? [String: Any] else {
+            return [:]
+        }
+        return dictionary.filter { key, value in
+            guard errorExtraKeys.contains(key) else {
+                return false
+            }
+            return value is Int || value is Bool || value is String
+        }
     }
 
     /// The one `$` key whose *value* is rewritten rather than passed through:
