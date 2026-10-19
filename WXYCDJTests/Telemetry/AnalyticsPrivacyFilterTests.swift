@@ -158,6 +158,59 @@ struct AnalyticsPrivacyFilterTests {
         #expect(AnalyticsPrivacyAllowlist.personPayloadKeys
             .isDisjoint(with: AnalyticsPrivacyAllowlist.sdkLifecycleKeys))
     }
+
+    // MARK: - Error-report keys (issue #233 review)
+
+    @Test(
+        "error_context and error_extra are dropped from any event other than $exception",
+        arguments: [nil, "rogue_test_event", "Application Opened"] as [String?]
+    )
+    func errorReportKeysAreDroppedOffException(event: String?) {
+        let filtered = AnalyticsPrivacyAllowlist.filterNonSDKProperties([
+            AnalyticsPrivacyAllowlist.errorContextKey: "ctx",
+            AnalyticsPrivacyAllowlist.errorExtraKey: ["storeError.code": 4],
+            "method": "otp",
+        ], event: event)
+
+        #expect(filtered[AnalyticsPrivacyAllowlist.errorContextKey] == nil)
+        #expect(filtered[AnalyticsPrivacyAllowlist.errorExtraKey] == nil)
+        #expect(filtered["method"] as? String == "otp")
+    }
+
+    @Test("a non-conforming entry inside error_extra is dropped, conforming ones survive")
+    func nonConformingErrorExtraEntriesAreDropped() throws {
+        let filtered = AnalyticsPrivacyAllowlist.filterNonSDKProperties([
+            AnalyticsPrivacyAllowlist.errorExtraKey: [
+                "storeError.domain": "NSCocoaErrorDomain",
+                "storeError.code": 4,
+                // A runtime-String key no call site was reviewed for.
+                "dj.kendra87@wxyc-test.example": true,
+            ] as [String: Any],
+        ], event: AnalyticsPrivacyAllowlist.exceptionEventName)
+
+        let extra = try #require(filtered[AnalyticsPrivacyAllowlist.errorExtraKey] as? [String: Any])
+        #expect(Set(extra.keys) == ["storeError.domain", "storeError.code"])
+        #expect(extra["storeError.domain"] as? String == "NSCocoaErrorDomain")
+        #expect(extra["storeError.code"] as? Int == 4)
+    }
+
+    @Test("a reviewed extra key whose value is not an Int, Bool or String is dropped")
+    func errorExtraValueOfTheWrongShapeIsDropped() {
+        let filtered = AnalyticsPrivacyAllowlist.filterNonSDKProperties([
+            AnalyticsPrivacyAllowlist.errorExtraKey: ["storeError.domain": ["k": "v"]] as [String: Any],
+        ], event: AnalyticsPrivacyAllowlist.exceptionEventName)
+
+        #expect(filtered[AnalyticsPrivacyAllowlist.errorExtraKey] == nil)
+    }
+
+    @Test("an error_extra that is not a dictionary is dropped whole")
+    func errorExtraThatIsNotADictionaryIsDropped() {
+        let filtered = AnalyticsPrivacyAllowlist.filterNonSDKProperties([
+            AnalyticsPrivacyAllowlist.errorExtraKey: "dj.kendra87@wxyc-test.example",
+        ], event: AnalyticsPrivacyAllowlist.exceptionEventName)
+
+        #expect(filtered[AnalyticsPrivacyAllowlist.errorExtraKey] == nil)
+    }
 }
 
 @Suite("TelemetryBootstrap.isRunningUnitTests")

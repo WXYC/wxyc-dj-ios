@@ -113,7 +113,7 @@ final class AppDependencies {
         // `AudioSessionCoordinator.init(session:)` nor
         // `NowPlayingInfoCenterManager.init(infoCenter:)` defaults its
         // parameter, so no test path can reach the real one by omission.
-        let reporter = CompositeErrorReporter([SentryErrorReporter(), PostHogErrorReporter()])
+        let reporter = Self.makeProductionErrorReporter()
         self.init(
             catalogStoreURL: Self.defaultCatalogStoreURL(),
             binStoreURL: Self.defaultBinStoreURL(),
@@ -123,6 +123,14 @@ final class AppDependencies {
             nowPlaying: NowPlayingInfoCenterManager(infoCenter: MPNowPlayingInfoCenter.default()),
             engine: AVQueuePlayerEngine()
         )
+    }
+
+    /// The production error reporter: the Sentry + PostHog dual run (issue
+    /// #233) while Sentry is phased out (Backend-Service#3393). A named
+    /// factory so `ProductionErrorReporterWiringTests` can check its members
+    /// without building the rest of the production graph.
+    nonisolated static func makeProductionErrorReporter() -> CompositeErrorReporter {
+        CompositeErrorReporter([SentryErrorReporter(), PostHogErrorReporter()])
     }
 
     /// Designated initializer. `catalogStoreURL` is the SQLite clone's path and

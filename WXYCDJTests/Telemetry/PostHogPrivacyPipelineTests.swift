@@ -307,6 +307,35 @@ struct PostHogPrivacyPipelineTests {
         }
     }
 
+    /// Issue #233 review: once the debug description is stripped, posthog-ios
+    /// falls back to `localizedDescription`, which a native `NSError` (or a
+    /// `CustomNSError`) builds from free text in `NSLocalizedDescriptionKey`.
+    /// The allowlisted rebuild leaves `exception.value` as domain and code.
+    @Test("free text in NSLocalizedDescriptionKey never reaches $exception")
+    func localizedDescriptionDoesNotReachException() throws {
+        let error = NSError(
+            domain: "org.wxyc.dj.test",
+            code: 42,
+            userInfo: [
+                NSLocalizedDescriptionKey: "Upload to https://api.wxyc.org/bins?\(Self.queryString) failed for dj.kendra87@wxyc-test.example"
+            ]
+        )
+
+        let properties = try #require(TelemetryBootstrap.debugCaptureExceptionProperties(
+            for: error,
+            context: "PostHogPrivacyPipelineTests",
+            apiKey: Self.testAPIKey
+        ))
+
+        let exception = try #require((properties["$exception_list"] as? [[String: Any]])?.first)
+        #expect(exception["value"] as? String == "org.wxyc.dj.test (Code: 42)")
+        for string in SerializedValueStrings.allStrings(in: properties) {
+            #expect(!string.contains("kendra87"), "leaked an email in: \(string)")
+            #expect(!string.contains("api.wxyc.org/bins"), "leaked a URL in: \(string)")
+            #expect(!string.contains("Upload to"), "leaked free text in: \(string)")
+        }
+    }
+
     @Test("PostHog crash and exception autocapture stays off while Sentry's crash handler is installed")
     func errorAutoCaptureIsOff() {
         #expect(TelemetryBootstrap.debugErrorAutoCaptureEnabled() == false)
