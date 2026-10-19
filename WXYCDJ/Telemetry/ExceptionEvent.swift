@@ -7,7 +7,7 @@
 //  date properties, and frames held as a struct rather than a free-form
 //  dictionary, so a capture site that tries to attach free text does not
 //  compile. Foundation only, like Analytics.swift, so WXYCDJTests reaches it
-//  without linking PostHog. Hangs only; issue #238 adds the crash kind.
+//  without linking PostHog. Hangs, and crashes (issue #238).
 //
 //  Created by Jake Bromberg on 10/19/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -32,23 +32,32 @@ struct ExceptionEvent: Sendable {
         case metrickit
     }
 
-    /// What kind of diagnostic it is. Issue #238 adds `crash` here, and every
-    /// switch below then fails to compile until it says what a crash means.
+    /// What kind of diagnostic it is. Closed, so every switch below fails to
+    /// compile until a new kind says what it means.
     enum Kind: String, AnalyticsEnum {
         case hang
+        case crash
 
         /// PostHog's `$exception_level`. A hang the app recovers from is not a
         /// crash, so it is not `fatal`.
         var level: String {
             switch self {
             case .hang: "error"
+            case .crash: "fatal"
             }
         }
 
         var exceptionType: String {
             switch self {
             case .hang: "AppHang"
+            case .crash: "Crash"
             }
+        }
+
+        /// A MetricKit crash stack runs crash site first, out to dyld's `start`,
+        /// where PostHog wants the site last. A hang stack already does.
+        var isReversed: Bool {
+            self == .crash
         }
 
         /// The exception's `value`. It holds only the failure kind, so one hang
@@ -56,8 +65,31 @@ struct ExceptionEvent: Sendable {
         var exceptionValue: String {
             switch self {
             case .hang: "App hang"
+            case .crash: "Crash"
             }
         }
+    }
+
+    /// The kernel's namespace for a crash's termination reason. The reason string
+    /// is free text MetricKit fills in (`Namespace SIGNAL, Code 6 ...`), so only
+    /// the namespace is forwarded, and only as one of these values.
+    enum TerminationNamespace: String, AnalyticsEnum {
+        case signal, dyld, codesigning, frontboard, runningboard, other
+
+        init(reason: String?) {
+            let token = reason?.split(separator: " ").drop { $0 != "Namespace" }.dropFirst().first
+            let name = token?.trimmingCharacters(in: .punctuationCharacters).lowercased()
+            self = name.flatMap(Self.init(rawValue:)) ?? .other
+        }
+    }
+
+    /// What MetricKit reports about how a crashed process ended: all integers
+    /// except the closed namespace.
+    struct CrashDetails: Sendable {
+        let terminationNamespace: TerminationNamespace
+        let signal: Int?
+        let exceptionType: Int?
+        let exceptionCode: Int?
     }
 
     /// One MetricKit frame. The image load address is the frame's address minus its offset
@@ -99,13 +131,14 @@ struct ExceptionEvent: Sendable {
 
     let source: Source
     let kind: Kind
-    /// Oldest first, with the hang site last.
+    /// Oldest first, with the hang or crash site last.
     let frames: [Frame]
     let hangDurationMilliseconds: Int?
     /// The diagnostic's own build number, which can predate the running one:
     /// MetricKit delivers payloads on a later launch.
     let appBuild: Int?
     let period: DateInterval?
+    var crash: CrashDetails?
 
     /// The event's properties. The non-`$` keys must be on
     /// ``AnalyticsPrivacyAllowlist/exceptionDiagnosticKeys`` (or `allowedKeys`,
@@ -131,6 +164,12 @@ struct ExceptionEvent: Sendable {
         }
         if let appBuild {
             result["diagnostic_app_build"] = appBuild
+        }
+        if let crash {
+            result["termination_namespace"] = crash.terminationNamespace.rawValue
+            result["crash_signal"] = crash.signal
+            result["crash_exception_type"] = crash.exceptionType
+            result["crash_exception_code"] = crash.exceptionCode
         }
         if let period {
             result["diagnostic_period_start"] = period.start.formatted(.iso8601)
