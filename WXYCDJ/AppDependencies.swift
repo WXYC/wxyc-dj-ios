@@ -70,7 +70,7 @@ final class AppDependencies {
     /// store-open degrade tests just below, which exercise exactly the paths
     /// a capture site lives on -- never fire a real Sentry event. Only
     /// ``init()``, whose sole caller is `AppDelegate`, passes a real
-    /// ``SentryErrorReporter`` explicitly.
+    /// ``CompositeErrorReporter`` (Sentry and PostHog, issue #233) explicitly.
     let errorReporter: any ErrorReporter
     /// The app's product-analytics seam (issue #108). Same default-to-no-op
     /// discipline as ``errorReporter`` -- both test-facing initializers below
@@ -113,7 +113,7 @@ final class AppDependencies {
         // `AudioSessionCoordinator.init(session:)` nor
         // `NowPlayingInfoCenterManager.init(infoCenter:)` defaults its
         // parameter, so no test path can reach the real one by omission.
-        let reporter = SentryErrorReporter()
+        let reporter = CompositeErrorReporter([SentryErrorReporter(), PostHogErrorReporter()])
         self.init(
             catalogStoreURL: Self.defaultCatalogStoreURL(),
             binStoreURL: Self.defaultBinStoreURL(),

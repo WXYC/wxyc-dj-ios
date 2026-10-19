@@ -211,6 +211,18 @@ enum AnalyticsPrivacyAllowlist {
         "from_background",
     ]
 
+    /// The two keys ``PostHogErrorReporter`` attaches to an `$exception` event
+    /// (issue #233): the call site's `StaticString` context, and its closed
+    /// ``TelemetryValue`` extras nested under one key. A named set beside
+    /// ``allowedKeys`` and ``sdkLifecycleKeys`` rather than a merge into
+    /// either, so the event-catalog audit keeps meaning "keys this app's own
+    /// events emit"; the nesting is what keeps a call site's extra *keys*
+    /// from needing an entry each, since only their closed-enum values are
+    /// type-constrained.
+    static let errorContextKey = "error_context"
+    static let errorExtraKey = "error_extra"
+    static let errorReportKeys: Set<String> = [errorContextKey, errorExtraKey]
+
     /// Filters `properties` to PostHog's own `$`-prefixed context, this
     /// catalog's reviewed key set, or the reviewed SDK-lifecycle key set.
     ///
@@ -234,7 +246,7 @@ enum AnalyticsPrivacyAllowlist {
     static func filterNonSDKProperties(_ properties: [String: Any]) -> [String: Any] {
         var filtered = properties.filter { key, _ in
             if personPayloadKeys.contains(key) { return false }
-            return key.hasPrefix("$") || allowedKeys.contains(key) || sdkLifecycleKeys.contains(key)
+            return key.hasPrefix("$") || allowedKeys.contains(key) || sdkLifecycleKeys.contains(key) || errorReportKeys.contains(key)
         }
         if let exceptionList = filtered[exceptionListKey] {
             filtered[exceptionListKey] = TelemetryPrivacyScrub.scrub(exceptionList)

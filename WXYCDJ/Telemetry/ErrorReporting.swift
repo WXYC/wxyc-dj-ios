@@ -146,6 +146,26 @@ struct NoOpErrorReporter: ErrorReporter {
     }
 }
 
+// MARK: - CompositeErrorReporter
+
+/// Fans every report out to each member, in order -- the dual run (issue
+/// #233) that keeps ``SentryErrorReporter`` and ``PostHogErrorReporter``
+/// both live while Sentry is phased out. Each member curates the error
+/// itself, so this hands them the original and holds no policy of its own.
+struct CompositeErrorReporter: ErrorReporter {
+    private let reporters: [any ErrorReporter]
+
+    init(_ reporters: [any ErrorReporter]) {
+        self.reporters = reporters
+    }
+
+    func report(_ error: any Error, context: StaticString, extra: [String: TelemetryValue]) {
+        for reporter in reporters {
+            reporter.report(error, context: context, extra: extra)
+        }
+    }
+}
+
 // MARK: - Curated error classification
 
 /// The pure, SDK-free half of ``SentryErrorReporter``'s privacy contract:

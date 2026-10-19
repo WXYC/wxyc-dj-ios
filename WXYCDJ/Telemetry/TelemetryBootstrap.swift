@@ -553,5 +553,33 @@ enum TelemetryBootstrap {
         PostHogAnalytics().capture(event)
         return lastAnalyticsEventProperties
     }
+
+    /// Test-only hook (issue #233): reports `error` through a real
+    /// `PostHogErrorReporter()` against a fresh SDK instance with this file's
+    /// real option set, and returns the `$exception` event's properties after
+    /// `beforeSend`. Same `close()`-then-`setup` teardown and loopback host as
+    /// ``debugCaptureAnalyticsEventProperties(_:apiKey:host:)``, for the same
+    /// reasons.
+    static func debugCaptureExceptionProperties(
+        for error: any Error,
+        context: StaticString,
+        apiKey: String = "phc_test_00000000000000000000000000000000",
+        host: String = "http://127.0.0.1:9"
+    ) -> [String: Any]? {
+        lastAnalyticsEventProperties = nil
+        PostHogSDK.shared.close()
+        startAnalytics(apiKey: apiKey, host: host)
+
+        PostHogErrorReporter().report(error, context: context)
+        return lastAnalyticsEventProperties
+    }
+
+    /// Test-only hook (issue #233): the shipped config's
+    /// `errorTrackingConfig.autoCapture`. `PostHogConfig` is not nameable from
+    /// the test bundle, so the flag crosses as a plain `Bool`.
+    static func debugErrorAutoCaptureEnabled() -> Bool {
+        makeAnalyticsConfig(apiKey: "phc_test_00000000000000000000000000000000", host: "http://127.0.0.1:9")
+            .errorTrackingConfig.autoCapture
+    }
     #endif
 }

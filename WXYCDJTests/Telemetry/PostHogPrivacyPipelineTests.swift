@@ -28,6 +28,7 @@
 
 import Foundation
 import Testing
+import WXYCAPI
 @testable import WXYCDJ
 
 /// An event with a property key that was never added to
@@ -237,5 +238,77 @@ struct PostHogPrivacyPipelineTests {
         for string in strings {
             #expect(!string.contains(RogueIdentifyingValue.marker.rawValue), "leaked a DJ-identifying string in: \(string)")
         }
+    }
+
+    // MARK: - `$exception` (issue #233)
+
+    /// A transport error whose `NSUnderlyingErrorKey` chain carries a URL with
+    /// a query string and a free-text `NSDebugDescriptionErrorKey`: the two
+    /// channels posthog-ios's exception processor reads and
+    /// `TelemetryErrorClassification.curated` does not control. The URL
+    /// scrub (issue #232) covers the first; only dropping the chain keeps the
+    /// free-text description out.
+    private static let leakyDescription = "request failed for dj.kendra87@wxyc-test.example"
+    private static let queryString = "artist=Juana%20Molina"
+
+    private static func urlBearingError() -> NSError {
+        let underlying = NSError(
+            domain: NSURLErrorDomain,
+            code: NSURLErrorTimedOut,
+            userInfo: [
+                NSDebugDescriptionErrorKey: leakyDescription,
+                NSURLErrorFailingURLStringErrorKey: "https://api.wxyc.org/library?\(queryString)"
+            ]
+        )
+        return NSError(
+            domain: NSURLErrorDomain,
+            code: NSURLErrorNotConnectedToInternet,
+            userInfo: [
+                NSDebugDescriptionErrorKey: "\(leakyDescription) https://api.wxyc.org/library?\(queryString)",
+                NSUnderlyingErrorKey: underlying
+            ]
+        )
+    }
+
+    @Test("no identity, free text or query string appears anywhere in a serialized $exception")
+    func exceptionPayloadIsFreeOfIdentityAndQueryStrings() throws {
+        let properties = try #require(TelemetryBootstrap.debugCaptureExceptionProperties(
+            for: Self.urlBearingError(),
+            context: "PostHogPrivacyPipelineTests",
+            apiKey: Self.testAPIKey
+        ))
+
+        // Positive identity assertions: the properties are this exception's,
+        // not a lifecycle event's, and the walk below has something to read.
+        #expect(properties[AnalyticsPrivacyAllowlist.errorContextKey] as? String == "PostHogPrivacyPipelineTests")
+        #expect(properties["$exception_list"] != nil)
+        #expect(properties["$process_person_profile"] as? Bool == false)
+
+        let strings = SerializedValueStrings.allStrings(in: properties)
+        #expect(!strings.isEmpty)
+        for string in strings {
+            #expect(!string.contains("kendra87"), "leaked a DJ-identifying string in: \(string)")
+            #expect(!string.contains("request failed"), "leaked a free-text description in: \(string)")
+            #expect(!string.contains(Self.queryString), "leaked a query string in: \(string)")
+        }
+    }
+
+    @Test("a curated AuthError reaches $exception without its server copy")
+    func curatedErrorMessageDoesNotReachException() throws {
+        let properties = try #require(TelemetryBootstrap.debugCaptureExceptionProperties(
+            for: AuthError.rejected(message: "No account for dj.marlon42@wxyc-test.example"),
+            context: "PostHogPrivacyPipelineTests",
+            apiKey: Self.testAPIKey
+        ))
+
+        #expect(properties["$exception_list"] != nil)
+        for string in SerializedValueStrings.allStrings(in: properties) {
+            #expect(!string.contains("marlon42"), "leaked server copy in: \(string)")
+        }
+    }
+
+    @Test("PostHog crash and exception autocapture stays off while Sentry's crash handler is installed")
+    func errorAutoCaptureIsOff() {
+        #expect(TelemetryBootstrap.debugErrorAutoCaptureEnabled() == false)
     }
 }
