@@ -2,10 +2,10 @@
 //  MetricKitDiagnosticMapper.swift
 //  WXYCDJ
 //
-//  Maps the JSON representation of an MXHangDiagnostic to an ExceptionEvent
-//  (issue #234). Works on JSON so fixtures can stand in for MetricKit
+//  Maps the JSON representation of an MXHangDiagnostic or MXCrashDiagnostic to
+//  an ExceptionEvent (issues #234 and #238). Works on JSON so fixtures can stand in for MetricKit
 //  payloads, which cannot be constructed in tests, and imports no MetricKit.
-//  Ported from wxyc-ios-64's mapper, hangs only.
+//  Ported from wxyc-ios-64's mapper.
 //
 //  Created by Jake Bromberg on 10/19/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -15,7 +15,7 @@ import Foundation
 
 enum MetricKitDiagnosticMapper {
     /// The most frames one stack carries: a backstop that keeps the frames nearest the hang
-    /// site and drops the oldest. It cannot trigger on a real payload, because each frame nests
+    /// or crash site and drops the oldest. It cannot trigger on a real payload, because each frame nests
     /// two JSON levels deep and `JSONSerialization` rejects JSON nested more than 512 levels, so
     /// a stack deeper than about 254 frames is dropped at parse time.
     static let maxFrames = 256
@@ -25,6 +25,7 @@ enum MetricKitDiagnosticMapper {
     /// The stack is the attributed thread's (the first thread when none is attributed). A hang
     /// thread's call stack is a tree of samples, so the stack follows the most-sampled sub-frame
     /// at each level, which already runs oldest first with the hang site last, as PostHog wants.
+    /// A crash thread's stack is a chain that runs the other way, so it is reversed.
     /// - Parameters:
     ///   - appBinaryName: The app's executable name. Frames in that binary are marked `in_app`.
     ///   - period: The payload's time range, which is when the diagnostic happened.
@@ -57,6 +58,10 @@ enum MetricKitDiagnosticMapper {
             return nil
         }
 
+        if kind.isReversed {
+            rawFrames.reverse()
+        }
+
         let metaData = root["diagnosticMetaData"] as? [String: Any] ?? [:]
         return ExceptionEvent(
             source: .metrickit,
@@ -64,7 +69,17 @@ enum MetricKitDiagnosticMapper {
             frames: rawFrames.suffix(maxFrames).map { frame(json: $0, appBinaryName: appBinaryName) },
             hangDurationMilliseconds: hangDurationMilliseconds,
             appBuild: (metaData["appBuildVersion"] as? String).flatMap { Int($0) },
-            period: period
+            period: period,
+            crash: kind == .crash ? crashDetails(metaData) : nil
+        )
+    }
+
+    private static func crashDetails(_ metaData: [String: Any]) -> ExceptionEvent.CrashDetails {
+        ExceptionEvent.CrashDetails(
+            terminationNamespace: ExceptionEvent.TerminationNamespace(reason: metaData["terminationReason"] as? String),
+            signal: (metaData["signal"] as? NSNumber)?.intValue,
+            exceptionType: (metaData["exceptionType"] as? NSNumber)?.intValue,
+            exceptionCode: (metaData["exceptionCode"] as? NSNumber)?.intValue
         )
     }
 

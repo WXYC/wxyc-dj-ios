@@ -238,6 +238,11 @@ enum AnalyticsPrivacyAllowlist {
         "diagnostic_app_build",
         "diagnostic_period_start",
         "diagnostic_period_end",
+        // Crashes (issue #238): a closed namespace and integers.
+        "termination_namespace",
+        "crash_signal",
+        "crash_exception_type",
+        "crash_exception_code",
     ]
 
     /// Every key that may appear **inside** ``errorExtraKey``, after

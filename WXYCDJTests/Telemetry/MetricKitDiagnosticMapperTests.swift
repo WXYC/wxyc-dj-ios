@@ -6,8 +6,9 @@
 //  event (issue #234): the Apple frame shape PostHog accepts, one `macho`
 //  debug image per binary, per-occurrence details as typed properties, and
 //  property keys that clear the `$exception`-only allowlist. The fixtures are
-//  ported from wxyc-ios-64's MetricKitDiagnosticMapperTests; the crash-only
-//  cases (reversed stack, termination value) belong to issue #238.
+//  ported from wxyc-ios-64's MetricKitDiagnosticMapperTests. The crash cases
+//  (issue #238) cover the reversed stack, the fatal level and the termination
+//  details, which ride as typed properties and never in the exception value.
 //
 //  Created by Jake Bromberg on 10/19/26.
 //  Copyright © 2026 WXYC. All rights reserved.
@@ -173,6 +174,129 @@ struct MetricKitDiagnosticMapperTests {
         #expect(frames.count == 16)
         #expect(frames.last?["image_uuid"] as? String == "SITE")
         #expect(frames.first?["image_uuid"] as? String == "U26")
+    }
+
+    // MARK: - Crashes (issue #238)
+
+    /// A real MetricKit crash call stack starts at the crash site: the root frame is the crashing
+    /// frame, and its sub-frames walk out to dyld's `start`. PostHog wants the crash site last.
+    static let crashJSON = """
+    {"callStackTree": {"callStackPerThread": true, "callStacks": [{"threadAttributed": true, "callStackRootFrames": [
+       {"binaryUUID": "APP", "offsetIntoBinaryTextSegment": 20480, "sampleCount": 1, "binaryName": "WXYCDJ", "address": 4362096640,
+        "subFrames": [
+          {"binaryUUID": "UIKIT", "offsetIntoBinaryTextSegment": 1048577, "sampleCount": 1, "binaryName": "UIKitCore", "address": 6443499521,
+           "subFrames": [
+             {"binaryUUID": "CF", "offsetIntoBinaryTextSegment": 524289, "sampleCount": 1, "binaryName": "CoreFoundation", "address": 6442975233,
+              "subFrames": [
+                {"binaryUUID": "DYLD", "offsetIntoBinaryTextSegment": 8193, "sampleCount": 1, "binaryName": "dyld", "address": 6442459137}
+              ]}
+           ]}
+        ]}
+    ]}]},
+     "diagnosticMetaData": {"appBuildVersion": "412", "signal": 6, "exceptionType": 6, "exceptionCode": 0,
+                            "terminationReason": "Namespace SIGNAL, Code 6 Abort trap: 6 for user dj.kendra87@wxyc-test.example"}}
+    """
+
+    private static func crashEvent(_ json: String = crashJSON, maxFrames: Int = MetricKitDiagnosticMapper.maxFrames) -> ExceptionEvent? {
+        MetricKitDiagnosticMapper.event(kind: .crash, json: Data(json.utf8), appBinaryName: "WXYCDJ", maxFrames: maxFrames)
+    }
+
+    @Test("A crash stack is reversed so dyld start is first and the crash site is last")
+    func crashStackEndsAtCrashSite() throws {
+        let frames = try Self.frames(Self.exception(try #require(Self.crashEvent()).properties))
+
+        #expect(frames.compactMap { $0["module"] as? String } == ["dyld", "CoreFoundation", "UIKitCore", "WXYCDJ"])
+        #expect(frames.allSatisfy { $0["platform"] as? String == "apple" })
+        #expect(frames.last?["image_uuid"] as? String == "APP")
+        #expect(frames.last?["in_app"] as? Bool == true)
+    }
+
+    @Test("A crash is fatal, and its exception value is the failure kind alone")
+    func crashIsFatalWithBareValue() throws {
+        let properties = try #require(Self.crashEvent()).properties
+        let exception = try Self.exception(properties)
+
+        #expect(properties["$exception_level"] as? String == "fatal")
+        #expect(properties["source"] as? String == "metrickit")
+        #expect(properties["diagnostic_kind"] as? String == "crash")
+        #expect(exception["type"] as? String == "Crash")
+        #expect(exception["value"] as? String == "Crash")
+    }
+
+    @Test("Termination details are typed properties: the namespace is a closed value, the rest are integers")
+    func crashTerminationProperties() throws {
+        let properties = try #require(Self.crashEvent()).properties
+
+        #expect(properties["termination_namespace"] as? String == "signal")
+        #expect(properties["crash_signal"] as? Int == 6)
+        #expect(properties["crash_exception_type"] as? Int == 6)
+        #expect(properties["crash_exception_code"] as? Int == 0)
+        #expect(properties["diagnostic_app_build"] as? Int == 412)
+        // The free-text remainder of the reason (here an email address) is never forwarded.
+        #expect(!SerializedValueStrings.allStrings(in: properties).contains { $0.contains("wxyc-test.example") })
+    }
+
+    @Test("A termination namespace the build does not know is sent as other", arguments: [
+        ("Namespace DYLD, Code 1 Library missing", "dyld"),
+        ("Namespace CODESIGNING, Code 2", "codesigning"),
+        ("Namespace SOMETHING_NEW, Code 9", "other"),
+        ("free text with no namespace", "other"),
+    ])
+    func terminationNamespaceIsClosed(reason: String, expected: String) throws {
+        let json = Self.crashJSON.replacingOccurrences(
+            of: #""terminationReason": "Namespace SIGNAL, Code 6 Abort trap: 6 for user dj.kendra87@wxyc-test.example""#,
+            with: #""terminationReason": "\#(reason)""#
+        )
+        #expect(try #require(Self.crashEvent(json)).properties["termination_namespace"] as? String == expected)
+    }
+
+    @Test("A crash with no termination metadata sends namespace other and omits the integers")
+    func crashWithoutMetadata() throws {
+        let json = #"{"callStackTree": {"callStacks": [{"threadAttributed": true, "callStackRootFrames": [{"binaryUUID": "A", "offsetIntoBinaryTextSegment": 1, "sampleCount": 1, "binaryName": "WXYCDJ", "address": 16}]}]}}"#
+        let properties = try #require(Self.crashEvent(json)).properties
+
+        #expect(properties["termination_namespace"] as? String == "other")
+        for key in ["crash_signal", "crash_exception_type", "crash_exception_code"] {
+            #expect(properties[key] == nil, "\(key)")
+        }
+    }
+
+    @Test("Crash frames of one binary share one page-aligned debug image, and the images list each binary once")
+    func crashDebugImages() throws {
+        let properties = try #require(Self.crashEvent()).properties
+        let images = try #require(properties["$debug_images"] as? [[String: Any]])
+
+        #expect(images.compactMap { $0["debug_id"] as? String } == ["DYLD", "CF", "UIKIT", "APP"])
+        #expect(images.allSatisfy { $0["type"] as? String == "macho" })
+        // 4362096640 = 0x104005000, minus the 0x5000 text offset, is the page-aligned image base 0x104000000.
+        let last = try #require(images.last)
+        #expect(last["image_addr"] as? String == "0x0000000104000000")
+        let frame = try #require(try Self.frames(Self.exception(properties)).last)
+        #expect(last["image_addr"] as? String == frame["image_addr"] as? String)
+    }
+
+    @Test("A crash stack deeper than the cap keeps the frames nearest the crash site, crash site last")
+    func capsCrashFrames() throws {
+        var node = #"{"binaryUUID": "START", "offsetIntoBinaryTextSegment": 0, "sampleCount": 1, "binaryName": "dyld", "address": 1}"#
+        for index in (2...40).reversed() {
+            node = #"{"binaryUUID": "U\#(index)", "offsetIntoBinaryTextSegment": 0, "sampleCount": 1, "binaryName": "WXYCDJ", "address": \#(index), "subFrames": [\#(node)]}"#
+        }
+        let json = #"{"callStackTree": {"callStacks": [{"threadAttributed": true, "callStackRootFrames": [\#(node)]}]}}"#
+
+        let frames = try Self.frames(Self.exception(try #require(Self.crashEvent(json, maxFrames: 16)).properties))
+
+        #expect(frames.count == 16)
+        #expect(frames.last?["image_uuid"] as? String == "U2")
+    }
+
+    @Test("Every crash property key is on a reviewed list, so beforeSend keeps it on $exception")
+    func crashKeysClearTheAllowlist() throws {
+        let properties = try #require(Self.crashEvent()).properties
+
+        let filtered = AnalyticsPrivacyAllowlist.filterNonSDKProperties(properties, event: ExceptionEvent.name)
+        #expect(Set(filtered.keys) == Set(properties.keys))
+        let nonDollar = Set(properties.keys.filter { !$0.hasPrefix("$") })
+        #expect(nonDollar.isSubset(of: AnalyticsPrivacyAllowlist.exceptionDiagnosticKeys.union(AnalyticsPrivacyAllowlist.allowedKeys)))
     }
 
     @Test("Every non-$ property key is on a reviewed list, so beforeSend keeps it on $exception")

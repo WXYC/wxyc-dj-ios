@@ -377,6 +377,46 @@ struct PostHogPrivacyPipelineTests {
         }
     }
 
+    // MARK: - MetricKit crash diagnostics (issue #238)
+
+    /// A crash fixture whose crash-site frame names a URL-shaped binary and whose reason is free text:
+    /// MetricKit never produces either, so the scrub and the closed namespace are what hold if it does.
+    private static let crashJSON = """
+    {"callStackTree": {"callStacks": [{"threadAttributed": true, "callStackRootFrames": [
+       {"binaryUUID": "AAAA", "offsetIntoBinaryTextSegment": 4096, "sampleCount": 1,
+        "binaryName": "https://api.wxyc.org/bins?\(queryString)", "address": 4300000000}]}]},
+     "diagnosticMetaData": {"appBuildVersion": "412", "signal": 11, "exceptionType": 1, "exceptionCode": 0,
+                            "terminationReason": "Namespace SIGNAL, Code 11 \(queryString)"}}
+    """
+
+    @Test("a crash event keeps source and diagnostic_kind through beforeSend and its string leaves are scrubbed")
+    func crashEventKeepsPropertiesAndScrubsLeaves() throws {
+        let event = try #require(MetricKitDiagnosticMapper.event(
+            kind: .crash,
+            json: Data(Self.crashJSON.utf8),
+            appBinaryName: "WXYCDJ",
+            period: DateInterval(start: Date(timeIntervalSince1970: 1_800_000_000), duration: 60)
+        ))
+
+        let properties = try #require(TelemetryBootstrap.debugCaptureDiagnosticProperties(event, apiKey: Self.testAPIKey))
+
+        #expect(properties["source"] as? String == "metrickit")
+        #expect(properties["diagnostic_kind"] as? String == "crash")
+        #expect(properties["$exception_level"] as? String == "fatal")
+        #expect(properties["termination_namespace"] as? String == "signal")
+        #expect(properties["crash_signal"] as? Int == 11)
+        #expect(properties["$exception_list"] != nil)
+        #expect(properties["$debug_images"] != nil)
+        #expect(properties["$process_person_profile"] as? Bool == false)
+
+        let strings = SerializedValueStrings.allStrings(in: properties)
+        // Positive control: the URL's scheme, host and path survive, so the walk found the scrubbed leaf.
+        #expect(strings.contains { $0.contains("api.wxyc.org/bins") })
+        for string in strings {
+            #expect(!string.contains(Self.queryString), "leaked a query string in: \(string)")
+        }
+    }
+
     @Test("PostHog crash and exception autocapture stays off while Sentry's crash handler is installed")
     func errorAutoCaptureIsOff() {
         #expect(TelemetryBootstrap.debugErrorAutoCaptureEnabled() == false)

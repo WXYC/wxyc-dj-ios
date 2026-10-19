@@ -15,10 +15,17 @@ import Foundation
 import MetricKit
 import os
 
-/// Subscribes to `MXMetricManager` and reports each hang diagnostic through
+/// Subscribes to `MXMetricManager` and reports each hang and crash diagnostic through
 /// ``PostHogErrorReporter``. Holds no mutable state, so it is `Sendable`.
 final class MetricKitSubscriber: NSObject, MXMetricManagerSubscriber, Sendable {
     static let shared = MetricKitSubscriber()
+
+    /// Whether `MXCrashDiagnostic`s are forwarded. Crash forwarding exists only while
+    /// PostHog's own crash autocapture is off, because Sentry's crash handler is installed
+    /// (issue #233). When issue #236 turns `errorTrackingConfig.autoCapture` on, set this
+    /// to `false` (or delete it and the crash loop below): otherwise every crash is
+    /// reported twice, as two issues with different types and stacks.
+    static let forwardsCrashes = true
 
     private static let log = Logger(subsystem: "org.wxyc.dj", category: "metrickit")
 
@@ -38,20 +45,40 @@ final class MetricKitSubscriber: NSObject, MXMetricManagerSubscriber, Sendable {
         for payload in payloads {
             let period = DateInterval(start: payload.timeStampBegin, end: max(payload.timeStampBegin, payload.timeStampEnd))
             for diagnostic in payload.hangDiagnostics ?? [] {
-                let json = diagnostic.jsonRepresentation()
                 let milliseconds = diagnostic.hangDuration.converted(to: .milliseconds).value
-                guard let event = MetricKitDiagnosticMapper.event(
-                    kind: .hang,
-                    json: json,
+                forward(
+                    .hang,
+                    json: diagnostic.jsonRepresentation(),
                     appBinaryName: appBinaryName,
                     period: period,
                     hangDurationMilliseconds: milliseconds.isFinite ? Int(milliseconds) : nil
-                ) else {
-                    Self.log.error("Dropped a MetricKit hang diagnostic: its JSON (\(json.count) bytes) mapped to no event")
-                    continue
+                )
+            }
+            if Self.forwardsCrashes {
+                for diagnostic in payload.crashDiagnostics ?? [] {
+                    forward(.crash, json: diagnostic.jsonRepresentation(), appBinaryName: appBinaryName, period: period)
                 }
-                reporter.report(diagnostic: event)
             }
         }
+    }
+
+    private func forward(
+        _ kind: ExceptionEvent.Kind,
+        json: Data,
+        appBinaryName: String?,
+        period: DateInterval,
+        hangDurationMilliseconds: Int? = nil
+    ) {
+        guard let event = MetricKitDiagnosticMapper.event(
+            kind: kind,
+            json: json,
+            appBinaryName: appBinaryName,
+            period: period,
+            hangDurationMilliseconds: hangDurationMilliseconds
+        ) else {
+            Self.log.error("Dropped a MetricKit \(kind.rawValue) diagnostic: its JSON (\(json.count) bytes) mapped to no event")
+            return
+        }
+        reporter.report(diagnostic: event)
     }
 }
