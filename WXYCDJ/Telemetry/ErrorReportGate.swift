@@ -63,7 +63,7 @@ final class ErrorReportGate: Sendable {
     }
 
     static let dedupeWindow: Duration = .seconds(60)
-    static let burst = 20.0
+    static let burst = 20
     static let refillInterval: Duration = .seconds(30 * 60)
     static let maxTrackedKeys = 1_000
     static let dropLogInterval: Duration = .seconds(60)
@@ -71,6 +71,7 @@ final class ErrorReportGate: Sendable {
     private struct State {
         var recent: [Key: ContinuousClock.Instant] = [:]
         var tokens = ErrorReportGate.burst
+        /// Start of the refill interval now in progress; advances only in whole intervals, so no rounding accumulates.
         var refilledAt: ContinuousClock.Instant
         var dropped = 0
         var droppedLoggedAt: ContinuousClock.Instant?
@@ -96,14 +97,13 @@ final class ErrorReportGate: Sendable {
     /// Whether the error with this key may be sent. Admitting consumes a token
     /// and starts the key's dedupe window; a drop of either kind is counted.
     func admit(key: Key) -> Bool {
-        let instant = now()
         let (admitted, report) = state.withLock { state -> (Bool, Int?) in
+            // Read inside the lock so lock order is clock order and `refilledAt` never moves backwards.
+            let instant = now()
             if let last = state.recent[key], instant - last < Self.dedupeWindow {
                 return (false, Self.recordDrop(&state, at: instant))
             }
-            let refilled = state.tokens + (instant - state.refilledAt) / Self.refillInterval
-            state.tokens = min(Self.burst, refilled)
-            state.refilledAt = instant
+            Self.refill(&state, at: instant)
             guard state.tokens >= 1 else {
                 return (false, Self.recordDrop(&state, at: instant))
             }
@@ -120,6 +120,23 @@ final class ErrorReportGate: Sendable {
     /// Number of keys in the dedupe table, for the bound test.
     var trackedKeyCount: Int {
         state.withLock { $0.recent.count }
+    }
+
+    /// Adds the whole tokens earned since `refilledAt`. Tokens are integers and `refilledAt` advances by exactly the
+    /// intervals consumed, so the 30-minute cadence is exact however often this runs. A full bucket earns nothing,
+    /// so its clock restarts at `instant`.
+    private static func refill(_ state: inout State, at instant: ContinuousClock.Instant) {
+        guard state.tokens < burst else {
+            state.refilledAt = instant
+            return
+        }
+        let elapsed = instant - state.refilledAt
+        guard elapsed >= refillInterval else {
+            return
+        }
+        let earned = Int(elapsed / refillInterval)
+        state.tokens = min(burst, state.tokens + earned)
+        state.refilledAt = state.tokens == burst ? instant : state.refilledAt.advanced(by: refillInterval * earned)
     }
 
     /// Counts a drop; returns the running count when it is time to report it.

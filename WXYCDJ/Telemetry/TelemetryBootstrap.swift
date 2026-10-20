@@ -561,7 +561,7 @@ enum TelemetryBootstrap {
     }
 
     /// Test-only hook (issue #233): reports `error` through a real
-    /// `PostHogErrorReporter()` against a fresh SDK instance with this file's
+    /// `PostHogErrorReporter(gate:)` against a fresh SDK instance with this file's
     /// real option set, and returns the `$exception` event's properties after
     /// `beforeSend`. Same `close()`-then-`setup` teardown and loopback host as
     /// ``debugCaptureAnalyticsEventProperties(_:apiKey:host:)``, for the same
@@ -582,10 +582,10 @@ enum TelemetryBootstrap {
     }
 
     /// Test-only hook (issue #234): sends `event` through a real
-    /// `PostHogErrorReporter().report(diagnostic:)` against a fresh SDK
+    /// `PostHogErrorReporter(gate:).report(diagnostic:)` against a fresh SDK
     /// instance and returns the `$exception` event's properties after
     /// `beforeSend`. Same teardown and loopback host as
-    /// ``debugCaptureExceptionProperties(for:context:apiKey:host:)``.
+    /// ``debugCaptureExceptionProperties(for:context:gate:apiKey:host:)``.
     static func debugCaptureDiagnosticProperties(
         _ event: ExceptionEvent,
         gate: ErrorReportGate = ErrorReportGate(),
