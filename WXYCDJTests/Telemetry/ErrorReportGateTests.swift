@@ -96,6 +96,23 @@ struct ErrorReportGateTests {
         #expect(!gate.admit(key: key(101)))
     }
 
+    @Test("frequent dropped calls do not make the refill drift: the token arrives exactly at the 30-minute mark")
+    func refillIsExactUnderFrequentCalls() {
+        let clock = ManualGateClock()
+        let gate = makeGate(clock: clock)
+        for id in 0..<20 {
+            _ = gate.admit(key: key(id))
+        }
+
+        for second in 1..<1_800 {
+            clock.advance(by: .seconds(1))
+            #expect(!gate.admit(key: key(1_000 + second)), "dropped at \(second) s")
+        }
+        clock.advance(by: .seconds(1))
+        #expect(gate.admit(key: key(5_000)))
+        #expect(!gate.admit(key: key(5_001)))
+    }
+
     @Test("the bucket never refills past its capacity of 20")
     func refillIsCapped() {
         let clock = ManualGateClock()
