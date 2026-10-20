@@ -104,6 +104,15 @@ Issue [#108](https://github.com/WXYC/wxyc-dj-ios/issues/108) adds anonymous Post
 
 **Events go to dj-site's PostHog project (444958), not a project of this app's own.** dj-site is the web equivalent of this app — the same DJs doing the same jobs — so sharing one project turns "phone or desktop for library search?" into a breakdown on `$lib` instead of an unanswerable question. Two things follow: event names must stay collision-free across both repos (a reused name puts two schemas under one event), and privacy contract item 3 — no IP retention — is the project-wide `anonymize_ips` server setting rather than anything the app can set, so enabling it also drops dj-site's geo breakdown going forward. Both are covered in `CLAUDE.md`'s Telemetry section; the project token is hardcoded in `WXYCDJ/Telemetry/TelemetryBootstrap.swift` for the same reason the Sentry DSN is.
 
+### Error reporting to PostHog: the send cap
+
+Handled errors reach PostHog as `$exception` through `PostHogErrorReporter` (issue [#233](https://github.com/WXYC/wxyc-dj-ios/issues/233)). The free plan caps exceptions at 100K a month, a hard stop that may be shared across the whole org, and the server reporters already budget about 50K of it, so issue [#242](https://github.com/WXYC/wxyc-dj-ios/issues/242) puts the server contract's two gates in front of every handled error (`WXYCDJ/Telemetry/ErrorReportGate.swift`, wiki `patterns/error-tracking.md` §5), in this order:
+
+1. **Dedupe, 60 seconds.** An error whose key — the curated domain, code and `StaticString` context, never a message — was sent less than a minute ago is dropped and costs no token. The table of recent keys holds at most 1,000.
+2. **Token bucket, per launch.** Burst 20, refilling one token every 30 minutes (a steady-state ceiling of 48 a day). The bucket is in memory, so it starts full at each launch. One stuck device is held to a small fixed share of the cap, while 20 tokens still let a real incident report each distinct failure once.
+
+Dropped errors are counted and logged (`org.wxyc.dj`, category `telemetry`) as a warning at most once a minute, and never sent. **Crashes bypass both gates.** MetricKit hangs and crashes (`report(diagnostic:)`) arrive in at most one payload a day and are the events least affordable to drop, and PostHog's own crash autocapture does not go through the reporter. Sentry, beside PostHog in the composite during the dual run, is not gated.
+
 ## API Surface Used
 
 All endpoints live in Backend-Service (`apps/backend/routes/`) except the auth surface, which is better-auth (`apps/auth/`):

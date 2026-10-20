@@ -83,6 +83,7 @@
 		B8E5954EACEC2C58ECA73504 /* SentryTestHostGuardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29A702EF631E197FBC6DE322 /* SentryTestHostGuardTests.swift */; };
 		B90C6447D3F4DC7F4B4A4DC1 /* TrackMatchBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30DE4EC11A66379C3F9D35AE /* TrackMatchBadge.swift */; };
 		B94E9B3D6BB30F1879565A75 /* BuildEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8214FB30FB9D316CE34EAA61 /* BuildEnvironment.swift */; };
+		BD8097ABC77DE4F14413105C /* ErrorReportGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3228A7FCFAD9C58A1C6EE658 /* ErrorReportGate.swift */; };
 		C03AB4DC4B72F41F6135A84C /* SearchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD38B1719410E4392D6E05CB /* SearchViewModel.swift */; };
 		C0957B35095ABDC60A5C7C73 /* FakeAudioSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87CEA96836CD0494B03BFCEC /* FakeAudioSession.swift */; };
 		CDD558CE16C41A4D60BF31AA /* AnalyticsEventCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19C284C6B805A1C46A2DD30D /* AnalyticsEventCatalogTests.swift */; };
@@ -97,6 +98,7 @@
 		DD5133F0A74A1B9B1FC5CD4F /* AlbumRouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E5BB2C6A6D78D45FBE8B7E8 /* AlbumRouteTests.swift */; };
 		DD5DDFB1BA751BBAF0D3F016 /* BlockingRequestSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2910CFA60AD178B436EFCF3E /* BlockingRequestSession.swift */; };
 		DE23DEAE7EBBA64D451CF154 /* PostHogAnalytics.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1E85D82632406DEF7C64DF7 /* PostHogAnalytics.swift */; };
+		DFEE234E70710E4CA7E039CA /* ErrorReportGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B78CE1A8178103D8BF61B1C /* ErrorReportGateTests.swift */; };
 		E337E4EFED7AC9F99A90D53A /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBD19B4C0935B9225645CC75 /* SceneDelegate.swift */; };
 		E7A9C8D05D95D4EBCB17F9A6 /* RouterDeepLinkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FD0E661440B5825AA5F5B40 /* RouterDeepLinkTests.swift */; };
 		EBC327C9D32FBD41A275C3DA /* MetricKitDiagnosticMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5F0E9C9275E6F215C1C4439 /* MetricKitDiagnosticMapper.swift */; };
@@ -143,8 +145,10 @@
 		283A1AB11D2D5858F9C131D0 /* SerializedValueStrings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerializedValueStrings.swift; sourceTree = "<group>"; };
 		2910CFA60AD178B436EFCF3E /* BlockingRequestSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockingRequestSession.swift; sourceTree = "<group>"; };
 		29A702EF631E197FBC6DE322 /* SentryTestHostGuardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentryTestHostGuardTests.swift; sourceTree = "<group>"; };
+		2B78CE1A8178103D8BF61B1C /* ErrorReportGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorReportGateTests.swift; sourceTree = "<group>"; };
 		30DE4EC11A66379C3F9D35AE /* TrackMatchBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackMatchBadge.swift; sourceTree = "<group>"; };
 		3177CDD8FE323B5294083D52 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		3228A7FCFAD9C58A1C6EE658 /* ErrorReportGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorReportGate.swift; sourceTree = "<group>"; };
 		3CD892F3341A76E193CF7FF3 /* PlaybackEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackEngine.swift; sourceTree = "<group>"; };
 		3D62BB1A222E85317724557C /* WXYCDJApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WXYCDJApp.swift; sourceTree = "<group>"; };
 		3DF620FEA55F62453796BA7E /* PlaybackInterruptionRouteHandlerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackInterruptionRouteHandlerTests.swift; sourceTree = "<group>"; };
@@ -429,6 +433,7 @@
 				19C284C6B805A1C46A2DD30D /* AnalyticsEventCatalogTests.swift */,
 				E5F7756BA1F6E80EAE710764 /* AnalyticsPrivacyFilterTests.swift */,
 				AB62A3F31DE27BC96B7DD6B0 /* BuildEnvironmentTests.swift */,
+				2B78CE1A8178103D8BF61B1C /* ErrorReportGateTests.swift */,
 				625908D0FE2D8DAE291C5ACC /* ErrorReportingTests.swift */,
 				9ED778F18028288E662A9993 /* MetricKitDiagnosticMapperTests.swift */,
 				F41502DD8AC79EB944D2B862 /* PostHogErrorReporterTests.swift */,
@@ -501,6 +506,7 @@
 				485D1AE62C51DC2608A4B04C /* Analytics.swift */,
 				819EF8771C8A2EE88F76AE26 /* AnalyticsEvents.swift */,
 				8214FB30FB9D316CE34EAA61 /* BuildEnvironment.swift */,
+				3228A7FCFAD9C58A1C6EE658 /* ErrorReportGate.swift */,
 				1CA746C19327B79EE365C2E3 /* ErrorReporting.swift */,
 				780B0DA0D4E161EDB27093B9 /* ExceptionEvent.swift */,
 				C5F0E9C9275E6F215C1C4439 /* MetricKitDiagnosticMapper.swift */,
@@ -672,6 +678,7 @@
 				104034D60D13EC221EA20DCB /* BuildEnvironmentTests.swift in Sources */,
 				0842289CBA7AB50CF069C892 /* ConnectivityWiringTests.swift in Sources */,
 				97166CDDB059CEB4C969DBF7 /* DeviceAuthViewModelTests.swift in Sources */,
+				DFEE234E70710E4CA7E039CA /* ErrorReportGateTests.swift in Sources */,
 				B8251C7A4243342264B016E2 /* ErrorReportingTests.swift in Sources */,
 				C0957B35095ABDC60A5C7C73 /* FakeAudioSession.swift in Sources */,
 				206AE6A2C11520297BE28845 /* Fixtures.swift in Sources */,
@@ -728,6 +735,7 @@
 				ABA5F662B7377F106722B223 /* DeepLinkAlbumCover.swift in Sources */,
 				7B7F11520E3D59793F39678F /* DeviceAuthView.swift in Sources */,
 				1AA825076DB7A9B68794A82B /* DeviceAuthViewModel.swift in Sources */,
+				BD8097ABC77DE4F14413105C /* ErrorReportGate.swift in Sources */,
 				72DDD3B5A5B2A91A4EF71A16 /* ErrorReporting.swift in Sources */,
 				54F836F000E8B7C0AB4DBA07 /* ExceptionEvent.swift in Sources */,
 				1D47643DA06B8BB7123F9AF0 /* LoginView.swift in Sources */,
