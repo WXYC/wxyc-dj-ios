@@ -421,4 +421,51 @@ struct PostHogPrivacyPipelineTests {
     func errorAutoCaptureIsOff() {
         #expect(TelemetryBootstrap.debugErrorAutoCaptureEnabled() == false)
     }
+
+    // MARK: - Handled-error send cap (issue #242)
+
+    /// A gate whose bucket is empty, so anything it guards is dropped.
+    private static func exhaustedGate() -> ErrorReportGate {
+        let gate = ErrorReportGate(now: { ContinuousClock.now })
+        for code in 0..<20 {
+            _ = gate.admit(key: ErrorReportGate.Key(domain: "test", code: code, context: "exhaust"))
+        }
+        return gate
+    }
+
+    @Test("a handled error is dropped once the bucket is empty, and sent while it has tokens")
+    func handledErrorIsGated() {
+        let error = APIError.http(status: 500, message: "boom")
+
+        #expect(TelemetryBootstrap.debugCaptureExceptionProperties(
+            for: error, context: "PostHogPrivacyPipelineTests", gate: Self.exhaustedGate(), apiKey: Self.testAPIKey
+        ) == nil)
+        #expect(TelemetryBootstrap.debugCaptureExceptionProperties(
+            for: error, context: "PostHogPrivacyPipelineTests", apiKey: Self.testAPIKey
+        ) != nil)
+    }
+
+    @Test("MetricKit hang and crash diagnostics bypass both gates even when the bucket is empty", arguments: [
+        ExceptionEvent.Kind.hang,
+        ExceptionEvent.Kind.crash
+    ])
+    func diagnosticsBypassTheGate(kind: ExceptionEvent.Kind) throws {
+        let json = """
+        {"callStackTree": {"callStacks": [{"threadAttributed": true, "callStackRootFrames": [
+           {"binaryUUID": "AAAA", "offsetIntoBinaryTextSegment": 4096, "sampleCount": 1,
+            "binaryName": "WXYCDJ", "address": 4300000000}]}]},
+         "diagnosticMetaData": {"appBuildVersion": "412"}}
+        """
+        let event = try #require(MetricKitDiagnosticMapper.event(
+            kind: kind,
+            json: Data(json.utf8),
+            appBinaryName: "WXYCDJ",
+            period: DateInterval(start: Date(timeIntervalSince1970: 1_800_000_000), duration: 60)
+        ))
+
+        let properties = TelemetryBootstrap.debugCaptureDiagnosticProperties(
+            event, gate: Self.exhaustedGate(), apiKey: Self.testAPIKey
+        )
+        #expect(properties?["diagnostic_kind"] as? String == kind.rawValue)
+    }
 }

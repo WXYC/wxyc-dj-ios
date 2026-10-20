@@ -569,6 +569,7 @@ enum TelemetryBootstrap {
     static func debugCaptureExceptionProperties(
         for error: any Error,
         context: StaticString,
+        gate: ErrorReportGate = ErrorReportGate(),
         apiKey: String = "phc_test_00000000000000000000000000000000",
         host: String = "http://127.0.0.1:9"
     ) -> [String: Any]? {
@@ -576,7 +577,7 @@ enum TelemetryBootstrap {
         PostHogSDK.shared.close()
         startAnalytics(apiKey: apiKey, host: host)
 
-        PostHogErrorReporter().report(error, context: context)
+        PostHogErrorReporter(gate: gate).report(error, context: context)
         return lastAnalyticsEventProperties
     }
 
@@ -587,6 +588,7 @@ enum TelemetryBootstrap {
     /// ``debugCaptureExceptionProperties(for:context:apiKey:host:)``.
     static func debugCaptureDiagnosticProperties(
         _ event: ExceptionEvent,
+        gate: ErrorReportGate = ErrorReportGate(),
         apiKey: String = "phc_test_00000000000000000000000000000000",
         host: String = "http://127.0.0.1:9"
     ) -> [String: Any]? {
@@ -594,7 +596,7 @@ enum TelemetryBootstrap {
         PostHogSDK.shared.close()
         startAnalytics(apiKey: apiKey, host: host)
 
-        PostHogErrorReporter().report(diagnostic: event)
+        PostHogErrorReporter(gate: gate).report(diagnostic: event)
         return lastAnalyticsEventProperties
     }
 

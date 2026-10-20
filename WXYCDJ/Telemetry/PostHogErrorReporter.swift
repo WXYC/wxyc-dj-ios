@@ -18,20 +18,35 @@ import PostHog
 
 /// Reports errors to PostHog.
 ///
-/// Holds no state -- `PostHogSDK.shared` is the SDK's own synchronized
-/// singleton -- so it is trivially `Sendable`. A no-op until the SDK is
-/// started, which is why test paths need no guard.
+/// `PostHogSDK.shared` is the SDK's own synchronized singleton, so the only
+/// state here is the ``ErrorReportGate`` (a `Sendable` class) capping handled
+/// errors (issue #242). A no-op until the SDK is started, which is why test
+/// paths need no guard.
 struct PostHogErrorReporter: ErrorReporter {
+    private let gate: ErrorReportGate
+
+    init(gate: ErrorReportGate = ErrorReportGate()) {
+        self.gate = gate
+    }
+
     func report(_ error: any Error, context: StaticString, extra: [String: TelemetryValue]) {
         // Curated first, for the reason SentryErrorReporter documents: a raw
         // AuthError/APIError would put a server's message in the headline.
         // `build_type` is stamped by TelemetryBootstrap's `beforeSend`, which
         // every capture path passes through, so it is not repeated here.
         let reported = Self.sanitized(TelemetryErrorClassification.curated(error))
+        // The send cap (issue #242), keyed on the sanitized domain and code and
+        // the StaticString context only. Sentry, beside this in the composite,
+        // is not gated; `report(diagnostic:)` below never consults the gate.
+        guard gate.admit(key: ErrorReportGate.Key(reported, context: context)) else {
+            return
+        }
         PostHogSDK.shared.captureException(reported, properties: Self.properties(context: context, extra: extra))
     }
 
-    /// Sends a MetricKit diagnostic as an `$exception` (issue #234). A second
+    /// Sends a MetricKit diagnostic as an `$exception` (issue #234). **Ungated**
+    /// by design (issue #242): hangs and crashes arrive in at most one payload
+    /// a day and must never be dropped for a handled-error burst. A second
     /// entry point beside ``report(_:context:extra:)`` rather than a case of
     /// it: that one takes an `Error` and rebuilds it from domain and code, so
     /// it cannot carry hand-built frames. PostHog-only by design -- it is not
