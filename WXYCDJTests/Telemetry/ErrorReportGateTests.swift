@@ -114,16 +114,52 @@ struct ErrorReportGateTests {
         #expect(!gate.admit(key: key(5_001)))
     }
 
-    @Test("the bucket never refills past its capacity of 20")
+    @Test("scenario C: a partly drained bucket that idles for days refills to 20 and no further")
     func refillIsCapped() {
         let clock = ManualGateClock()
         let gate = makeGate(clock: clock)
+        for id in 0..<5 {
+            #expect(gate.admit(key: key(id)))
+        }
 
         clock.advance(by: .seconds(1_800 * 100))
+        for id in 100..<120 {
+            #expect(gate.admit(key: key(id)))
+        }
+        #expect(!gate.admit(key: key(120)))
+    }
+
+    @Test("scenario D: a full bucket restarts the refill clock, so the first token after it drains takes a full interval")
+    func fullBucketRestartsRefillClock() {
+        let clock = ManualGateClock()
+        let gate = makeGate(clock: clock)
+
+        clock.advance(by: .seconds(29 * 60))
         for id in 0..<20 {
             #expect(gate.admit(key: key(id)))
         }
-        #expect(!gate.admit(key: key(20)))
+        clock.advance(by: .seconds(60))
+        #expect(!gate.admit(key: key(100)), "30:00 is only one minute after the bucket began to drain")
+        clock.advance(by: .seconds(28 * 60 + 59))
+        #expect(!gate.admit(key: key(101)), "58:59")
+        clock.advance(by: .seconds(1))
+        #expect(gate.admit(key: key(102)), "59:00")
+    }
+
+    @Test("scenario A: after the burst, one token returns at 30:00, 60:00 and 90:00, each reporting the drops before it")
+    func refillsAtEachInterval() {
+        let clock = ManualGateClock()
+        let gate = makeGate(clock: clock)
+        for id in 0..<20 {
+            #expect(gate.admitReportingDrops(key: key(id)) == 0)
+        }
+        #expect(gate.admitReportingDrops(key: key(20)) == nil)
+
+        for (step, id) in [(30, 100), (60, 200), (90, 300)] {
+            clock.advance(by: .seconds(30 * 60))
+            #expect(gate.admitReportingDrops(key: key(id)) == 1, "admitted at \(step):00 after one drop")
+            #expect(gate.admitReportingDrops(key: key(id + 1)) == nil, "bucket empty again at \(step):00")
+        }
     }
 
     @Test("scenario E: 1,000 unexpired keys 1 ms apart leave the table bounded, and a new key is still admitted")
@@ -137,6 +173,13 @@ struct ErrorReportGateTests {
         }
         #expect(gate.trackedKeyCount == ErrorReportGate.maxTrackedKeys)
         #expect(gate.admit(key: key(ErrorReportGate.maxTrackedKeys)))
+        #expect(gate.trackedKeyCount <= ErrorReportGate.maxTrackedKeys)
+
+        // E3: only the oldest key was evicted, so it is admitted again inside its old window.
+        clock.advance(by: .seconds(30))
+        #expect(gate.admit(key: key(0)))
+        // E4: the newest key is still tracked, so it is still dropped.
+        #expect(!gate.admit(key: key(ErrorReportGate.maxTrackedKeys - 1)))
         #expect(gate.trackedKeyCount <= ErrorReportGate.maxTrackedKeys)
     }
 
@@ -163,6 +206,11 @@ struct ErrorReportGateTests {
         #expect(logged.withLock { $0 } == [1])
 
         // At exactly 15 minutes the next drop carries the running count.
+        clock.advance(by: .seconds(1))
+        _ = gate.admit(key: key(1))
+        #expect(logged.withLock { $0 } == [1, 5])
+
+        // F4: a drop right after a later warning is counted, not logged.
         clock.advance(by: .seconds(1))
         _ = gate.admit(key: key(1))
         #expect(logged.withLock { $0 } == [1, 5])
