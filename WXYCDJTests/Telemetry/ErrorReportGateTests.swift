@@ -134,53 +134,76 @@ struct ErrorReportGateTests {
         let clock = ManualGateClock()
         let gate = makeGate(clock: clock)
 
+        // D1: the bucket was full, so its refill clock restarts at 29:00, not at 0:00.
         clock.advance(by: .seconds(29 * 60))
         for id in 0..<20 {
             #expect(gate.admit(key: key(id)))
         }
+        // D2: the next token is due at 59:00.
         clock.advance(by: .seconds(60))
-        #expect(!gate.admit(key: key(100)), "30:00 is only one minute after the bucket began to drain")
+        #expect(gate.admitReportingDrops(key: key(100)) == nil, "D2 30:00 dropped")
+        // D3
         clock.advance(by: .seconds(28 * 60 + 59))
-        #expect(!gate.admit(key: key(101)), "58:59")
+        #expect(gate.admitReportingDrops(key: key(101)) == nil, "D3 58:59 dropped")
+        // D4: admitted exactly at 59:00, reporting the two drops since the last admit.
         clock.advance(by: .seconds(1))
-        #expect(gate.admit(key: key(102)), "59:00")
+        #expect(gate.admitReportingDrops(key: key(102)) == 2, "D4 59:00 admitted with dropped_since_last 2")
     }
 
     @Test("scenario A: after the burst, one token returns at 30:00, 60:00 and 90:00, each reporting the drops before it")
     func refillsAtEachInterval() {
         let clock = ManualGateClock()
         let gate = makeGate(clock: clock)
-        for id in 0..<20 {
-            #expect(gate.admitReportingDrops(key: key(id)) == 0)
-        }
-        #expect(gate.admitReportingDrops(key: key(20)) == nil)
 
-        for (step, id) in [(30, 100), (60, 200), (90, 300)] {
-            clock.advance(by: .seconds(30 * 60))
-            #expect(gate.admitReportingDrops(key: key(id)) == 1, "admitted at \(step):00 after one drop")
-            #expect(gate.admitReportingDrops(key: key(id + 1)) == nil, "bucket empty again at \(step):00")
+        // A1: k1 to k20 at 0:00 are admitted, with no drops to report.
+        for id in 1...20 {
+            #expect(gate.admitReportingDrops(key: key(id)) == 0, "A1 k\(id) admitted, dropped_since_last absent")
         }
+        // A2: the bucket is empty.
+        #expect(gate.admitReportingDrops(key: key(21)) == nil, "A2 0:00 k21 dropped")
+        // A3: the refill is not yet due.
+        clock.advance(by: .seconds(29 * 60 + 59))
+        #expect(gate.admitReportingDrops(key: key(22)) == nil, "A3 29:59 k22 dropped")
+        // A4: the token is due exactly at 30:00; the drops at A2 and A3 are reported.
+        clock.advance(by: .seconds(1))
+        #expect(gate.admitReportingDrops(key: key(23)) == 2, "A4 30:00 k23 admitted with dropped_since_last 2")
+        // A5
+        #expect(gate.admitReportingDrops(key: key(24)) == nil, "A5 30:00 k24 dropped")
+        // A6: the drop at A5 is reported.
+        clock.advance(by: .seconds(30 * 60))
+        #expect(gate.admitReportingDrops(key: key(25)) == 1, "A6 60:00 k25 admitted with dropped_since_last 1")
+        // A7: nothing was dropped since A6, so the count was reset and the property is absent.
+        clock.advance(by: .seconds(30 * 60))
+        #expect(gate.admitReportingDrops(key: key(26)) == 0, "A7 90:00 k26 admitted, dropped_since_last absent")
     }
 
-    @Test("scenario E: 1,000 unexpired keys 1 ms apart leave the table bounded, and a new key is still admitted")
+    @Test("scenario E: 1,000 unexpired keys 1 ms apart leave the table bounded, and only the oldest keys are evicted")
     func dedupeTableIsBoundedWithUnexpiredKeys() {
         let clock = ManualGateClock()
-        let gate = makeGate(clock: clock, capacity: ErrorReportGate.maxTrackedKeys + 2)
+        // Capacity is maxTrackedKeys + 3, not + 2: E1 to E3 admit 1,002 keys, which leaves one token
+        // for E4. With + 2 the bucket is empty at E4, so the bucket alone would drop the key and the
+        // test could not tell a table that still tracks it from one that was cleared.
+        let gate = makeGate(clock: clock, capacity: ErrorReportGate.maxTrackedKeys + 3)
 
+        // E1: k1 to k1000 at i ms (ids 0..<1000 here; id i is k(i + 1)).
         for id in 0..<ErrorReportGate.maxTrackedKeys {
             #expect(gate.admit(key: key(id)))
             clock.advance(by: .milliseconds(1))
         }
         #expect(gate.trackedKeyCount == ErrorReportGate.maxTrackedKeys)
-        #expect(gate.admit(key: key(ErrorReportGate.maxTrackedKeys)))
-        #expect(gate.trackedKeyCount <= ErrorReportGate.maxTrackedKeys)
 
-        // E3: only the oldest key was evicted, so it is admitted again inside its old window.
+        // E2: k1001 is admitted and evicts k1, the oldest; the table still holds 1,000.
         clock.advance(by: .seconds(30))
+        #expect(gate.admit(key: key(ErrorReportGate.maxTrackedKeys)))
+        #expect(gate.trackedKeyCount == ErrorReportGate.maxTrackedKeys)
+
+        // E3: k1 was evicted, so it is admitted again inside its old window; this evicts k2.
         #expect(gate.admit(key: key(0)))
-        // E4: the newest key is still tracked, so it is still dropped.
-        #expect(!gate.admit(key: key(ErrorReportGate.maxTrackedKeys - 1)))
-        #expect(gate.trackedKeyCount <= ErrorReportGate.maxTrackedKeys)
+        #expect(gate.trackedKeyCount == ErrorReportGate.maxTrackedKeys)
+
+        // E4: k3 is still tracked and 30 s old, so dedupe drops it. A token remains, so only the
+        // table can be the reason.
+        #expect(!gate.admit(key: key(2)))
     }
 
     // MARK: - Drop log
