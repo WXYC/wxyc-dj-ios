@@ -1,6 +1,7 @@
 name: Shell Script Tests
 
-# Regression suite for scripts/upload-debug-symbols.sh (issue #107), ported
+# Regression suites for scripts/upload-debug-symbols.sh (issue #107) and
+# scripts/upload-dsyms-posthog.sh (issue #235). The first is ported
 # from wxyc-ios-64's shell-script-tests.yml. Distinct from ci.yml on purpose:
 # that workflow needs Xcode + a simulator and runs the full test target. This
 # suite is a hand-rolled zsh regression test for one CI/build script and
@@ -25,12 +26,14 @@ on:
     branches: [main]
     paths:
       - "scripts/upload-debug-symbols.sh"
+      - "scripts/upload-dsyms-posthog.sh"
       - "scripts/tests/**"
       - ".github/workflows/shell-script-tests.yml"
   push:
     branches: [main]
     paths:
       - "scripts/upload-debug-symbols.sh"
+      - "scripts/upload-dsyms-posthog.sh"
       - "scripts/tests/**"
       - ".github/workflows/shell-script-tests.yml"
   workflow_dispatch:
@@ -57,3 +60,6 @@ jobs:
 
       - name: Sentry dSYM upload regression suite
         run: zsh scripts/tests/test-upload-debug-symbols.sh
+
+      - name: PostHog dSYM upload regression suite
+        run: zsh scripts/tests/test-upload-dsyms-posthog.sh

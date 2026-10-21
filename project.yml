@@ -192,6 +192,15 @@ targets:
         basedOnDependencyAnalysis: false
         inputFiles:
           - "${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${TARGET_NAME}"
+      - script: |
+          # Same shape as the Sentry phase above: logic lives in
+          # scripts/upload-dsyms-posthog.sh (issue #235) so it can be
+          # regression-tested. Warns and exits 0 whenever it cannot upload.
+          exec "${SRCROOT}/scripts/upload-dsyms-posthog.sh"
+        name: "Upload Debug Symbols to PostHog"
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - "${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${TARGET_NAME}"
     scheme:
       testTargets:
         - WXYCDJTests
