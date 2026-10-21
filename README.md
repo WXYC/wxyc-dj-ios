@@ -41,6 +41,7 @@ Packages/WXYCAPIModels/          # Vendored api.yaml codegen output (issue #75)
 scripts/regenerate-api-types.sh  # Regenerate from the pin
 scripts/verify-api-types.sh      # Drift gate (also runs in CI)
 scripts/upload-debug-symbols.sh  # Uploads dSYMs to Sentry; runs as a WXYCDJ build phase (issue #107)
+scripts/upload-dsyms-posthog.sh  # Uploads dSYMs to PostHog; runs as a WXYCDJ build phase (issue #235)
 project.yml                      # xcodegen spec
 ```
 
@@ -97,6 +98,19 @@ token=sntrys_your_personal_token_here
 ```
 
 Get a token from Sentry's org settings (`wxyc` org, `wxyc-dj-ios` project) under **Auth Tokens**, scoped to `project:releases`. `.sentryclirc` is gitignored — it is never committed, and `sentry-cli` also honors a `~/.sentryclirc` if you'd rather keep one token for every WXYC iOS checkout. `SENTRY_AUTH_TOKEN` in the environment works too, and takes precedence over either file.
+
+## Debug Symbol Upload (PostHog)
+
+The "Upload Debug Symbols to PostHog" build phase runs `scripts/upload-dsyms-posthog.sh` on every build, beside the Sentry phase, so PostHog can symbolicate exceptions. It needs [`posthog-cli`](https://posthog.com/docs/error-tracking/upload-source-maps/cli) (`brew install posthog/tap/posthog-cli`) and an API key. Like the Sentry phase it never fails a build: without the CLI or without a key it prints a `warning:` and exits 0, and so does a failed upload.
+
+Credentials live in `~/.posthog-cli.env`, which the script sources only when `POSTHOG_CLI_API_KEY` is not already set in the environment:
+
+```sh
+POSTHOG_CLI_HOST=https://us.posthog.com
+POSTHOG_CLI_API_KEY=phx_your_personal_api_key_here
+```
+
+The project ID (444958, dj-site's shared project) is set in the script. The upload runs `posthog-cli dsym upload --directory "$DWARF_DSYM_FOLDER_PATH" --include-source`, with no release flags until the release work in [#236](https://github.com/WXYC/wxyc-dj-ios/issues/236) lands.
 
 ## Product Analytics (PostHog)
 

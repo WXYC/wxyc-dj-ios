@@ -561,6 +561,7 @@
 				B44092E4F3A8C8B10B1D016D /* Resources */,
 				22512E463A068F12F10E6069 /* Frameworks */,
 				0CA8785CCD79C95AE788911B /* Upload Debug Symbols to Sentry */,
+				EC21A716CD8AD9C1960484EB /* Upload Debug Symbols to PostHog */,
 			);
 			buildRules = (
 			);
@@ -656,6 +657,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "# The logic lives in scripts/upload-debug-symbols.sh so it can be\n# regression-tested (scripts/tests/test-upload-debug-symbols.sh)\n# rather than edited blind inside project.yml/project.pbxproj.\n#\n# alwaysOutOfDate (basedOnDependencyAnalysis: false below) is what\n# makes the phase run every build; the one input below is the\n# ordering dependency on dsymutil, not a staleness check. Don't add\n# the script itself as an input -- with dependency analysis off it\n# can't cause a run that wasn't already happening.\nexec \"${SRCROOT}/scripts/upload-debug-symbols.sh\"\n";
+		};
+		EC21A716CD8AD9C1960484EB /* Upload Debug Symbols to PostHog */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${TARGET_NAME}",
+			);
+			name = "Upload Debug Symbols to PostHog";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Same shape as the Sentry phase above: logic lives in\n# scripts/upload-dsyms-posthog.sh (issue #235) so it can be\n# regression-tested. Warns and exits 0 whenever it cannot upload.\nexec \"${SRCROOT}/scripts/upload-dsyms-posthog.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
