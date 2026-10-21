@@ -38,10 +38,13 @@ struct PostHogErrorReporter: ErrorReporter {
         // The send cap (issue #242), keyed on the sanitized domain and code and
         // the StaticString context only. Sentry, beside this in the composite,
         // is not gated; `report(diagnostic:)` below never consults the gate.
-        guard gate.admit(key: ErrorReportGate.Key(reported, context: context)) else {
+        guard let dropped = gate.admitReportingDrops(key: ErrorReportGate.Key(reported, context: context)) else {
             return
         }
-        PostHogSDK.shared.captureException(reported, properties: Self.properties(context: context, extra: extra))
+        PostHogSDK.shared.captureException(
+            reported,
+            properties: Self.properties(context: context, extra: extra, droppedSinceLast: dropped)
+        )
     }
 
     /// Sends a MetricKit diagnostic as an `$exception` (issue #234). **Ungated**
@@ -90,9 +93,13 @@ struct PostHogErrorReporter: ErrorReporter {
     /// extras nested under one key (an `.errorIdentity` flattened to
     /// `<key>.domain` / `<key>.code`, as the Sentry reporter does). Each
     /// flattened key must be on ``AnalyticsPrivacyAllowlist/errorExtraKeys``
-    /// or `beforeSend` drops it.
-    static func properties(context: StaticString, extra: [String: TelemetryValue]) -> [String: Any] {
+    /// or `beforeSend` drops it. `droppedSinceLast` (issue #244), when positive, rides as the integer
+    /// `dropped_since_last`.
+    static func properties(context: StaticString, extra: [String: TelemetryValue], droppedSinceLast: Int = 0) -> [String: Any] {
         var properties: [String: Any] = [AnalyticsPrivacyAllowlist.errorContextKey: "\(context)"]
+        if droppedSinceLast > 0 {
+            properties[AnalyticsPrivacyAllowlist.droppedSinceLastKey] = droppedSinceLast
+        }
         var nested: [String: Any] = [:]
         for (key, value) in extra {
             switch value {

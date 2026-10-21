@@ -108,6 +108,18 @@ struct PostHogErrorReporterTests {
         #expect(extra["storeError.code"] as? Int == 4)
     }
 
+    @Test("dropped_since_last is an integer property only when positive, and clears the $exception allowlist")
+    func droppedSinceLastProperty() {
+        #expect(PostHogErrorReporter.properties(context: "ctx", extra: [:])[AnalyticsPrivacyAllowlist.droppedSinceLastKey] == nil)
+        let properties = PostHogErrorReporter.properties(context: "ctx", extra: [:], droppedSinceLast: 4)
+        #expect(properties["dropped_since_last"] as? Int == 4)
+        #expect(AnalyticsPrivacyAllowlist.errorReportKeys == ["error_context", "error_extra", "dropped_since_last"])
+        let onException = AnalyticsPrivacyAllowlist.filterNonSDKProperties(properties, event: AnalyticsPrivacyAllowlist.exceptionEventName)
+        let elsewhere = AnalyticsPrivacyAllowlist.filterNonSDKProperties(properties, event: "other")
+        #expect(onException["dropped_since_last"] as? Int == 4)
+        #expect(elsewhere["dropped_since_last"] == nil)
+    }
+
     @Test("properties omit the extra key when there is no extra detail")
     func propertiesOmitEmptyExtra() {
         let properties = PostHogErrorReporter.properties(context: "ctx", extra: [:])

@@ -37,9 +37,10 @@ private func key(_ id: Int, context: StaticString = "ErrorReportGateTests") -> E
 struct ErrorReportGateTests {
     private func makeGate(
         clock: ManualGateClock,
+        capacity: Int = ErrorReportGate.burst,
         onDropped: @escaping @Sendable (Int) -> Void = { _ in }
     ) -> ErrorReportGate {
-        ErrorReportGate(now: clock.reader, onDropped: onDropped)
+        ErrorReportGate(capacity: capacity, now: clock.reader, onDropped: onDropped)
     }
 
     @Test("a repeat inside 60 seconds is dropped, and the same key is admitted again after 60 seconds")
@@ -125,22 +126,23 @@ struct ErrorReportGateTests {
         #expect(!gate.admit(key: key(20)))
     }
 
-    @Test("the dedupe table stays bounded and still admits a new key once it is full")
-    func dedupeTableIsBounded() {
+    @Test("scenario E: 1,000 unexpired keys 1 ms apart leave the table bounded, and a new key is still admitted")
+    func dedupeTableIsBoundedWithUnexpiredKeys() {
         let clock = ManualGateClock()
-        let gate = makeGate(clock: clock)
+        let gate = makeGate(clock: clock, capacity: ErrorReportGate.maxTrackedKeys + 2)
 
-        for id in 0..<(ErrorReportGate.maxTrackedKeys + 5) {
-            // One token comes back per 30 minutes, so step the clock to keep admitting.
-            clock.advance(by: .seconds(1_800))
+        for id in 0..<ErrorReportGate.maxTrackedKeys {
             #expect(gate.admit(key: key(id)))
+            clock.advance(by: .milliseconds(1))
         }
+        #expect(gate.trackedKeyCount == ErrorReportGate.maxTrackedKeys)
+        #expect(gate.admit(key: key(ErrorReportGate.maxTrackedKeys)))
         #expect(gate.trackedKeyCount <= ErrorReportGate.maxTrackedKeys)
     }
 
     // MARK: - Drop log
 
-    @Test("drops are counted and logged at most once a minute")
+    @Test("drops are counted and logged at most once every 15 minutes")
     func dropLogIsRateLimited() {
         let clock = ManualGateClock()
         let logged = Mutex<[Int]>([])
@@ -151,18 +153,49 @@ struct ErrorReportGateTests {
         _ = gate.admit(key: key(1))
         #expect(logged.withLock { $0 } == [1])
 
-        // Three more inside the minute are counted, not logged.
+        // Three more are counted, not logged, up to 15 minutes minus a second.
         for _ in 0..<3 {
             _ = gate.admit(key: key(1))
         }
-        #expect(logged.withLock { $0 } == [1])
-
-        // The next drop after the minute carries the running count. The
-        // dedupe window has lapsed too, so the first call is admitted afresh.
-        clock.advance(by: .seconds(60))
+        clock.advance(by: .seconds(15 * 60 - 1))
         #expect(gate.admit(key: key(1)))
         _ = gate.admit(key: key(1))
-        #expect(logged.withLock { $0 } == [1, 4])
+        #expect(logged.withLock { $0 } == [1])
+
+        // At exactly 15 minutes the next drop carries the running count.
+        clock.advance(by: .seconds(1))
+        _ = gate.admit(key: key(1))
+        #expect(logged.withLock { $0 } == [1, 5])
+    }
+
+    // MARK: - Drops since last
+
+    @Test("an admitted error reports the drops since the last admitted one, and the next reports none")
+    func droppedSinceLastResetsOnAdmit() {
+        let clock = ManualGateClock()
+        let gate = makeGate(clock: clock)
+
+        #expect(gate.admitReportingDrops(key: key(1)) == 0)
+        for _ in 0..<3 {
+            #expect(gate.admitReportingDrops(key: key(1)) == nil)
+        }
+        clock.advance(by: .seconds(60))
+        #expect(gate.admitReportingDrops(key: key(1)) == 3)
+        clock.advance(by: .seconds(60))
+        #expect(gate.admitReportingDrops(key: key(1)) == 0)
+    }
+
+    @Test("the drop count survives the rate-limited log resetting its own count")
+    func droppedSinceLastIsIndependentOfTheLog() {
+        let clock = ManualGateClock()
+        let gate = makeGate(clock: clock)
+
+        _ = gate.admit(key: key(1))
+        for _ in 0..<2 {
+            _ = gate.admit(key: key(1))
+        }
+        clock.advance(by: .seconds(60))
+        #expect(gate.admitReportingDrops(key: key(1)) == 2)
     }
 
     // MARK: - Key

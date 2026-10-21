@@ -220,7 +220,10 @@ enum AnalyticsPrivacyAllowlist {
     /// event they are dropped like any unreviewed key.
     static let errorContextKey = "error_context"
     static let errorExtraKey = "error_extra"
-    static let errorReportKeys: Set<String> = [errorContextKey, errorExtraKey]
+    /// The count of handled errors the send cap dropped since the last one it
+    /// sent (issue #244): an `Int`, present only when positive.
+    static let droppedSinceLastKey = "dropped_since_last"
+    static let errorReportKeys: Set<String> = [errorContextKey, errorExtraKey, droppedSinceLastKey]
 
     /// The event name posthog-ios's `captureException` emits, the one event
     /// ``errorReportKeys`` may ride on.

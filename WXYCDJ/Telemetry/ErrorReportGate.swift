@@ -31,8 +31,10 @@ import os
 ///    burst of 20 still lets a real incident report each distinct failure
 ///    once (dedupe has already collapsed the repeats).
 ///
-/// Dropped errors are counted and reported through `onDropped` at most once a
-/// minute (a warning in `org.wxyc.dj`); they are never sent anywhere.
+/// Dropped errors are counted and reported through `onDropped` at most once
+/// every 15 minutes (a warning in `org.wxyc.dj`). Separately, the count since
+/// the last admitted error rides out on the next one sent, as
+/// `dropped_since_last` (see ``admitReportingDrops(key:)``).
 ///
 /// **Crashes are not gated.** Only `PostHogErrorReporter.report(_:context:extra:)`
 /// consults this. MetricKit hangs and crashes (`report(diagnostic:)`) arrive in
@@ -66,50 +68,63 @@ final class ErrorReportGate: Sendable {
     static let burst = 20
     static let refillInterval: Duration = .seconds(30 * 60)
     static let maxTrackedKeys = 1_000
-    static let dropLogInterval: Duration = .seconds(60)
+    static let dropLogInterval: Duration = .seconds(15 * 60)
 
     private struct State {
         var recent: [Key: ContinuousClock.Instant] = [:]
-        var tokens = ErrorReportGate.burst
+        var tokens: Int
         /// Start of the refill interval now in progress; advances only in whole intervals, so no rounding accumulates.
         var refilledAt: ContinuousClock.Instant
         var dropped = 0
+        /// Drops since the last admitted error; unlike `dropped`, not reset by the log.
+        var droppedSinceAdmit = 0
         var droppedLoggedAt: ContinuousClock.Instant?
     }
 
     private let now: @Sendable () -> ContinuousClock.Instant
     private let onDropped: @Sendable (Int) -> Void
+    private let capacity: Int
     private let state: OSAllocatedUnfairLock<State>
 
     /// - Parameters:
     ///   - now: Monotonic time source; tests inject a manual clock.
+    ///   - capacity: Bucket size; defaults to ``burst``. Tests widen it to exercise the dedupe bound.
     ///   - onDropped: Receives the number of errors dropped since the last
     ///     report, at most once per ``dropLogInterval``.
     init(
+        capacity: Int = ErrorReportGate.burst,
         now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now },
         onDropped: @escaping @Sendable (Int) -> Void = { ErrorReportGate.logDropped($0) }
     ) {
         self.now = now
         self.onDropped = onDropped
-        state = OSAllocatedUnfairLock(initialState: State(refilledAt: now()))
+        self.capacity = capacity
+        state = OSAllocatedUnfairLock(initialState: State(tokens: capacity, refilledAt: now()))
     }
 
     /// Whether the error with this key may be sent. Admitting consumes a token
     /// and starts the key's dedupe window; a drop of either kind is counted.
     func admit(key: Key) -> Bool {
-        let (admitted, report) = state.withLock { state -> (Bool, Int?) in
+        admitReportingDrops(key: key) != nil
+    }
+
+    /// Like ``admit(key:)``, but an admitted error returns the number of errors
+    /// dropped since the last admitted one (then resets it); `nil` means dropped.
+    func admitReportingDrops(key: Key) -> Int? {
+        let (admitted, report) = state.withLock { state -> (Int?, Int?) in
             // Read inside the lock so lock order is clock order and `refilledAt` never moves backwards.
             let instant = now()
             if let last = state.recent[key], instant - last < Self.dedupeWindow {
-                return (false, Self.recordDrop(&state, at: instant))
+                return (nil, Self.recordDrop(&state, at: instant))
             }
-            Self.refill(&state, at: instant)
+            Self.refill(&state, capacity: capacity, at: instant)
             guard state.tokens >= 1 else {
-                return (false, Self.recordDrop(&state, at: instant))
+                return (nil, Self.recordDrop(&state, at: instant))
             }
             state.tokens -= 1
             Self.remember(key, at: instant, in: &state)
-            return (true, nil)
+            defer { state.droppedSinceAdmit = 0 }
+            return (state.droppedSinceAdmit, nil)
         }
         if let report {
             onDropped(report)
@@ -125,8 +140,8 @@ final class ErrorReportGate: Sendable {
     /// Adds the whole tokens earned since `refilledAt`. Tokens are integers and `refilledAt` advances by exactly the
     /// intervals consumed, so the 30-minute cadence is exact however often this runs. A full bucket earns nothing,
     /// so its clock restarts at `instant`.
-    private static func refill(_ state: inout State, at instant: ContinuousClock.Instant) {
-        guard state.tokens < burst else {
+    private static func refill(_ state: inout State, capacity: Int, at instant: ContinuousClock.Instant) {
+        guard state.tokens < capacity else {
             state.refilledAt = instant
             return
         }
@@ -135,13 +150,14 @@ final class ErrorReportGate: Sendable {
             return
         }
         let earned = Int(elapsed / refillInterval)
-        state.tokens = min(burst, state.tokens + earned)
-        state.refilledAt = state.tokens == burst ? instant : state.refilledAt.advanced(by: refillInterval * earned)
+        state.tokens = min(capacity, state.tokens + earned)
+        state.refilledAt = state.tokens == capacity ? instant : state.refilledAt.advanced(by: refillInterval * earned)
     }
 
     /// Counts a drop; returns the running count when it is time to report it.
     private static func recordDrop(_ state: inout State, at instant: ContinuousClock.Instant) -> Int? {
         state.dropped += 1
+        state.droppedSinceAdmit += 1
         if let loggedAt = state.droppedLoggedAt, instant - loggedAt < dropLogInterval {
             return nil
         }
