@@ -101,7 +101,7 @@ Get a token from Sentry's org settings (`wxyc` org, `wxyc-dj-ios` project) under
 
 ## Debug Symbol Upload (PostHog)
 
-The "Upload Debug Symbols to PostHog" build phase runs `scripts/upload-dsyms-posthog.sh` on every build, beside the Sentry phase, so PostHog can symbolicate exceptions. It needs [`posthog-cli`](https://posthog.com/docs/error-tracking/upload-source-maps/cli) (`brew install posthog/tap/posthog-cli`) and an API key. Like the Sentry phase it never fails a build: without the CLI or without a key it prints a `warning:` and exits 0, and so does a failed upload.
+The "Upload Debug Symbols to PostHog" build phase runs `scripts/upload-dsyms-posthog.sh` on every build, beside the Sentry phase, so PostHog can symbolicate exceptions. It needs [`posthog-cli`](https://posthog.com/docs/error-tracking/upload-source-maps/cli) (`brew install posthog/tap/posthog-cli`) and an API key. Like the Sentry phase it never fails a build: without the CLI or without a key it prints a `warning:` and exits 0, and so does a failed upload. A build that produced no dSYMs (a Debug build, which uses `DEBUG_INFORMATION_FORMAT = dwarf`) prints a `note:` and skips the upload.
 
 Credentials live in `~/.posthog-cli.env`, which the script sources only when `POSTHOG_CLI_API_KEY` is not already set in the environment:
 

@@ -29,8 +29,12 @@ source "${REPO_ROOT}/scripts/tests/harness.zsh"
 FIXTURE=$(mktemp -d)
 trap 'rm -rf "$FIXTURE"' EXIT
 
+# The default folder holds one bundle, so the cases that expect an upload get
+# past the script's no-dSYM check. EMPTY_DSYM_DIR exists but holds none.
 DSYM_DIR="$FIXTURE/dsyms"
-mkdir -p "$DSYM_DIR"
+mkdir -p "$DSYM_DIR/WXYCDJ.app.dSYM"
+EMPTY_DSYM_DIR="$FIXTURE/empty-dsyms"
+mkdir -p "$EMPTY_DSYM_DIR"
 
 make_stub() {
     mkdir -p "$CASE_STUB_BIN"
@@ -58,23 +62,34 @@ new_case() {
     : > "$STUB_LOG"
     STUB_FAIL=""
     EXPECT_KEY=""
+    CASE_STUB_ON_PATH=1
+    CASE_DSYM_DIR="$DSYM_DIR"
     unset CASE_ENV_KEY
 }
 
-# usage: run_script  -- reads CASE_ENV_KEY (unset = absent from the child env)
-# PATH is narrowed to system dirs plus the case's stub dir, and the extra
-# search dirs are pointed at the (empty) stub dir, so a real Homebrew
-# posthog-cli can never satisfy a case meant to run without one.
+# usage: run_script  -- reads CASE_ENV_KEY and CASE_DSYM_DIR (unset = absent
+# from the child env). PATH is narrowed to system dirs plus the case's stub
+# dir (left off when CASE_STUB_ON_PATH is empty), and the extra search dirs
+# are pointed at the stub dir, so a real Homebrew posthog-cli can never
+# satisfy a case meant to run without one.
 run_script() {
-    local -a key=()
-    [[ -n "${CASE_ENV_KEY+set}" ]] && key+=("POSTHOG_CLI_API_KEY=${CASE_ENV_KEY}")
+    local -a extra=()
+    local path_dirs="/usr/bin:/bin:/usr/sbin:/sbin"
+    if [[ -n "${CASE_ENV_KEY+set}" ]]; then
+        extra+=("POSTHOG_CLI_API_KEY=${CASE_ENV_KEY}")
+    fi
+    if [[ -n "${CASE_DSYM_DIR+set}" ]]; then
+        extra+=("DWARF_DSYM_FOLDER_PATH=${CASE_DSYM_DIR}")
+    fi
+    if [[ -n "$CASE_STUB_ON_PATH" ]]; then
+        path_dirs="${CASE_STUB_BIN}:${path_dirs}"
+    fi
     env -i \
-        PATH="${CASE_STUB_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" \
+        PATH="$path_dirs" \
         HOME="$CASE_HOME" \
-        DWARF_DSYM_FOLDER_PATH="$DSYM_DIR" \
         POSTHOG_CLI_SEARCH_DIRS="$CASE_STUB_BIN" \
         STUB_LOG="$STUB_LOG" STUB_FAIL="$STUB_FAIL" EXPECT_KEY="$EXPECT_KEY" \
-        "${key[@]}" \
+        "${extra[@]}" \
         /bin/zsh "$REAL_SCRIPT" 2>&1
 }
 
@@ -130,5 +145,45 @@ STUB_FAIL=1
 OUT=$(run_script); RC=$?
 expect_exit "a failing upload still exits 0" "$RC" "0" "$OUT"
 expect_contains "a failing upload warns" "$OUT" "warning: posthog-cli dsym upload failed"
+expect_contains "the warning line carries posthog-cli's stderr" "$(grep '^warning:' <<< "$OUT")" "upload rejected"
+expect_not_contains "a failing upload claims no upload" "$OUT" "note: uploaded"
+
+new_case "homebrew-fallback"
+make_stub
+CASE_STUB_ON_PATH=""
+CASE_ENV_KEY="phx_env"
+EXPECT_KEY="phx_env"
+OUT=$(run_script); RC=$?
+expect_exit "posthog-cli found only in a search dir exits 0" "$RC" "0" "$OUT"
+expect_contains "the search-dir posthog-cli runs the upload" "$(<"$STUB_LOG")" "argv: dsym upload --directory $DSYM_DIR --include-source"
+expect_contains "the search-dir upload reports success" "$OUT" "note: uploaded debug symbols to PostHog"
+
+# No dSYMs to upload (a Debug build with DEBUG_INFORMATION_FORMAT = dwarf, or
+# Xcode not setting the folder): an honest note, no CLI call, exit 0.
+# usage: name|folder|expected note fragment  (folder "<unset>" = absent)
+NO_DSYM_CASES=(
+    "unset|<unset>|DWARF_DSYM_FOLDER_PATH is not set"
+    "empty-string||DWARF_DSYM_FOLDER_PATH is not set"
+    "no-bundles|$EMPTY_DSYM_DIR|no .dSYM bundles in $EMPTY_DSYM_DIR"
+    "missing-folder|$FIXTURE/nonexistent|$FIXTURE/nonexistent does not exist"
+)
+for row in "${NO_DSYM_CASES[@]}"; do
+    IFS='|' read -r name folder note <<< "$row"
+    new_case "no-dsym-$name"
+    make_stub
+    CASE_ENV_KEY="phx_env"
+    EXPECT_KEY="phx_env"
+    if [[ "$folder" == "<unset>" ]]; then
+        unset CASE_DSYM_DIR
+    else
+        CASE_DSYM_DIR="$folder"
+    fi
+    OUT=$(run_script); RC=$?
+    expect_exit "no dSYMs ($name) exits 0" "$RC" "0" "$OUT"
+    expect_eq "no dSYMs ($name) never calls posthog-cli" "$(<"$STUB_LOG")" ""
+    expect_contains "no dSYMs ($name) prints an honest note" "$OUT" "note: $note; skipping PostHog debug symbol upload"
+    expect_not_contains "no dSYMs ($name) is not a warning" "$OUT" "warning:"
+    expect_not_contains "no dSYMs ($name) claims no upload" "$OUT" "note: uploaded"
+done
 
 summarize

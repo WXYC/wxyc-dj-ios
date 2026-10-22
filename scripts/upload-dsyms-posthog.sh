@@ -10,7 +10,8 @@
 #
 # Warn, never fail: when the upload cannot run (no posthog-cli, no API key) or
 # fails, the phase prints an Xcode `warning:` line on every build and exits 0.
-# This lasts until the release and credential work in issue #236 lands.
+# This lasts until the release and credential work in issue #236 lands. A build
+# with no dSYMs to upload (a Debug build) prints a `note:` instead and exits 0.
 #
 # Credentials come from POSTHOG_CLI_API_KEY in the environment, else from
 # ~/.posthog-cli.env (POSTHOG_CLI_HOST and POSTHOG_CLI_API_KEY). The key is
@@ -51,8 +52,38 @@ if [[ -z "${POSTHOG_CLI_API_KEY:-}" ]]; then
     exit 0
 fi
 
-if ! "$posthog_cli" dsym upload --directory "${DWARF_DSYM_FOLDER_PATH:-}" --include-source; then
-    echo "warning: posthog-cli dsym upload failed, PostHog exceptions from this build will be unsymbolicated"
+# posthog-cli exits 0 when the folder holds no dSYMs, which is every Debug
+# build (DEBUG_INFORMATION_FORMAT = dwarf), and it rejects an empty
+# --directory. Check for bundles first, as upload-debug-symbols.sh does, so the
+# closing note only reports an upload that ran.
+dsym_folder="${DWARF_DSYM_FOLDER_PATH:-}"
+missing_dsyms=""
+if [[ -z "$dsym_folder" ]]; then
+    missing_dsyms="DWARF_DSYM_FOLDER_PATH is not set"
+elif [[ ! -d "$dsym_folder" ]]; then
+    missing_dsyms="${dsym_folder} does not exist"
+else
+    dsym_bundles=("$dsym_folder"/*.dSYM(N))
+    if (( ${#dsym_bundles} == 0 )); then
+        missing_dsyms="no .dSYM bundles in ${dsym_folder}"
+    fi
+fi
+
+if [[ -n "$missing_dsyms" ]]; then
+    echo "note: ${missing_dsyms}; skipping PostHog debug symbol upload"
+    exit 0
+fi
+
+# stdout goes to the build log as is; stderr is captured so the failure reason
+# rides on the one `warning:` line Xcode's issue navigator shows. The fd 3
+# dance is what lets stdout escape the command substitution.
+{
+    upload_error=$("$posthog_cli" dsym upload --directory "$dsym_folder" --include-source 2>&1 >&3 3>&-)
+    upload_status=$?
+} 3>&1
+
+if (( upload_status != 0 )); then
+    echo "warning: posthog-cli dsym upload failed, PostHog exceptions from this build will be unsymbolicated: ${upload_error//$'\n'/ }"
     exit 0
 fi
 
