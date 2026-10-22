@@ -91,6 +91,8 @@ enum TelemetryBootstrap {
     static func start(dsn: String) {
         SentrySDK.start { options in
             options.dsn = dsn
+            // O5 crash-test build only (WXYC/wxyc-ios-64#1166); never merge
+            options.enableCrashHandler = false
 
             // Unset, the SDK defaults this to "production" -- so every
             // Simulator run and every Xcode launch would file under real DJ
@@ -394,7 +396,8 @@ enum TelemetryBootstrap {
         // only installs PostHogErrorTrackingAutoCaptureIntegration when it's
         // true, so the SDK's *remote* `errorTracking.autocaptureExceptions`
         // config can't switch it back on.
-        config.errorTrackingConfig.autoCapture = false
+        // O5 crash-test build only (WXYC/wxyc-ios-64#1166); never merge
+        config.errorTrackingConfig.autoCapture = true
         // Feature flags are explicitly out of scope for issue #108 and this
         // app reads none -- but the SDK default is `true`, which spends a
         // `/flags` round trip (plus a handful of cache writes) at setup and on

@@ -25,7 +25,8 @@ final class MetricKitSubscriber: NSObject, MXMetricManagerSubscriber, Sendable {
     /// (issue #233). When issue #236 turns `errorTrackingConfig.autoCapture` on, set this
     /// to `false` (or delete it and the crash loop below): otherwise every crash is
     /// reported twice, as two issues with different types and stacks.
-    static let forwardsCrashes = true
+// O5 crash-test build only (WXYC/wxyc-ios-64#1166); never merge
+    static let forwardsCrashes = false
 
     private static let log = Logger(subsystem: "org.wxyc.dj", category: "metrickit")
 
